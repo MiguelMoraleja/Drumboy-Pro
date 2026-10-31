@@ -2,7 +2,8 @@ name: Release
 
 # Push a tag named after the version in Core/Library/Global/Version.h, e.g.
 #   git tag v1.04 && git push origin v1.04
-# to build, test and publish Drumboy_Pro_Fw_01_04.bin as a GitHub Release.
+# or create a release with a new tag v1.04 on github.com (Releases > Draft a new release),
+# to build, test and publish Drumboy_Pro_Fw_01_04.bin on that GitHub Release.
 
 on:
   push:
@@ -45,7 +46,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           pkg=$(ls build/Drumboy_Pro_Fw_*.bin)
-          gh release create "$GITHUB_REF_NAME" "$pkg" \
-            --title "Drumboy Pro firmware $GITHUB_REF_NAME" \
-            --generate-notes \
-            --notes "Copy $(basename "$pkg") to the top level of the SD card (with no other Drumboy_Pro_Fw_*.bin files) and power on. The bootloader shows the version while it updates."
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # Release already made on github.com (that also creates the tag): attach the build to it
+            gh release upload "$GITHUB_REF_NAME" "$pkg" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$pkg" \
+              --title "Drumboy Pro firmware $GITHUB_REF_NAME" \
+              --generate-notes \
+              --notes "Copy $(basename "$pkg") to the top level of the SD card (with no other Drumboy_Pro_Fw_*.bin files) and power on. The bootloader shows the version while it updates."
+          fi

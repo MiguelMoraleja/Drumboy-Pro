@@ -103,7 +103,8 @@ void swap(T& a, T& b) {
     b = temp;
 }
 
-#include "Util.h"  // clamp()
+#include "Util.h"     // clamp()
+#include "Routing.h"  // RouteNode, routing helpers
 
 template <typename T>
 int sgn(T val) {
@@ -846,12 +847,10 @@ const char kHeaderDepth[]                           = "DEPTH     ";
 const char kHeaderDirection[]                       = "DIRECTION ";
 const char kHeaderDry[]                             = "DRY       ";
 const char kHeaderDrive[]                           = "DRIVE     ";
-const char kHeaderEffect[]                          = "EFFECT    ";
 const char kHeaderEnd[]                             = "END       ";
-const char kHeaderEq[]                              = "PARAM EQ  ";
+const char kHeaderOut[]                             = "OUT       ";
 const char kHeaderFeedback[]                        = "FEEDBACK  ";
 const char kHeaderFill[]                            = "FILL      ";
-const char kHeaderFilter[]                          = "FILTER    ";
 const char kHeaderFrequency[]                       = "FREQUENCY";
 const char kHeaderHighshelf[]                       = "HI-SHELF  ";
 const char kHeaderInst[]                            = "INST      ";
@@ -883,7 +882,6 @@ const char kHeaderPrecount[]                        = "PRECOUNT  ";
 const char kHeaderRate[]                            = "RATE      ";
 const char kHeaderResolution[]                      = "RESOLUTION";
 const char kHeaderResonance[]                       = "RESONANCE";
-const char kHeaderReverb[]                          = "REVERB    ";
 const char kHeaderProbability[]                     = "PROB      ";
 const char kHeaderQfactor[]                         = "Q-FACTOR  ";
 const char kHeaderQuantize[]                        = "QUANTIZE  ";
@@ -1187,10 +1185,10 @@ typedef enum {
 
     ENC_INST_2_INST                                 = 0x57,
     ENC_INST_2_SAMPLE                               = 0x58,
-    ENC_INST_2_EQ                                   = 0x59,
-    ENC_INST_2_FILTER                               = 0x5A,
-    ENC_INST_2_EFFECT                               = 0x5B,
-    ENC_INST_2_REVERB                               = 0x5C,
+    ENC_INST_2_OUT                                  = 0x59,  // layer destination (was EQ)
+    ENC_INST_2_UNUSED_5A                            = 0x5A,  // was FILTER; kept so later function numbers stay put
+    ENC_INST_2_UNUSED_5B                            = 0x5B,  // was EFFECT
+    ENC_INST_2_UNUSED_5C                            = 0x5C,  // was REVERB
 
     ENC_SONG_FILL                                   = 0x5D,
     ENC_SONG_PATTERN                                = 0x5E,
@@ -1236,7 +1234,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // LAYER_INST_1_MENU = 0x10
     {ENC_INST_1_INST, ENC_INST_1_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_1_START, ENC_INST_1_END, ENC_INST_1_TIMING, ENC_INST_1_PROB},
     // LAYER_INST_2_MENU = 0x11
-    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_EQ, ENC_INST_2_FILTER, ENC_INST_2_EFFECT, ENC_INST_2_REVERB},
+    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // LAYER_SONG_MENU = 0x12
     {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_FNC_NONE, ENC_FNC_NONE},
     // TEST_MENU = 0x13
@@ -1355,10 +1353,10 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
 
     {ENC_INST_2_INST,         ENC_RES_M, "INST      ", "LAYER ", "   ", false},
     {ENC_INST_2_SAMPLE,       ENC_RES_M, "SAMPLE    ", "LAYER ", "   ", false},
-    {ENC_INST_2_EQ,           ENC_RES_S, "EQ        ", "LAYER ", " IN", false},
-    {ENC_INST_2_FILTER,       ENC_RES_S, "FILTER    ", "LAYER ", " IN", false},
-    {ENC_INST_2_EFFECT,       ENC_RES_S, "EFFECT    ", "LAYER ", " IN", false},
-    {ENC_INST_2_REVERB,       ENC_RES_S, "REVERB    ", "LAYER ", " IN", false},
+    {ENC_INST_2_OUT,          ENC_RES_S, "OUT       ", "LAYER ", "   ", false},
+    {ENC_INST_2_UNUSED_5A,    ENC_RES_S, "          ", "LAYER ", "   ", false},
+    {ENC_INST_2_UNUSED_5B,    ENC_RES_S, "          ", "LAYER ", "   ", false},
+    {ENC_INST_2_UNUSED_5C,    ENC_RES_S, "          ", "LAYER ", "   ", false},
 
     {ENC_SONG_FILL,           ENC_RES_M, "FILL      ", "SONG  ", "   ", false},
     {ENC_SONG_PATTERN,        ENC_RES_M, "PATTERN   ", "SONG  ", "   ", false},
@@ -1905,18 +1903,19 @@ const MixerLiVolume kMixerLiVolumeDataLibrary[] = {
     {"       -01", kLiBase * 0.8912509f}, 
     {"       +00", kLiBase * 1.0000000f}};
 
-struct MixerLiMixerIn {
+// Destination names (Routing.h node order), shared by every OUT / MIXER IN field.
+struct RouteDestData {
     char nameLongR[11];
 };
 
-const struct MixerLiMixerIn kMixerLiMixerInDataLibrary[] = {
+const struct RouteDestData kRouteDestDataLibrary[kRouteNodeCount] = {
     {"        EQ"},
     {"  FILTER-1"},
     {"  FILTER-2"},
     {"  EFFECT-1"},
     {"  EFFECT-2"},
     {"    REVERB"},
-    {"      SEND"}};
+    {"    MASTER"}};
 
 struct MixerPanData {
     char nameLongR[11];
@@ -6110,6 +6109,9 @@ const uint8_t kMaxLayerFillType                     = 14;  // Must equal kMaxFil
 const uint8_t kMinLayerPatternType                  = 0;
 const uint8_t kMaxLayerPatternType                  = 7;
 
+const uint8_t kMinLayerOut                          = NODE_EQ;
+const uint8_t kMaxLayerOut                          = NODE_MASTER;
+
 const uint8_t kMinLayerEq                           = 0;
 const uint8_t kMaxLayerEq                           = 1;
 
@@ -6236,44 +6238,6 @@ const uint8_t kLayerDirectionProbability[][5] = {
     {0, 1, 2, 3, 0},
     {1, 2, 3, 0, 1}};
 
-
-struct LayerEqData {
-    char nameLongR[11];
-    bool data;
-};
-
-const struct LayerEqData kLayerEqDataLibrary[] = {
-    {"       OFF", false},
-    {"        ON", true}};
-
-struct LayerFilterData {
-    char nameLongR[11];
-    bool data[2];
-};
-
-const struct LayerFilterData kLayerFilterDataLibrary[] = {
-    {"       OFF", {false, false}},
-    {"        02", {false, true}},
-    {"     01+02", {true, true}}};
-
-struct LayerEffectData {
-    char nameLongR[11];
-    bool data[2];
-};
-
-const struct LayerEffectData kLayerEffectDataLibrary[] = {
-    {"       OFF", {false, false}},
-    {"        02", {false, true}},
-    {"     01+02", {true, true}}};
-
-struct LayerReverbData {
-    char nameLongR[11];
-    bool data;
-};
-
-const struct LayerReverbData kLayerReverbDataLibrary[] = {
-    {"       OFF", false},
-    {"        ON", true}};
 
 const float kLayerVolumeCoef                        = 0.80;
 
@@ -6440,7 +6404,6 @@ static inline void resetLayerInstGraphCache(uint8_t layerNum_) {
 /*----------------------------------------------------------------------------*/
 
 #include "Fill.h"
-#include "Routing.h"
 
 static_assert(kMaxLayerFillType == kMaxFillType, "UI fill type range must match the fill library");
 

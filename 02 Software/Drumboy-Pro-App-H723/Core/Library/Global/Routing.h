@@ -59,6 +59,32 @@ inline uint8_t routeMaskFromEntry(uint8_t mixerInMode_) {
     return (mixerInMode_ < kRouteNodeCount) ? routeBit(mixerInMode_) : 0;
 }
 
+// Old per-instrument settings (EQ on/off, Filter OFF/02/01+02, Effect OFF/02/01+02, Reverb on/off)
+// <-> entry point. Kit and song files keep storing the four settings, so files stay compatible
+// with older firmware. Entry point from the settings: the earliest stage that is on
+// (same priority as the old layerInst_calculateMixMode).
+inline uint8_t routeEntryFromLegacy(uint8_t eq_, uint8_t filter_, uint8_t effect_, uint8_t reverb_) {
+    if (eq_) return NODE_EQ;
+    if (filter_ == 2) return NODE_F1;  // 01+02
+    if (filter_ == 1) return NODE_F2;  // 02
+    if (effect_ == 2) return NODE_FX1;
+    if (effect_ == 1) return NODE_FX2;
+    if (reverb_) return NODE_REV;
+    return NODE_MASTER;
+}
+
+// The four settings the old page produced for each entry point (its exclusive rules switch on
+// every later stage), in the order eq, filter, effect, reverb.
+const uint8_t kRouteLegacyFromEntry[kRouteNodeCount][4] = {
+    {1, 2, 2, 1},  // EQ
+    {0, 2, 2, 1},  // Filter 1 (01+02)
+    {0, 1, 2, 1},  // Filter 2 (02)
+    {0, 0, 2, 1},  // FX 1 (01+02)
+    {0, 0, 1, 1},  // FX 2 (02)
+    {0, 0, 0, 1},  // Reverb
+    {0, 0, 0, 0},  // Master
+};
+
 // Buffers for one block. node[m] is module m's input, processed in place to become its output.
 // The Reverb writes its left output in place and its right output to reverbRight.
 struct RouteBuffers {

@@ -3866,20 +3866,8 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
                 layerInst_setProbability(selectedLayerNum, layerLibrary[selectedLayerNum].probability + 1);
             break;
 
-        case ENC_INST_2_EQ:
-            (layerLibrary[selectedLayerNum].eq < kMaxLayerEq) ? layerInst_setEq(selectedLayerNum, layerLibrary[selectedLayerNum].eq + 1) : layerInst_setEq(selectedLayerNum, kMinLayerEq);
-            break;
-
-        case ENC_INST_2_FILTER:
-            (layerLibrary[selectedLayerNum].filter < kMaxLayerFilter) ? layerInst_setFilter(selectedLayerNum, layerLibrary[selectedLayerNum].filter + 1) : layerInst_setFilter(selectedLayerNum, kMinLayerFilter);
-            break;
-
-        case ENC_INST_2_EFFECT:
-            (layerLibrary[selectedLayerNum].effect < kMaxLayerEffect) ? layerInst_setEffect(selectedLayerNum, layerLibrary[selectedLayerNum].effect + 1) : layerInst_setEffect(selectedLayerNum, kMinLayerEffect);
-            break;
-
-        case ENC_INST_2_REVERB:
-            (layerLibrary[selectedLayerNum].reverb < kMaxLayerReverb) ? layerInst_setReverb(selectedLayerNum, layerLibrary[selectedLayerNum].reverb + 1) : layerInst_setReverb(selectedLayerNum, kMinLayerReverb);
+        case ENC_INST_2_OUT:
+            (layerLibrary[selectedLayerNum].mixerInMode < kMaxLayerOut) ? layerInst_setOut(selectedLayerNum, layerLibrary[selectedLayerNum].mixerInMode + 1) : layerInst_setOut(selectedLayerNum, kMinLayerOut);
             break;
 
             // Layer song functions
@@ -4406,20 +4394,8 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
                 layerInst_setProbability(selectedLayerNum, layerLibrary[selectedLayerNum].probability - 1);
             break;
 
-        case ENC_INST_2_EQ:
-            (layerLibrary[selectedLayerNum].eq > kMinLayerEq) ? layerInst_setEq(selectedLayerNum, layerLibrary[selectedLayerNum].eq - 1) : layerInst_setEq(selectedLayerNum, kMaxLayerEq);
-            break;
-
-        case ENC_INST_2_FILTER:
-            (layerLibrary[selectedLayerNum].filter > kMinLayerFilter) ? layerInst_setFilter(selectedLayerNum, layerLibrary[selectedLayerNum].filter - 1) : layerInst_setFilter(selectedLayerNum, kMaxLayerFilter);
-            break;
-
-        case ENC_INST_2_EFFECT:
-            (layerLibrary[selectedLayerNum].effect > kMinLayerEffect) ? layerInst_setEffect(selectedLayerNum, layerLibrary[selectedLayerNum].effect - 1) : layerInst_setEffect(selectedLayerNum, kMaxLayerEffect);
-            break;
-
-        case ENC_INST_2_REVERB:
-            (layerLibrary[selectedLayerNum].reverb > kMinLayerReverb) ? layerInst_setReverb(selectedLayerNum, layerLibrary[selectedLayerNum].reverb - 1) : layerInst_setReverb(selectedLayerNum, kMaxLayerReverb);
+        case ENC_INST_2_OUT:
+            (layerLibrary[selectedLayerNum].mixerInMode > kMinLayerOut) ? layerInst_setOut(selectedLayerNum, layerLibrary[selectedLayerNum].mixerInMode - 1) : layerInst_setOut(selectedLayerNum, kMaxLayerOut);
             break;
 
             // Layer song functions
@@ -8391,6 +8367,12 @@ void Controller::lcd_transitionMenu() {
                 lcd.setBackColor(BLACK);
                 lcd.clearRect(493, 29, 325, 60);
             }
+            // Page 2 uses only tab 4 (OUT); clear what other pages drew in tabs 5-7.
+            if (menu == LAYER_INST_2_MENU) {
+                for (uint8_t i = 5; i <= kMaxMenu8Tab; i++) {
+                    lcd_clearMenuTab(i);
+                }
+            }
             break;
 
         case LAYER_SONG_MENU:
@@ -8688,7 +8670,7 @@ void Controller::lcd_drawGlobalMenuData(uint8_t encoderNum_) {
                 break;
 
             case ENC_MIXER_LIMIXERIN:
-                textPtr = kMixerLiMixerInDataLibrary[mixer.liMixerIn].nameLongR;
+                textPtr = kRouteDestDataLibrary[mixer.liMixerIn].nameLongR;
                 break;
 
             case ENC_MIXER_PAN:
@@ -9788,7 +9770,7 @@ void Controller::lcd_drawMixer_LiInData() {
 
     // 2. VALUE DRAW
     // Draw current line-input mode value.
-    lcd.drawText(kMixerLiMixerInDataLibrary[mixer.liMixerIn].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
+    lcd.drawText(kRouteDestDataLibrary[mixer.liMixerIn].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
 }
 
 void Controller::lcd_drawMixer_PanData() {
@@ -11290,30 +11272,20 @@ void Controller::lcd_drawLayerInst1Menu(uint8_t layerNum_) {
 }
 
 void Controller::lcd_drawLayerInst2Menu(uint8_t layerNum_) {
-    /// @brief Draws Layer Instrument page-2 routing fields.
+    /// @brief Draws Layer Instrument page-2 routing field: the layer's destination (OUT).
+    ///        Tabs 5-7 are left empty (cleared in lcd_transitionMenu).
 
     // 1. HEADER DRAW
-    // Draw headers for EQ/Filter/Effect/Reverb routing.
     lcd_setMenuHeaderState(CYAN);
-    lcd.drawText(kHeaderEq, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
-    lcd.drawText(kHeaderFilter, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
-    lcd.drawText(kHeaderEffect, kMenuHeaderTextSize, kMenuHeaderX[6], kMenuHeaderY[6]);
-    lcd.drawText(kHeaderReverb, kMenuHeaderTextSize, kMenuHeaderX[7], kMenuHeaderY[7]);
+    lcd.drawText(kHeaderOut, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
 
     // 2. SIGN DRAW
-    // Draw routing order labels.
+    // Blank the sign box (page 1 shows an LFO label there).
     lcd_setMenuSignState(GRAY_75);
-    lcd.drawText("  A", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
-    lcd.drawText("  B", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
-    lcd.drawText("  C", kMenuSignTextSize, kMenuSignBoxX[6], kMenuSignBoxY[6]);
-    lcd.drawText("  D", kMenuSignTextSize, kMenuSignBoxX[7], kMenuSignBoxY[7]);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
 
     // 3. DATA DRAW
-    // Draw routing selection values.
-    lcd_drawLayerInst_FilterData(layerNum_);
-    lcd_drawLayerInst_EqData(layerNum_);
-    lcd_drawLayerInst_EffectData(layerNum_);
-    lcd_drawLayerInst_ReverbData(layerNum_);
+    lcd_drawLayerInst_OutData(layerNum_);
 }
 
 void Controller::lcd_drawLayerInst_InstData(uint8_t layerNum_) {
@@ -11677,40 +11649,13 @@ void Controller::lcd_drawLayerInst_ProbabilityData(uint8_t layerNum_) {
     lcd.drawText(kLfoNameDataLibrary[layer.lfoProbability].nameShortR, kMenuSignTextSize, kMenuSignBoxX[7], kMenuSignBoxY[7]);
 }
 
-void Controller::lcd_drawLayerInst_EqData(uint8_t layerNum_) {
-    /// @brief Draws EQ routing assignment value.
+void Controller::lcd_drawLayerInst_OutData(uint8_t layerNum_) {
+    /// @brief Draws the layer's destination (where its sound enters the processing chain).
 
     // 1. VALUE DRAW
-    // Draw EQ routing status text.
+    // Draw destination name.
     lcd_setMenuDataState(WHITE);
-    lcd.drawText(kLayerEqDataLibrary[layerLibrary[layerNum_].eq].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
-}
-
-void Controller::lcd_drawLayerInst_FilterData(uint8_t layerNum_) {
-    /// @brief Draws Filter routing assignment value.
-
-    // 1. VALUE DRAW
-    // Draw Filter routing status text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kLayerFilterDataLibrary[layerLibrary[layerNum_].filter].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
-}
-
-void Controller::lcd_drawLayerInst_EffectData(uint8_t layerNum_) {
-    /// @brief Draws Effect routing assignment value.
-
-    // 1. VALUE DRAW
-    // Draw Effect routing status text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kLayerEffectDataLibrary[layerLibrary[layerNum_].effect].nameLongR, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
-}
-
-void Controller::lcd_drawLayerInst_ReverbData(uint8_t layerNum_) {
-    /// @brief Draws Reverb routing assignment value.
-
-    // 1. VALUE DRAW
-    // Draw Reverb routing status text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kLayerReverbDataLibrary[layerLibrary[layerNum_].reverb].nameLongR, kMenuDataTextSize, kMenuDataX[7], kMenuDataY[7]);
+    lcd.drawText(kRouteDestDataLibrary[layerLibrary[layerNum_].mixerInMode].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
 }
 
 /* Lcd Layer Song Menu Functions ---------------------------------------------*/
@@ -20128,7 +20073,7 @@ void Controller::layerInst_setEq(uint8_t layerNum_, uint8_t eq_) {
 
         // 5. UI REFRESH
         // Refresh page-2 field when Layer Inst page-2 is visible.
-        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_EqData(layerNum_);
+        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_OutData(layerNum_);
     }
 }
 
@@ -20164,7 +20109,7 @@ void Controller::layerInst_setFilter(uint8_t layerNum_, uint8_t filter_) {
 
         // 5. UI REFRESH
         // Refresh page-2 field when Layer Inst page-2 is visible.
-        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_FilterData(layerNum_);
+        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_OutData(layerNum_);
     }
 }
 
@@ -20200,7 +20145,7 @@ void Controller::layerInst_setEffect(uint8_t layerNum_, uint8_t effect_) {
 
         // 5. UI REFRESH
         // Refresh page-2 field when Layer Inst page-2 is visible.
-        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_EffectData(layerNum_);
+        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_OutData(layerNum_);
     }
 }
 
@@ -20234,7 +20179,7 @@ void Controller::layerInst_setReverb(uint8_t layerNum_, uint8_t reverb_) {
 
         // 5. UI REFRESH
         // Refresh page-2 field when Layer Inst page-2 is visible.
-        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_ReverbData(layerNum_);
+        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_OutData(layerNum_);
     }
 }
 
@@ -20244,20 +20189,22 @@ void Controller::layerInst_calculateMixMode(uint8_t layerNum_) {
     // 1. ROUTING PRIORITY RESOLUTION
     // Apply fixed priority chain to choose single mixer input source.
     Layer& layer = layerLibrary[layerNum_];
-    if (layer.eq) {
-        layer.mixerInMode = MIXER_IN_EQ;
-    } else if (layer.filter == 2) {
-        layer.mixerInMode = MIXER_IN_FILTER_0;
-    } else if (layer.filter == 1) {
-        layer.mixerInMode = MIXER_IN_FILTER_1;
-    } else if (layer.effect == 2) {
-        layer.mixerInMode = MIXER_IN_EFFECT_0;
-    } else if (layer.effect == 1) {
-        layer.mixerInMode = MIXER_IN_EFFECT_1;
-    } else if (layer.reverb) {
-        layer.mixerInMode = MIXER_IN_REVERB;
-    } else {
-        layer.mixerInMode = MIXER_IN_SEND;
+    layer.mixerInMode = (MixerInMode)routeEntryFromLegacy(layer.eq, layer.filter, layer.effect, layer.reverb);
+}
+
+void Controller::layerInst_setOut(uint8_t layerNum_, uint8_t out_) {
+    /// @brief Sets the layer's destination (OUT field). Writes the four stored routing settings
+    ///        the way the old EQ/FILTER/EFFECT/REVERB fields did, so files stay compatible.
+
+    if ((out_ >= kMinLayerOut) && (out_ <= kMaxLayerOut)) {
+        Layer& layer = layerLibrary[layerNum_];
+        const uint8_t* legacy = kRouteLegacyFromEntry[out_];
+        layer.eq = legacy[0];
+        layer.filter = legacy[1];
+        layer.effect = legacy[2];
+        layer.reverb = legacy[3];
+        layerInst_calculateMixMode(layerNum_);
+        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_OutData(layerNum_);
     }
 }
 

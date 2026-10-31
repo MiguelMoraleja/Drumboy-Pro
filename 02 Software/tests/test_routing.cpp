@@ -190,7 +190,25 @@ static void testValidation() {
     CHECK(routeMaskFromEntry(7) == 0 && routeMaskFromEntry(255) == 0, "out-of-range entry must mute");
 }
 
+// The OUT field writes the old four settings; reading them back must give the same entry point,
+// and the priority must match the old layerInst_calculateMixMode for every combination.
+static void testLegacyConversion() {
+    for (uint8_t e = 0; e < kRouteNodeCount; e++) {
+        const uint8_t* l = kRouteLegacyFromEntry[e];
+        CHECK(routeEntryFromLegacy(l[0], l[1], l[2], l[3]) == e, "entry %u does not round-trip", e);
+    }
+    for (uint8_t eq = 0; eq <= 1; eq++)
+        for (uint8_t f = 0; f <= 2; f++)
+            for (uint8_t fx = 0; fx <= 2; fx++)
+                for (uint8_t rv = 0; rv <= 1; rv++) {
+                    // V1.04 layerInst_calculateMixMode, transcribed
+                    uint8_t old = eq ? 0 : f == 2 ? 1 : f == 1 ? 2 : fx == 2 ? 3 : fx == 1 ? 4 : rv ? 5 : 6;
+                    CHECK(routeEntryFromLegacy(eq, f, fx, rv) == old, "eq %u filter %u effect %u reverb %u", eq, f, fx, rv);
+                }
+}
+
 int main() {
+    testLegacyConversion();
     testDefaultPatchMatchesLegacy();
     testParallelPaths();
     testValidation();

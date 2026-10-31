@@ -648,10 +648,7 @@ class Controller {
     void lcd_drawLayerInst_EndData(uint8_t layerNum_);
     void lcd_drawLayerInst_TimingData(uint8_t layerNum_);
     void lcd_drawLayerInst_ProbabilityData(uint8_t layerNum_);
-    void lcd_drawLayerInst_EqData(uint8_t layerNum_);
-    void lcd_drawLayerInst_FilterData(uint8_t layerNum_);
-    void lcd_drawLayerInst_EffectData(uint8_t layerNum_);
-    void lcd_drawLayerInst_ReverbData(uint8_t layerNum_);
+    void lcd_drawLayerInst_OutData(uint8_t layerNum_);
     // Layer song menu functions
     void lcd_drawLayerSongMenu(uint8_t layerNum_);
     void lcd_drawLayerSong_BeatFillTypeData(uint8_t layerNum_);
@@ -978,6 +975,7 @@ class Controller {
     void layerInst_setReverb(uint8_t layerNum_, uint8_t reverb_);
 
     void layerInst_calculateMixMode(uint8_t layerNum_);
+    void layerInst_setOut(uint8_t layerNum_, uint8_t out_);
 
     void layerInst_setMute(uint8_t layerNum_, bool mute_);
     void layerInst_setFill(uint8_t layerNum_, bool fill_);

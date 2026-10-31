@@ -11,6 +11,14 @@ on:
       - ".github/workflows/firmware.yml"
 
 jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fill engine tests (host, ASan/UBSan)
+        run: make -C "02 Software/tests"
+
   build-app:
     runs-on: ubuntu-24.04
     steps:
@@ -19,9 +27,9 @@ jobs:
       - name: Install ARM toolchain
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
 
-      - name: Build application
+      - name: Build application (warnings in our code are errors)
         working-directory: "02 Software/Drumboy-Pro-App-H723"
-        run: make -j"$(nproc)"
+        run: make -j"$(nproc)" WERROR=1
 
       - name: Package (test build, not for release)
         working-directory: "02 Software/Drumboy-Pro-App-H723"

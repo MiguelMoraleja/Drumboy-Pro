@@ -7,6 +7,8 @@
 #                                   version from Core/Library/Global/Version.h
 #   make package VERSION=0.00    -> same, overriding the version (test builds)
 #   make WERROR=1                -> treat warnings in our own code (Core/) as errors, as CI does
+#   make PROFILE=1               -> measurement build: shows DSP load and I2S errors on screen
+#                                   (use a separate BUILD dir, e.g. BUILD=build-profile)
 #   make version                 -> print the version from Version.h
 #
 # Requires arm-none-eabi-gcc (e.g. Ubuntu: apt install gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib).
@@ -21,7 +23,7 @@ BUILD  ?= build
 TARGET  = $(BUILD)/app
 
 ARCH = -mcpu=cortex-m7 -mthumb -mfpu=fpv5-d16 -mfloat-abi=hard
-DEFS = -DDEBUG -DUSE_PWR_LDO_SUPPLY -DUSE_HAL_DRIVER -DSTM32H723xx
+DEFS = -DDEBUG -DUSE_PWR_LDO_SUPPLY -DUSE_HAL_DRIVER -DSTM32H723xx $(if $(PROFILE),-DDSP_PROFILE)
 INCS = \
 	-ICore/Inc \
 	-IFATFS/Target \
@@ -53,7 +55,7 @@ VERSION_FILE = Core/Library/Global/Version.h
 VERSION ?= $(shell awk '/define FW_VERSION_MAJOR/{a=$$3} /define FW_VERSION_MINOR/{b=$$3} END{printf "%d.%02d", a, b}' $(VERSION_FILE))
 VERSION_MAJOR = $(word 1,$(subst ., ,$(VERSION)))
 VERSION_MINOR = $(word 2,$(subst ., ,$(VERSION)))
-PACKAGE = $(BUILD)/Drumboy_Pro_Fw_$(shell echo $(VERSION) | awk -F. '{printf "%02d_%02d", $$1, $$2}').bin
+PACKAGE = $(BUILD)/Drumboy_Pro_Fw_$(shell echo $(VERSION) | awk -F. '{printf "%02d_%02d", $$1, $$2}')$(if $(PROFILE),_dsp).bin
 
 .PHONY: all package version clean
 

@@ -352,6 +352,10 @@ void Controller::update() {
         // Push buffered graphical changes to the LCD.
         lcd_update();
 
+#ifdef DSP_PROFILE
+        lcd_drawDspProfile();
+#endif
+
         // 4. FILESYSTEM MAINTENANCE
         // Recover SD subsystem if media access is lost.
         if (!sd.ready) {
@@ -3862,20 +3866,8 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
                 layerInst_setProbability(selectedLayerNum, layerLibrary[selectedLayerNum].probability + 1);
             break;
 
-        case ENC_INST_2_EQ:
-            (layerLibrary[selectedLayerNum].eq < kMaxLayerEq) ? layerInst_setEq(selectedLayerNum, layerLibrary[selectedLayerNum].eq + 1) : layerInst_setEq(selectedLayerNum, kMinLayerEq);
-            break;
-
-        case ENC_INST_2_FILTER:
-            (layerLibrary[selectedLayerNum].filter < kMaxLayerFilter) ? layerInst_setFilter(selectedLayerNum, layerLibrary[selectedLayerNum].filter + 1) : layerInst_setFilter(selectedLayerNum, kMinLayerFilter);
-            break;
-
-        case ENC_INST_2_EFFECT:
-            (layerLibrary[selectedLayerNum].effect < kMaxLayerEffect) ? layerInst_setEffect(selectedLayerNum, layerLibrary[selectedLayerNum].effect + 1) : layerInst_setEffect(selectedLayerNum, kMinLayerEffect);
-            break;
-
-        case ENC_INST_2_REVERB:
-            (layerLibrary[selectedLayerNum].reverb < kMaxLayerReverb) ? layerInst_setReverb(selectedLayerNum, layerLibrary[selectedLayerNum].reverb + 1) : layerInst_setReverb(selectedLayerNum, kMinLayerReverb);
+        case ENC_INST_2_OUT:
+            (layerLibrary[selectedLayerNum].mixerInMode < kMaxLayerOut) ? layerInst_setOut(selectedLayerNum, layerLibrary[selectedLayerNum].mixerInMode + 1) : layerInst_setOut(selectedLayerNum, kMinLayerOut);
             break;
 
             // Layer song functions
@@ -4402,20 +4394,8 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
                 layerInst_setProbability(selectedLayerNum, layerLibrary[selectedLayerNum].probability - 1);
             break;
 
-        case ENC_INST_2_EQ:
-            (layerLibrary[selectedLayerNum].eq > kMinLayerEq) ? layerInst_setEq(selectedLayerNum, layerLibrary[selectedLayerNum].eq - 1) : layerInst_setEq(selectedLayerNum, kMaxLayerEq);
-            break;
-
-        case ENC_INST_2_FILTER:
-            (layerLibrary[selectedLayerNum].filter > kMinLayerFilter) ? layerInst_setFilter(selectedLayerNum, layerLibrary[selectedLayerNum].filter - 1) : layerInst_setFilter(selectedLayerNum, kMaxLayerFilter);
-            break;
-
-        case ENC_INST_2_EFFECT:
-            (layerLibrary[selectedLayerNum].effect > kMinLayerEffect) ? layerInst_setEffect(selectedLayerNum, layerLibrary[selectedLayerNum].effect - 1) : layerInst_setEffect(selectedLayerNum, kMaxLayerEffect);
-            break;
-
-        case ENC_INST_2_REVERB:
-            (layerLibrary[selectedLayerNum].reverb > kMinLayerReverb) ? layerInst_setReverb(selectedLayerNum, layerLibrary[selectedLayerNum].reverb - 1) : layerInst_setReverb(selectedLayerNum, kMaxLayerReverb);
+        case ENC_INST_2_OUT:
+            (layerLibrary[selectedLayerNum].mixerInMode > kMinLayerOut) ? layerInst_setOut(selectedLayerNum, layerLibrary[selectedLayerNum].mixerInMode - 1) : layerInst_setOut(selectedLayerNum, kMaxLayerOut);
             break;
 
             // Layer song functions
@@ -8387,6 +8367,12 @@ void Controller::lcd_transitionMenu() {
                 lcd.setBackColor(BLACK);
                 lcd.clearRect(493, 29, 325, 60);
             }
+            // Page 2 uses only tab 4 (OUT); clear what other pages drew in tabs 5-7.
+            if (menu == LAYER_INST_2_MENU) {
+                for (uint8_t i = 5; i <= kMaxMenu8Tab; i++) {
+                    lcd_clearMenuTab(i);
+                }
+            }
             break;
 
         case LAYER_SONG_MENU:
@@ -8684,7 +8670,7 @@ void Controller::lcd_drawGlobalMenuData(uint8_t encoderNum_) {
                 break;
 
             case ENC_MIXER_LIMIXERIN:
-                textPtr = kMixerLiMixerInDataLibrary[mixer.liMixerIn].nameLongR;
+                textPtr = kRouteDestDataLibrary[mixer.liMixerIn].nameLongR;
                 break;
 
             case ENC_MIXER_PAN:
@@ -9784,7 +9770,7 @@ void Controller::lcd_drawMixer_LiInData() {
 
     // 2. VALUE DRAW
     // Draw current line-input mode value.
-    lcd.drawText(kMixerLiMixerInDataLibrary[mixer.liMixerIn].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
+    lcd.drawText(kRouteDestDataLibrary[mixer.liMixerIn].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
 }
 
 void Controller::lcd_drawMixer_PanData() {
@@ -11286,30 +11272,20 @@ void Controller::lcd_drawLayerInst1Menu(uint8_t layerNum_) {
 }
 
 void Controller::lcd_drawLayerInst2Menu(uint8_t layerNum_) {
-    /// @brief Draws Layer Instrument page-2 routing fields.
+    /// @brief Draws Layer Instrument page-2 routing field: the layer's destination (OUT).
+    ///        Tabs 5-7 are left empty (cleared in lcd_transitionMenu).
 
     // 1. HEADER DRAW
-    // Draw headers for EQ/Filter/Effect/Reverb routing.
     lcd_setMenuHeaderState(CYAN);
-    lcd.drawText(kHeaderEq, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
-    lcd.drawText(kHeaderFilter, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
-    lcd.drawText(kHeaderEffect, kMenuHeaderTextSize, kMenuHeaderX[6], kMenuHeaderY[6]);
-    lcd.drawText(kHeaderReverb, kMenuHeaderTextSize, kMenuHeaderX[7], kMenuHeaderY[7]);
+    lcd.drawText(kHeaderOut, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
 
     // 2. SIGN DRAW
-    // Draw routing order labels.
+    // Blank the sign box (page 1 shows an LFO label there).
     lcd_setMenuSignState(GRAY_75);
-    lcd.drawText("  A", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
-    lcd.drawText("  B", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
-    lcd.drawText("  C", kMenuSignTextSize, kMenuSignBoxX[6], kMenuSignBoxY[6]);
-    lcd.drawText("  D", kMenuSignTextSize, kMenuSignBoxX[7], kMenuSignBoxY[7]);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
 
     // 3. DATA DRAW
-    // Draw routing selection values.
-    lcd_drawLayerInst_FilterData(layerNum_);
-    lcd_drawLayerInst_EqData(layerNum_);
-    lcd_drawLayerInst_EffectData(layerNum_);
-    lcd_drawLayerInst_ReverbData(layerNum_);
+    lcd_drawLayerInst_OutData(layerNum_);
 }
 
 void Controller::lcd_drawLayerInst_InstData(uint8_t layerNum_) {
@@ -11673,40 +11649,13 @@ void Controller::lcd_drawLayerInst_ProbabilityData(uint8_t layerNum_) {
     lcd.drawText(kLfoNameDataLibrary[layer.lfoProbability].nameShortR, kMenuSignTextSize, kMenuSignBoxX[7], kMenuSignBoxY[7]);
 }
 
-void Controller::lcd_drawLayerInst_EqData(uint8_t layerNum_) {
-    /// @brief Draws EQ routing assignment value.
+void Controller::lcd_drawLayerInst_OutData(uint8_t layerNum_) {
+    /// @brief Draws the layer's destination (where its sound enters the processing chain).
 
     // 1. VALUE DRAW
-    // Draw EQ routing status text.
+    // Draw destination name.
     lcd_setMenuDataState(WHITE);
-    lcd.drawText(kLayerEqDataLibrary[layerLibrary[layerNum_].eq].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
-}
-
-void Controller::lcd_drawLayerInst_FilterData(uint8_t layerNum_) {
-    /// @brief Draws Filter routing assignment value.
-
-    // 1. VALUE DRAW
-    // Draw Filter routing status text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kLayerFilterDataLibrary[layerLibrary[layerNum_].filter].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
-}
-
-void Controller::lcd_drawLayerInst_EffectData(uint8_t layerNum_) {
-    /// @brief Draws Effect routing assignment value.
-
-    // 1. VALUE DRAW
-    // Draw Effect routing status text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kLayerEffectDataLibrary[layerLibrary[layerNum_].effect].nameLongR, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
-}
-
-void Controller::lcd_drawLayerInst_ReverbData(uint8_t layerNum_) {
-    /// @brief Draws Reverb routing assignment value.
-
-    // 1. VALUE DRAW
-    // Draw Reverb routing status text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kLayerReverbDataLibrary[layerLibrary[layerNum_].reverb].nameLongR, kMenuDataTextSize, kMenuDataX[7], kMenuDataY[7]);
+    lcd.drawText(kRouteDestDataLibrary[layerLibrary[layerNum_].mixerInMode].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
 }
 
 /* Lcd Layer Song Menu Functions ---------------------------------------------*/
@@ -20124,7 +20073,7 @@ void Controller::layerInst_setEq(uint8_t layerNum_, uint8_t eq_) {
 
         // 5. UI REFRESH
         // Refresh page-2 field when Layer Inst page-2 is visible.
-        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_EqData(layerNum_);
+        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_OutData(layerNum_);
     }
 }
 
@@ -20160,7 +20109,7 @@ void Controller::layerInst_setFilter(uint8_t layerNum_, uint8_t filter_) {
 
         // 5. UI REFRESH
         // Refresh page-2 field when Layer Inst page-2 is visible.
-        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_FilterData(layerNum_);
+        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_OutData(layerNum_);
     }
 }
 
@@ -20196,7 +20145,7 @@ void Controller::layerInst_setEffect(uint8_t layerNum_, uint8_t effect_) {
 
         // 5. UI REFRESH
         // Refresh page-2 field when Layer Inst page-2 is visible.
-        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_EffectData(layerNum_);
+        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_OutData(layerNum_);
     }
 }
 
@@ -20230,7 +20179,7 @@ void Controller::layerInst_setReverb(uint8_t layerNum_, uint8_t reverb_) {
 
         // 5. UI REFRESH
         // Refresh page-2 field when Layer Inst page-2 is visible.
-        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_ReverbData(layerNum_);
+        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_OutData(layerNum_);
     }
 }
 
@@ -20240,20 +20189,22 @@ void Controller::layerInst_calculateMixMode(uint8_t layerNum_) {
     // 1. ROUTING PRIORITY RESOLUTION
     // Apply fixed priority chain to choose single mixer input source.
     Layer& layer = layerLibrary[layerNum_];
-    if (layer.eq) {
-        layer.mixerInMode = MIXER_IN_EQ;
-    } else if (layer.filter == 2) {
-        layer.mixerInMode = MIXER_IN_FILTER_0;
-    } else if (layer.filter == 1) {
-        layer.mixerInMode = MIXER_IN_FILTER_1;
-    } else if (layer.effect == 2) {
-        layer.mixerInMode = MIXER_IN_EFFECT_0;
-    } else if (layer.effect == 1) {
-        layer.mixerInMode = MIXER_IN_EFFECT_1;
-    } else if (layer.reverb) {
-        layer.mixerInMode = MIXER_IN_REVERB;
-    } else {
-        layer.mixerInMode = MIXER_IN_SEND;
+    layer.mixerInMode = (MixerInMode)routeEntryFromLegacy(layer.eq, layer.filter, layer.effect, layer.reverb);
+}
+
+void Controller::layerInst_setOut(uint8_t layerNum_, uint8_t out_) {
+    /// @brief Sets the layer's destination (OUT field). Writes the four stored routing settings
+    ///        the way the old EQ/FILTER/EFFECT/REVERB fields did, so files stay compatible.
+
+    if ((out_ >= kMinLayerOut) && (out_ <= kMaxLayerOut)) {
+        Layer& layer = layerLibrary[layerNum_];
+        const uint8_t* legacy = kRouteLegacyFromEntry[out_];
+        layer.eq = legacy[0];
+        layer.filter = legacy[1];
+        layer.effect = legacy[2];
+        layer.reverb = legacy[3];
+        layerInst_calculateMixMode(layerNum_);
+        if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_OutData(layerNum_);
     }
 }
 
@@ -21768,6 +21719,10 @@ void Controller::triggerReset() {
 void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffer_) {
     /// @brief Orchestrates the complete real-time audio processing pipeline, managing signal generation, sequential DSP stages, and final output buffering.
 
+#ifdef DSP_PROFILE
+    const uint32_t dspStart = DWT_CYCCNT;
+#endif
+
     // 0. I2S ERROR FLAG POLL
     // Count and clear overrun/underrun. The HAL never enables these interrupts, so polling
     // here is the only visibility; an rx overrun can permanently shift I2S word alignment.
@@ -21794,24 +21749,64 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
         // Process active layer sample playback.
         processAudioLayer();
 
-        // 3. SERIAL DSP CHAIN
-        // Run EQ, Filter, Effect, and Reverb stages in order.
-        processAudioEq();
-
-        // Dual-bus filtering stage.
-        processAudioFilter();
-
-        // Dual-bus effect stage.
-        processAudioEffect();
-
-        // Global reverb stage.
-        processAudioReverb();
+        // 3. ROUTED DSP
+        // Every source goes to its destination node, then the modules run in order
+        // (EQ, Filter 1, Filter 2, FX 1, FX 2, Reverb), each passing its output on as set in routePatch.
+        processAudioRouting();
 
         // 4. FINAL OUTPUT PROCESSING
         // Apply final mix and write to I2S output buffer.
         processAudioSend(outputBuffer_);
     }
+
+#ifdef DSP_PROFILE
+    // 5. LOAD MEASUREMENT
+    // Unsigned subtraction handles the 32-bit cycle counter wrapping.
+    const uint32_t dspCycles = DWT_CYCCNT - dspStart;
+    dspCyclesSum += dspCycles;
+    dspBlocks += 1;
+    if (dspCycles > dspCyclesPeak) dspCyclesPeak = dspCycles;
+#endif
 }
+
+#ifdef DSP_PROFILE
+void Controller::lcd_drawDspProfile() {
+    /// @brief Shows DSP load as a share of the audio block time, refreshed twice a second.
+    ///        AVG and PEAK cover the last half second, MAX everything since power-on.
+
+    if ((menu == INIT_MENU) || (menu == TEST_MENU)) return;
+    if ((HAL_GetTick() - dspLastDrawTick) < 500) return;
+    dspLastDrawTick = HAL_GetTick();
+
+    // Snapshot and reset the interval counters with the audio interrupt held off.
+    __disable_irq();
+    const uint32_t sum = dspCyclesSum, blocks = dspBlocks, peak = dspCyclesPeak;
+    dspCyclesSum = 0;
+    dspBlocks = 0;
+    dspCyclesPeak = 0;
+    __enable_irq();
+    if (blocks == 0) return;
+    if (peak > dspCyclesPeakAll) dspCyclesPeakAll = peak;
+
+    // Cycles available per block: core clock x block length.
+    const float budget = (float)SystemCoreClock * (float)I2S_BLOCK_SIZE / AUDIO_SAMPLE_RATE;
+    // Tenths of a percent as integers: newlib-nano's printf has no %f.
+    const unsigned long avg = (unsigned long)(1000.0f * ((float)sum / (float)blocks) / budget);
+    const unsigned long pk = (unsigned long)(1000.0f * (float)peak / budget);
+    const unsigned long mx = (unsigned long)(1000.0f * (float)dspCyclesPeakAll / budget);
+
+    char text[96];
+    int len = snprintf(text, sizeof(text), "DSP AVG %3lu.%lu%%  PEAK %3lu.%lu%%  MAX %3lu.%lu%%  UDR %3lu  OVR %3lu",
+                       avg / 10, avg % 10, pk / 10, pk % 10, mx / 10, mx % 10, (unsigned long)i2sUdrCount, (unsigned long)i2sOvrCount);
+    if (len < 0) return;
+
+    lcd.setForeColor(YELLOW);
+    lcd.setBackColor(BLACK);
+    lcd.setAlignment(CENTER);
+    lcd.setFont(FONT_05x07);
+    lcd.drawText(text, strlen(text), 480, 524);
+}
+#endif
 
 // Scale applied to the summed L+R input. 2^-32 maps a full-scale ADC pair to 1.0, which is
 // the natural mapping and costs nothing in SNR - it undoes an attenuation rather than adding
@@ -22153,42 +22148,62 @@ void Controller::processAudioLayer() {
     }
 }
 
-void Controller::processAudioEq() {
-    /// @brief Accumulates multi-source audio and processes it through a sequential 6-band parametric EQ chain including Low Shelf, High Shelf, and four Peak filters.
+void Controller::processAudioRouting() {
+    /// @brief Routes every source to its destination node and runs the modules in order,
+    ///        each passing its output to the nodes set in routePatch (see Routing.h).
 
-    // 1. EQ BUS RESET
-    // Clear EQ accumulation buffer for current block.
-    memset(audioEq, 0, I2S_BLOCK_SIZE * sizeof(float));
-
-    // 2. INPUT ACCUMULATION
-    // Accumulate line-in, metronome, and layer signals routed to EQ bus.
-    if (mixer.liMixerInMode == MIXER_IN_EQ) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            audioEq[i] += audioReceive[i];
-        }
-    }
-
-    // Accumulate metronome signal
-    if (metroPlayData.mixerInMode == MIXER_IN_EQ) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            audioEq[i] += audioMetronome[i];
-        }
-    }
-
-    // Accumulate all active layer signals
+    // 1. SOURCES AND THEIR DESTINATIONS
+    // Layers use the destination latched when their current note was triggered.
+    const float* sources[2 + kLayerLibrarySize];
+    uint8_t masks[2 + kLayerLibrarySize];
+    sources[0] = audioReceive;
+    masks[0] = routeMaskFromEntry(mixer.liMixerInMode);
+    sources[1] = audioMetronome;
+    masks[1] = routeMaskFromEntry(metroPlayData.mixerInMode);
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-        if (layerPlayData[i].activeBeatPlayData.mixerInMode == MIXER_IN_EQ) {
-            for (uint16_t k = 0; k < I2S_BLOCK_SIZE; k++) {
-                audioEq[k] += audioLayer[i][k];
-            }
-        }
+        sources[2 + i] = audioLayer[i];
+        masks[2 + i] = routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode);
     }
 
-    // 3. BYPASS CHECK
+    // 2. NODE BUFFERS
+    // Each module processes its own input buffer in place; the reverb also fills the right channel.
+    const RouteBuffers buffers = {{audioEq, audioFilter[0], audioFilter[1], audioEffect[0], audioEffect[1], audioReverb_L}, audioReverb_R, audioSend_L, audioSend_R};
+
+    // 3. RUN
+    routeBlock<I2S_BLOCK_SIZE>(routePatch, buffers, sources, masks, 2 + kLayerLibrarySize, [this](uint8_t module_) {
+        switch (module_) {
+            case NODE_EQ:
+                processAudioEq();
+                break;
+            case NODE_F1:
+                processAudioFilter(0);
+                break;
+            case NODE_F2:
+                processAudioFilter(1);
+                break;
+            case NODE_FX1:
+                processAudioEffect(0);
+                break;
+            case NODE_FX2:
+                processAudioEffect(1);
+                break;
+            case NODE_REV:
+                processAudioReverb();
+                break;
+            default:
+                break;
+        }
+    });
+}
+
+void Controller::processAudioEq() {
+    /// @brief Processes the EQ node's routed input (audioEq) in place through the 6-band chain: low shelf, high shelf and four peaks.
+
+    // 1. BYPASS CHECK
     // Early return when EQ and EQ transition engines are inactive.
     if (!eq.active && !eq.genTransition.active) return;
 
-    // 4. ACTIVE BAND RESOLUTION
+    // 2. ACTIVE BAND RESOLUTION
     // Mark active bands where gain differs from zero.
     bool activeLS = (eq.gainLowShelf != kEqGainZero);
     bool activeHS = (eq.gainHighShelf != kEqGainZero);
@@ -22197,7 +22212,7 @@ void Controller::processAudioEq() {
     bool activeP2 = (eq.gainPeak[2] != kEqGainZero);
     bool activeP3 = (eq.gainPeak[3] != kEqGainZero);
 
-    // 5. BIQUAD CHAIN PROCESSING
+    // 3. BIQUAD CHAIN PROCESSING
     // Process sample-by-sample through enabled EQ stages.
     for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
         float input = audioEq[i];
@@ -22220,172 +22235,35 @@ void Controller::processAudioEq() {
     }
 }
 
-void Controller::processAudioFilter() {
-    /// @brief Accumulates audio from EQ, Line-in, Metronome, and Layers into two filter buses and processes them serially through biquad filter engines.
-
-    // 1. FILTER BUS RESET
-    // Clear both filter buses before accumulation.
-    memset(audioFilter[0], 0, I2S_BLOCK_SIZE * sizeof(float));
-    memset(audioFilter[1], 0, I2S_BLOCK_SIZE * sizeof(float));
-
-    // 2. INPUT ACCUMULATION
-    // Route EQ, line-in, metronome, and layer signals into filter buses.
-    for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-        audioFilter[0][i] += audioEq[i];
-    }
-
-    // Accumulate line-in signal based on routing mode
-    if (mixer.liMixerInMode == MIXER_IN_FILTER_0) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) audioFilter[0][i] += audioReceive[i];
-    } else if (mixer.liMixerInMode == MIXER_IN_FILTER_1) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) audioFilter[1][i] += audioReceive[i];
-    }
-
-    // Accumulate metronome signal if active
-    if (metroPlayData.active) {
-        if (metroPlayData.mixerInMode == MIXER_IN_FILTER_0) {
-            for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) audioFilter[0][i] += audioMetronome[i];
-        } else if (metroPlayData.mixerInMode == MIXER_IN_FILTER_1) {
-            for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) audioFilter[1][i] += audioMetronome[i];
-        }
-    }
-
-    // Accumulate all active layer signals based on their routing
-    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-        MixerInMode mode = (MixerInMode)layerPlayData[i].activeBeatPlayData.mixerInMode;
-        if (mode == MIXER_IN_FILTER_0) {
-            for (int j = 0; j < I2S_BLOCK_SIZE; j++) audioFilter[0][j] += audioLayer[i][j];
-        } else if (mode == MIXER_IN_FILTER_1) {
-            for (int j = 0; j < I2S_BLOCK_SIZE; j++) audioFilter[1][j] += audioLayer[i][j];
-        }
-    }
-
-    // 3. FILTER ENGINE 0 PROCESSING
-    // Process bus-0 through filter-0 and feed result into bus-1.
-    if ((filter[0].active) || (filter[0].genTransition.active)) {
+void Controller::processAudioFilter(uint8_t filterNum_) {
+    /// @brief Processes one filter node's routed input (audioFilter[filterNum_]) in place.
+    ///        A filter that is off leaves the buffer untouched, so it passes the signal through.
+    Filter& filter_ = filter[filterNum_];
+    if ((filter_.active) || (filter_.genTransition.active)) {
+        float* buffer = audioFilter[filterNum_];
         for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            float audio = audioFilter[0][i];
-            audio = processAudioFilterHelper(0, audio);
-            audioFilter[0][i] = audio;
-            audioFilter[1][i] += audio;  // Accumulate processed output into Bus 1
-        }
-    } else {
-        // Bypass: Filter 0 is inactive, sum raw Bus 0 signal into Bus 1
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            audioFilter[1][i] += audioFilter[0][i];
-        }
-    }
-
-    // 4. FILTER ENGINE 1 PROCESSING
-    // Process bus-1 through filter-1 before next stage.
-    if ((filter[1].active) || (filter[1].genTransition.active)) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            float audio = audioFilter[1][i];
-            audio = processAudioFilterHelper(1, audio);
-            audioFilter[1][i] = audio;
+            buffer[i] = processAudioFilterHelper(filterNum_, buffer[i]);
         }
     }
 }
 
-void Controller::processAudioEffect() {
-    /// @brief Accumulates audio sources into two parallel effect buses and processes them serially through internal effect engines with transition support.
-
-    // 1. EFFECT BUS RESET
-    // Clear both effect buses before accumulation.
-    memset(audioEffect[0], 0, I2S_BLOCK_SIZE * sizeof(float));
-    memset(audioEffect[1], 0, I2S_BLOCK_SIZE * sizeof(float));
-
-    // 2. INPUT ACCUMULATION
-    // Route filter output, line-in, metronome, and layer signals into effect buses.
-    for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-        audioEffect[0][i] += audioFilter[1][i];
-    }
-
-    // Accumulate line-in based on routing mode
-    if (mixer.liMixerInMode == MIXER_IN_EFFECT_0) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) audioEffect[0][i] += audioReceive[i];
-    } else if (mixer.liMixerInMode == MIXER_IN_EFFECT_1) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) audioEffect[1][i] += audioReceive[i];
-    }
-
-    // Accumulate metronome signal if active
-    if (metroPlayData.active) {
-        if (metroPlayData.mixerInMode == MIXER_IN_EFFECT_0) {
-            for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) audioEffect[0][i] += audioMetronome[i];
-        } else if (metroPlayData.mixerInMode == MIXER_IN_EFFECT_1) {
-            for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) audioEffect[1][i] += audioMetronome[i];
-        }
-    }
-
-    // Accumulate all active layer signals based on their routing
-    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-        MixerInMode mode = (MixerInMode)layerPlayData[i].activeBeatPlayData.mixerInMode;
-        if (mode == MIXER_IN_EFFECT_0) {
-            for (int j = 0; j < I2S_BLOCK_SIZE; j++) audioEffect[0][j] += audioLayer[i][j];
-        } else if (mode == MIXER_IN_EFFECT_1) {
-            for (int j = 0; j < I2S_BLOCK_SIZE; j++) audioEffect[1][j] += audioLayer[i][j];
-        }
-    }
-
-    // 3. EFFECT ENGINE 0 PROCESSING
-    // Process bus-0 through effect-0 and feed result into bus-1.
-    if ((effect[0].active) || (effect[0].genTransition.active)) {
+void Controller::processAudioEffect(uint8_t effectNum_) {
+    /// @brief Processes one effect node's routed input (audioEffect[effectNum_]) in place.
+    ///        An effect that is off leaves the buffer untouched, so it passes the signal through.
+    Effect& effect_ = effect[effectNum_];
+    if ((effect_.active) || (effect_.genTransition.active)) {
+        float* buffer = audioEffect[effectNum_];
         for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            float audio = audioEffect[0][i];
-            audio = processAudioEffectHelper(0, audio);
-            audioEffect[0][i] = audio;
-            audioEffect[1][i] += audio;  // Send processed output to Bus 1
-        }
-    } else {
-        // Bypass: Effect 0 is inactive, sum raw Bus 0 signal into Bus 1
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            audioEffect[1][i] += audioEffect[0][i];
-        }
-    }
-
-    // 4. EFFECT ENGINE 1 PROCESSING
-    // Process bus-1 through effect-1 before reverb stage.
-    if ((effect[1].active) || (effect[1].genTransition.active)) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            float audio = audioEffect[1][i];
-            audio = processAudioEffectHelper(1, audio);
-            audioEffect[1][i] = audio;
+            buffer[i] = processAudioEffectHelper(effectNum_, buffer[i]);
         }
     }
 }
 
 void Controller::processAudioReverb() {
-    /// @brief Accumulates inputs and applies a damped stereo reverb with pre-delay and surround enhancement.
+    /// @brief Processes the reverb node's routed input (audioReverb_L) into the stereo pair audioReverb_L/R:
+    ///        damped reverb with pre-delay and surround. When off, the input is copied to both channels.
 
-    // 1. REVERB BUS RESET
-    // Clear stereo reverb accumulation buffers for current block.
-    memset(audioReverb_L, 0, I2S_BLOCK_SIZE * sizeof(float));
-    memset(audioReverb_R, 0, I2S_BLOCK_SIZE * sizeof(float));
-
-    // 2. INPUT ACCUMULATION
-    // Sum effect, line-in, metronome, and layer signals into left reverb input.
-    for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-        audioReverb_L[i] += audioEffect[1][i];
-    }
-
-    // Accumulate line-in
-    if (mixer.liMixerInMode == MIXER_IN_REVERB) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) audioReverb_L[i] += audioReceive[i];
-    }
-
-    // Accumulate metronome
-    if (metroPlayData.active && metroPlayData.mixerInMode == MIXER_IN_REVERB) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) audioReverb_L[i] += audioMetronome[i];
-    }
-
-    // Accumulate layers
-    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-        if (layerPlayData[i].activeBeatPlayData.mixerInMode == MIXER_IN_REVERB) {
-            for (uint16_t j = 0; j < I2S_BLOCK_SIZE; j++) audioReverb_L[j] += audioLayer[i][j];
-        }
-    }
-
-    // 3. REVERB ENGINE PROCESSING
+    // 1. REVERB ENGINE PROCESSING
     // Run pre-delay, comb/all-pass, and surround output generation.
     if ((reverb.active) || (reverb.genTransition.active)) {
         // Cache parameters locally for faster access during the sample loop
@@ -22473,49 +22351,16 @@ void Controller::processAudioReverb() {
 }
 
 void Controller::processAudioSend(uint32_t* outputBuffer) {
-    /// @brief Accumulates all audio sources, applies master volume and LPF, and performs final output processing including soft clipping and peak detection.
+    /// @brief Takes the routed master pair (audioSend_L/R), applies master volume and LPF, and performs final output processing including soft clipping and peak detection.
 
-    // 1. SEND BUS ACCUMULATION
-    // Merge reverb output with routed line-in, metronome, and layer signals.
-    memcpy(audioSend_L, audioReverb_L, I2S_BLOCK_SIZE * sizeof(float));
-    memcpy(audioSend_R, audioReverb_R, I2S_BLOCK_SIZE * sizeof(float));
-
-    // Accumulate line-in signal
-    if (mixer.liMixerInMode == MIXER_IN_SEND) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            audioSend_L[i] += audioReceive[i];
-            audioSend_R[i] += audioReceive[i];
-        }
-    }
-
-    // Accumulate metronome signal
-    if (metroPlayData.active && metroPlayData.mixerInMode == MIXER_IN_SEND) {
-        for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            audioSend_L[i] += audioMetronome[i];
-            audioSend_R[i] += audioMetronome[i];
-        }
-    }
-
-    // Accumulate all active layer signals
-    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-        if (layerPlayData[i].activeBeatPlayData.mixerInMode == MIXER_IN_SEND) {
-            float* layerBuffer = audioLayer[i];
-            for (uint16_t j = 0; j < I2S_BLOCK_SIZE; j++) {
-                float audio = layerBuffer[j];
-                audioSend_L[j] += audio;
-                audioSend_R[j] += audio;
-            }
-        }
-    }
-
-    // 2. MASTER MUTE CHECK
+    // 1. MASTER MUTE CHECK
     // Output silence and return when master mute is enabled.
     if (mixer.masterMute) {
         memset(outputBuffer, 0, I2S_BLOCK_SIZE * I2S_CHANNEL_COUNT * sizeof(uint32_t));
         return;
     }
 
-    // 3. FINAL OUTPUT FORMATTING
+    // 2. FINAL OUTPUT FORMATTING
     // Apply gain/LPF/peak/clipping and write interleaved I2S samples.
     for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
         float outL = audioSend_L[i];

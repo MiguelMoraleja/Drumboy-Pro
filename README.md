@@ -79,6 +79,8 @@ make package        # build/Drumboy_Pro_Fw_01_04.bin, ready for the SD card
 make -C "../tests"  # fill engine tests, run on the PC
 ```
 
+For performance work, `make BUILD=build-profile PROFILE=1 package` makes a measurement build (`Drumboy_Pro_Fw_01_04_dsp.bin`) that shows the DSP load and I2S error counts at the bottom of the screen. Normal builds don't include it.
+
 This needs `arm-none-eabi-gcc` (on Ubuntu: `apt install gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib`). `02 Software/tools/package_firmware.py --check <file>` validates a package the same way the bootloader does.
 
 Every push runs the tests and a warning-free build in GitHub Actions. Our own code (`Core/`) builds with zero warnings; keep it that way, since a new warning is often a real bug.

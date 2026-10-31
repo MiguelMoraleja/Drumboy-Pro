@@ -812,6 +812,7 @@ void Controller::loadSystemPreset() {
                         metro_setPrecount((bool)dataSystemPreset[13]);
                         metro_setSample(dataSystemPreset[14]);
                         metro_setVolume(dataSystemPreset[15]);
+                        routing_setMetroOut(routeUnpackMetro((uint8_t)dataSystemPreset[11]));
 
                         // 6. I/O & SYNC PARAMETER APPLY
                         // Apply persisted sync and MIDI routing parameters.
@@ -863,7 +864,7 @@ void Controller::saveSystemPreset() {
             dataSystemPreset[8] = (uint8_t)mixer.masterMute;
             dataSystemPreset[9] = (uint8_t)mixer.hpMute;
             dataSystemPreset[10] = (uint8_t)mixer.loMute;
-            dataSystemPreset[11] = (uint8_t)mixer.liMute;
+            dataSystemPreset[11] = routePackMetro((uint8_t)mixer.liMute, metroOut);  // + metronome destination (Routing.h)
 
             // Metronome Configurations
             dataSystemPreset[12] = (uint8_t)metronome.active;
@@ -5568,6 +5569,9 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                     reverb_setDry(data[173]);
                     reverb_setWet(data[174]);
 
+                    // Module destinations (Routing.h); files without them get the default chain.
+                    routing_setPatch(reinterpret_cast<const uint8_t*>(data));
+
                     // LFO modulation settings
                     for (uint8_t i = 0; i < kLfoLibrarySize; i++) {
                         uint16_t offset = 180 + (i * 6);
@@ -5966,7 +5970,11 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
         data[offset + 20] = layer.mute;
         data[offset + 21] = layer.fill;
         data[offset + 22] = layer.style;
+        data[offset + kRouteFileLayerByte] = routeMaskFromEntry(layer.mixerInMode);
     }
+
+    // Module destinations and the routing marker (Routing.h).
+    routeWritePatch(data, routePatch);
 
     // 2.12 ASSET REFERENCES
     // Store per-layer instrument/sample activity flags and names.
@@ -6364,6 +6372,9 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                     reverb_setDry(data[173]);
                     reverb_setWet(data[174]);
 
+                    // Module destinations (Routing.h); files without them get the default chain.
+                    routing_setPatch(reinterpret_cast<const uint8_t*>(data));
+
                     // LFO modulation settings
                     for (uint8_t i = 0; i < kLfoLibrarySize; i++) {
                         uint16_t offset = 180 + (i * 6);
@@ -6692,7 +6703,11 @@ SdResult Controller::sd_saveDrumkit(uint8_t kitNum_) {
         data[offset + 20] = layer.mute;
         data[offset + 21] = layer.fill;
         data[offset + 22] = layer.style;
+        data[offset + kRouteFileLayerByte] = routeMaskFromEntry(layer.mixerInMode);
     }
+
+    // Module destinations and the routing marker (Routing.h).
+    routeWritePatch(data, routePatch);
 
     // 2.12 ASSET REFERENCES
     // Store per-layer instrument/sample activity flags and names.
@@ -20191,6 +20206,47 @@ void Controller::layerInst_calculateMixMode(uint8_t layerNum_) {
     Layer& layer = layerLibrary[layerNum_];
     layer.mixerInMode = (MixerInMode)routeEntryFromLegacy(layer.eq, layer.filter, layer.effect, layer.reverb);
 }
+
+/* Routing Functions ---------------------------------------------------------*/
+
+void Controller::routing_setModuleOut(uint8_t module_, uint8_t out_) {
+    /// @brief Sets where a module (EQ, Filter 1/2, Effect 1/2) sends its output: a later module
+    ///        or MASTER. The audio engine crossfades to the new destination.
+
+    if ((module_ < NODE_REV) && (out_ < kRouteNodeCount) && routeModuleDestValid(module_, routeBit(out_))) {
+        routePatch.moduleDest[module_] = routeBit(out_);
+    }
+}
+
+void Controller::routing_setMetroOut(uint8_t out_) {
+    /// @brief Sets where the metronome click goes (global setting, saved in the system preset).
+
+    if (out_ < kRouteNodeCount) {
+        metroOut = out_;
+        if (systemPresetSaveActive) {
+            stopSystemPresetTimer();
+            startSystemPresetTimer();
+        }
+    }
+}
+
+void Controller::routing_setPatch(const uint8_t* kit_) {
+    /// @brief Loads the module destinations from a kit/song file section (default chain if absent).
+
+    RoutePatch patch;
+    routeReadPatch(kit_, patch);
+    for (uint8_t m = 0; m < kRouteModuleCount; m++) routePatch.moduleDest[m] = patch.moduleDest[m];
+}
+
+void Controller::routing_reset() {
+    /// @brief Restores the default chain (EQ -> Filter 1 -> Filter 2 -> FX 1 -> FX 2 -> Reverb) and the
+    ///        metronome's default destination (reverb).
+
+    for (uint8_t m = 0; m < kRouteModuleCount; m++) routePatch.moduleDest[m] = kDefaultRoutePatch.moduleDest[m];
+    metroOut = NODE_REV;
+}
+
+/* Layer Instrument Functions ------------------------------------------------*/
 
 void Controller::layerInst_setOut(uint8_t layerNum_, uint8_t out_) {
     /// @brief Sets the layer's destination (OUT field). Writes the four stored routing settings

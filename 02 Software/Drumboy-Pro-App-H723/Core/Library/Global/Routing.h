@@ -85,6 +85,46 @@ const uint8_t kRouteLegacyFromEntry[kRouteNodeCount][4] = {
     {0, 0, 0, 0},  // Master
 };
 
+// File storage. Kit and song files share a 1500-byte kit section whose spare bytes hold the patch:
+//   490-495  module destinations (EQ ... Reverb), one mask each
+//   498      marker 0xA5: the patch bytes are valid
+//   240 + 25*layer + 23  the layer's destination mask (its entry point is also kept in the four
+//            old settings at +16..+19, which stay authoritative so older firmware reads the file)
+// Files without the marker (older firmware, or the blank-kit template whose spare bytes are
+// spaces) load the default chain. An invalid module mask falls back to the default for that module.
+const uint16_t kRouteFileModuleOffset = 490;
+const uint16_t kRouteFileMarkerOffset = 498;
+const uint8_t kRouteFileMarker = 0xA5;
+const uint8_t kRouteFileLayerByte = 23;
+
+inline void routeWritePatch(uint8_t* kit_, const RoutePatch& patch_) {
+    for (uint8_t m = 0; m < kRouteModuleCount; m++) kit_[kRouteFileModuleOffset + m] = patch_.moduleDest[m];
+    kit_[kRouteFileMarkerOffset] = kRouteFileMarker;
+}
+
+// Returns true when the file carried a patch.
+inline bool routeReadPatch(const uint8_t* kit_, RoutePatch& patch_) {
+    patch_ = kDefaultRoutePatch;
+    if (kit_[kRouteFileMarkerOffset] != kRouteFileMarker) return false;
+    for (uint8_t m = 0; m < kRouteModuleCount; m++) {
+        const uint8_t mask = kit_[kRouteFileModuleOffset + m];
+        if (routeModuleDestValid(m, mask)) patch_.moduleDest[m] = mask;
+    }
+    return true;
+}
+
+// The metronome destination is a global setting, like the other metronome settings, kept in
+// the system preset's byte 11 upper nibble as entry + 1 (byte 11 bit 0 is the line-in mute,
+// saved but never loaded; older firmware ignores the byte). 0 = not set: the reverb, as before.
+inline uint8_t routePackMetro(uint8_t presetByte_, uint8_t metroEntry_) {
+    return static_cast<uint8_t>((presetByte_ & 0x0F) | ((metroEntry_ < kRouteNodeCount ? metroEntry_ + 1 : 0) << 4));
+}
+
+inline uint8_t routeUnpackMetro(uint8_t presetByte_) {
+    const uint8_t v = presetByte_ >> 4;
+    return (v >= 1 && v <= kRouteNodeCount) ? static_cast<uint8_t>(v - 1) : static_cast<uint8_t>(NODE_REV);
+}
+
 // Buffers for one block. node[m] is module m's input, processed in place to become its output.
 // The Reverb writes its left output in place and its right output to reverbRight.
 struct RouteBuffers {

@@ -295,7 +295,39 @@ static void testCrossfades() {
     CHECK(worstStep <= 1.0f / kRouteFadeLength + 1e-5f, "a share jumped by %g in one sample", (double)worstStep);
 }
 
+static void testFileStorage() {
+    uint8_t kit[1500];
+    RoutePatch p;
+    // Old file (zeros) and the blank-kit template (spaces): default chain.
+    memset(kit, 0, sizeof(kit));
+    CHECK(!routeReadPatch(kit, p) && memcmp(&p, &kDefaultRoutePatch, sizeof(p)) == 0, "zeros must load the default chain");
+    memset(kit, ' ', sizeof(kit));
+    CHECK(!routeReadPatch(kit, p) && memcmp(&p, &kDefaultRoutePatch, sizeof(p)) == 0, "template spaces must load the default chain");
+    // Round trip of a parallel patch.
+    RoutePatch par = {{routeBit(NODE_FX2), routeBit(NODE_MASTER), static_cast<uint8_t>(routeBit(NODE_FX1) | routeBit(NODE_MASTER)), routeBit(NODE_REV), routeBit(NODE_MASTER), routeBit(NODE_MASTER)}};
+    memset(kit, 0, sizeof(kit));
+    routeWritePatch(kit, par);
+    CHECK(routeReadPatch(kit, p) && memcmp(&p, &par, sizeof(p)) == 0, "patch must round-trip");
+    // Only bytes 490-495 and 498 are touched.
+    for (uint16_t i = 0; i < sizeof(kit); i++)
+        if (!((i >= 490 && i <= 495) || i == 498)) CHECK(kit[i] == 0, "byte %u written", i);
+    // Invalid masks (backwards, reverb not to master) fall back per module.
+    kit[490 + NODE_F2] = routeBit(NODE_F1);   // backwards
+    kit[490 + NODE_REV] = routeBit(NODE_FX1); // reverb must feed the master
+    routeReadPatch(kit, p);
+    CHECK(p.moduleDest[NODE_F2] == kDefaultRoutePatch.moduleDest[NODE_F2] && p.moduleDest[NODE_REV] == routeBit(NODE_MASTER), "invalid masks must fall back");
+    CHECK(p.moduleDest[NODE_EQ] == par.moduleDest[NODE_EQ], "valid masks must survive next to invalid ones");
+    // Metronome destination in the system preset byte 11.
+    for (uint8_t mute = 0; mute <= 1; mute++)
+        for (uint8_t e = 0; e < kRouteNodeCount; e++) {
+            uint8_t b = routePackMetro(mute, e);
+            CHECK(routeUnpackMetro(b) == e && (b & 1) == mute, "metro %u mute %u", e, mute);
+        }
+    CHECK(routeUnpackMetro(0) == NODE_REV && routeUnpackMetro(1) == NODE_REV, "unset metronome route must be the reverb");
+}
+
 int main() {
+    testFileStorage();
     testLegacyConversion();
     testDefaultPatchMatchesLegacy();
     testParallelPaths();

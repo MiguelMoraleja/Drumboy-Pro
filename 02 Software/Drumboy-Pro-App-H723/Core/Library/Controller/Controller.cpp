@@ -22152,25 +22152,26 @@ void Controller::processAudioRouting() {
     /// @brief Routes every source to its destination node and runs the modules in order,
     ///        each passing its output to the nodes set in routePatch (see Routing.h).
 
-    // 1. SOURCES AND THEIR DESTINATIONS
-    // Layers use the destination latched when their current note was triggered.
-    const float* sources[2 + kLayerLibrarySize];
-    uint8_t masks[2 + kLayerLibrarySize];
-    sources[0] = audioReceive;
-    masks[0] = routeMaskFromEntry(mixer.liMixerInMode);
-    sources[1] = audioMetronome;
-    masks[1] = routeMaskFromEntry(metroPlayData.mixerInMode);
+    // 1. PATCH SNAPSHOT
+    // The UI edits routePatch from the main loop; take one consistent copy per block.
+    const RoutePatch patch = routePatch;
+
+    // 2. SOURCES AND THEIR DESTINATIONS
+    // Line-in and metronome run continuously and crossfade when re-routed. Layers use the
+    // destination latched when their current note was triggered, so they switch at the next hit.
+    RouteSource sources[2 + kLayerLibrarySize];
+    sources[0] = {audioReceive, routeMaskFromEntry(mixer.liMixerInMode), &lineInFade};
+    sources[1] = {audioMetronome, routeMaskFromEntry(metroOut), &metroFade};
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-        sources[2 + i] = audioLayer[i];
-        masks[2 + i] = routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode);
+        sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr};
     }
 
-    // 2. NODE BUFFERS
+    // 3. NODE BUFFERS
     // Each module processes its own input buffer in place; the reverb also fills the right channel.
     const RouteBuffers buffers = {{audioEq, audioFilter[0], audioFilter[1], audioEffect[0], audioEffect[1], audioReverb_L}, audioReverb_R, audioSend_L, audioSend_R};
 
-    // 3. RUN
-    routeBlock<I2S_BLOCK_SIZE>(routePatch, buffers, sources, masks, 2 + kLayerLibrarySize, [this](uint8_t module_) {
+    // 4. RUN
+    routeBlock<I2S_BLOCK_SIZE>(patch, routeState, buffers, sources, 2 + kLayerLibrarySize, [this](uint8_t module_) {
         switch (module_) {
             case NODE_EQ:
                 processAudioEq();

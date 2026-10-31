@@ -95,31 +95,105 @@ struct RouteBuffers {
 };
 
 // Adds a mono buffer into every node in mask_ (the master gets it in both channels).
+// gain_ (optional) scales each sample, for crossfades.
 template <uint16_t kBlock>
-inline void routeScatter(const RouteBuffers& buf_, const float* src_, uint8_t mask_) {
+inline void routeScatter(const RouteBuffers& buf_, const float* src_, uint8_t mask_, const float* gain_ = nullptr) {
     if (mask_ == 0) return;
-    for (uint8_t n = 0; n < kRouteModuleCount; n++) {
-        if (mask_ & routeBit(n)) {
+    for (uint8_t n = 0; n < kRouteNodeCount; n++) {
+        if (!(mask_ & routeBit(n))) continue;
+        if (n == NODE_MASTER) {
+            if (gain_) {
+                for (uint16_t i = 0; i < kBlock; i++) {
+                    const float v = src_[i] * gain_[i];
+                    buf_.masterLeft[i] += v;
+                    buf_.masterRight[i] += v;
+                }
+            } else {
+                for (uint16_t i = 0; i < kBlock; i++) {
+                    buf_.masterLeft[i] += src_[i];
+                    buf_.masterRight[i] += src_[i];
+                }
+            }
+        } else {
             float* dst = buf_.node[n];
-            for (uint16_t i = 0; i < kBlock; i++) dst[i] += src_[i];
-        }
-    }
-    if (mask_ & routeBit(NODE_MASTER)) {
-        for (uint16_t i = 0; i < kBlock; i++) {
-            buf_.masterLeft[i] += src_[i];
-            buf_.masterRight[i] += src_[i];
+            if (gain_) {
+                for (uint16_t i = 0; i < kBlock; i++) dst[i] += src_[i] * gain_[i];
+            } else {
+                for (uint16_t i = 0; i < kBlock; i++) dst[i] += src_[i];
+            }
         }
     }
 }
 
+// Click-free route changes. A continuously running signal (line-in, metronome, a module's
+// output) whose destination changes fades out of the old nodes while fading into the new ones
+// over kRouteFadeLength samples. A change that arrives during a fade waits until it has
+// finished, so fast encoder turns never cut a fade short. A route that has never been set
+// (kRouteUnset) takes its first destination at once.
+const uint8_t kRouteFadeLength = 64;  // samples, ~1.5 ms at 44.1 kHz
+const uint8_t kRouteUnset = 0xFF;
+
+struct RouteFade {
+    uint8_t mask = kRouteUnset;            // current destination
+    uint8_t previous = 0;                  // destination fading out
+    uint8_t position = kRouteFadeLength;   // samples into the running fade
+};
+
+inline bool routeFading(const RouteFade& fade_) { return fade_.position < kRouteFadeLength; }
+
+// Call once per block with the wanted destination.
+inline void routeFadeTarget(RouteFade& fade_, uint8_t mask_) {
+    if (fade_.mask == kRouteUnset) {
+        fade_.mask = mask_;
+        fade_.position = kRouteFadeLength;
+    } else if ((mask_ != fade_.mask) && !routeFading(fade_)) {
+        fade_.previous = fade_.mask;
+        fade_.mask = mask_;
+        fade_.position = 0;
+    }
+}
+
+// Adds src_ to its destination, crossfading if a fade is running, and advances the fade.
+template <uint16_t kBlock>
+inline void routeScatterFaded(const RouteBuffers& buf_, const float* src_, RouteFade& fade_) {
+    if (!routeFading(fade_)) {
+        routeScatter<kBlock>(buf_, src_, fade_.mask);
+        return;
+    }
+    float up[kBlock], down[kBlock];
+    for (uint16_t i = 0; i < kBlock; i++) {
+        float t = (float)(fade_.position + i + 1) / (float)kRouteFadeLength;
+        if (t > 1.0f) t = 1.0f;
+        up[i] = t;
+        down[i] = 1.0f - t;
+    }
+    routeScatter<kBlock>(buf_, src_, fade_.mask & fade_.previous);                                      // unchanged nodes
+    routeScatter<kBlock>(buf_, src_, static_cast<uint8_t>(fade_.mask & ~fade_.previous), up);          // new nodes
+    routeScatter<kBlock>(buf_, src_, static_cast<uint8_t>(fade_.previous & ~fade_.mask), down);        // old nodes
+    const uint16_t next = fade_.position + kBlock;
+    fade_.position = (next < kRouteFadeLength) ? static_cast<uint8_t>(next) : kRouteFadeLength;
+}
+
+// A source for one block: its buffer, where it goes, and its fade state. Sources that latch
+// their route per note (instrument layers) pass fade = nullptr and switch at the next hit.
+struct RouteSource {
+    const float* buffer;
+    uint8_t mask;
+    RouteFade* fade;
+};
+
+// Fade state of the module outputs, kept between blocks.
+struct RouteState {
+    RouteFade module[kRouteModuleCount];
+};
+
 // Runs one block: clears the node inputs and the master, adds every source into its
 // destinations, then processes the modules in order, each one passing its output on.
-//   sources_[s], sourceMasks_[s]: mono source buffers and their destinations
 //   process_(m): processes node m in place; a module that is switched off must leave its buffer
 //                unchanged (pass-through). The Reverb also writes reverbRight (zeroed beforehand),
 //                which it sets equal to its input when switched off.
 template <uint16_t kBlock, typename Process>
-inline void routeBlock(const RoutePatch& patch_, const RouteBuffers& buf_, const float* const* sources_, const uint8_t* sourceMasks_, uint8_t sourceCount_, Process process_) {
+inline void routeBlock(const RoutePatch& patch_, RouteState& state_, const RouteBuffers& buf_, RouteSource* sources_, uint8_t sourceCount_, Process process_) {
     // 1. CLEAR
     for (uint8_t n = 0; n < kRouteModuleCount; n++) memset(buf_.node[n], 0, kBlock * sizeof(float));
     memset(buf_.reverbRight, 0, kBlock * sizeof(float));
@@ -127,7 +201,15 @@ inline void routeBlock(const RoutePatch& patch_, const RouteBuffers& buf_, const
     memset(buf_.masterRight, 0, kBlock * sizeof(float));
 
     // 2. SCATTER SOURCES
-    for (uint8_t s = 0; s < sourceCount_; s++) routeScatter<kBlock>(buf_, sources_[s], sourceMasks_[s]);
+    for (uint8_t s = 0; s < sourceCount_; s++) {
+        RouteSource& src = sources_[s];
+        if (src.fade) {
+            routeFadeTarget(*src.fade, src.mask);
+            routeScatterFaded<kBlock>(buf_, src.buffer, *src.fade);
+        } else {
+            routeScatter<kBlock>(buf_, src.buffer, src.mask);
+        }
+    }
 
     // 3. PROCESS MODULES IN ORDER, PASSING EACH OUTPUT ON
     for (uint8_t m = 0; m < kRouteModuleCount; m++) {
@@ -142,7 +224,8 @@ inline void routeBlock(const RoutePatch& patch_, const RouteBuffers& buf_, const
         } else {
             // Only later nodes are allowed, so an output never lands in an already processed node.
             const uint8_t dest = patch_.moduleDest[m] & static_cast<uint8_t>(~((routeBit(m) << 1) - 1));
-            routeScatter<kBlock>(buf_, buf_.node[m], dest);
+            routeFadeTarget(state_.module[m], dest);
+            routeScatterFaded<kBlock>(buf_, buf_.node[m], state_.module[m]);
         }
     }
 }

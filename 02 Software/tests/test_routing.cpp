@@ -83,6 +83,15 @@ static void legacyChain(const State& s, float outL[N], float outR[N]) {
     }
 }
 
+// Old-style call: plain masks, no fades, fresh module state (every route snaps at once).
+template <typename Process>
+static void runBlock(const RoutePatch& patch, const RouteBuffers& buf, const float* const* src, const uint8_t* masks, uint8_t count, Process process) {
+    RouteSource sources[16];
+    for (uint8_t k = 0; k < count; k++) sources[k] = {src[k], masks[k], nullptr};
+    RouteState state;
+    routeBlock<N>(patch, state, buf, sources, count, process);
+}
+
 static void routedChain(const State& s, const RoutePatch& patch, float outL[N], float outR[N]) {
     static float node[6][N], revR[N];
     RouteBuffers buf = {{node[0], node[1], node[2], node[3], node[4], node[5]}, revR, outL, outR};
@@ -92,7 +101,7 @@ static void routedChain(const State& s, const RoutePatch& patch, float outL[N], 
         src[k] = s.src[k];
         masks[k] = routeMaskFromEntry(s.mode[k]);
     }
-    routeBlock<N>(patch, buf, src, masks, kSources, [&](uint8_t m) {
+    runBlock(patch, buf, src, masks, kSources, [&](uint8_t m) {
         if (m == NODE_REV) {
             for (uint16_t i = 0; i < N; i++) {
                 revR[i] = s.active[m] ? revRight(node[m][i]) : node[m][i];
@@ -144,7 +153,7 @@ static void testParallelPaths() {
     const float* srcs[4] = {src[0], src[1], src[2], src[3]};
     const uint8_t masks[4] = {routeBit(NODE_F1), routeBit(NODE_F2), routeBit(NODE_MASTER), routeBit(NODE_EQ)};
     RouteBuffers buf = {{node[0], node[1], node[2], node[3], node[4], node[5]}, revR, L, R};
-    routeBlock<N>(p, buf, srcs, masks, 4, [&](uint8_t m) {
+    runBlock(p, buf, srcs, masks, 4, [&](uint8_t m) {
         for (uint16_t i = 0; i < N; i++) node[m][i] *= prime[m];
         if (m == NODE_REV) for (uint16_t i = 0; i < N; i++) revR[i] = node[m][i];
     });
@@ -161,7 +170,7 @@ static void testParallelPaths() {
     // One source feeding two places at once: master + reverb.
     const uint8_t both[1] = {static_cast<uint8_t>(routeBit(NODE_MASTER) | routeBit(NODE_REV))};
     const float* one[1] = {src[0]};
-    routeBlock<N>(kDefaultRoutePatch, buf, one, both, 1, [&](uint8_t m) {
+    runBlock(kDefaultRoutePatch, buf, one, both, 1, [&](uint8_t m) {
         for (uint16_t i = 0; i < N; i++) node[m][i] *= prime[m];
         if (m == NODE_REV) for (uint16_t i = 0; i < N; i++) revR[i] = node[m][i];
     });
@@ -169,7 +178,7 @@ static void testParallelPaths() {
 
     // Empty mask mutes.
     const uint8_t mute[1] = {0};
-    routeBlock<N>(kDefaultRoutePatch, buf, one, mute, 1, [&](uint8_t) {});
+    runBlock(kDefaultRoutePatch, buf, one, mute, 1, [&](uint8_t) {});
     float sum = 0;
     for (uint16_t i = 0; i < N; i++) sum += std::fabs(L[i]) + std::fabs(R[i]);
     CHECK(sum == 0, "muted source reached the master");
@@ -207,11 +216,91 @@ static void testLegacyConversion() {
                 }
 }
 
+// Crossfades: with pass-through modules the master must equal the input on every sample,
+// whatever the route does, so a route change can never jump in level.
+static void testCrossfades() {
+    static float node[6][N], revR[N], L[N], R[N];
+    float dc[N];
+    for (uint16_t i = 0; i < N; i++) dc[i] = 1.0f;
+    RouteBuffers buf = {{node[0], node[1], node[2], node[3], node[4], node[5]}, revR, L, R};
+    auto passThrough = [&](uint8_t m) {
+        if (m == NODE_REV) memcpy(revR, node[m], sizeof(revR));
+    };
+
+    // A source: MASTER -> REVERB. First block snaps, then a 64-sample fade over two blocks.
+    RouteState state;
+    RouteFade fade;
+    RouteSource src = {dc, routeBit(NODE_MASTER), &fade};
+    routeBlock<N>(kDefaultRoutePatch, state, buf, &src, 1, passThrough);
+    CHECK(!routeFading(fade) && fade.mask == routeBit(NODE_MASTER), "first route must snap");
+    float reverbShare[3 * N];
+    src.mask = routeBit(NODE_REV);
+    for (int b = 0; b < 3; b++) {
+        routeBlock<N>(kDefaultRoutePatch, state, buf, &src, 1, [&](uint8_t m) {
+            if (m == NODE_REV) {
+                memcpy(revR, node[m], sizeof(revR));
+                for (uint16_t i = 0; i < N; i++) reverbShare[b * N + i] = node[m][i];
+            }
+        });
+        for (uint16_t i = 0; i < N; i++) CHECK(std::fabs(L[i] - 1.0f) < 1e-6f && std::fabs(R[i] - 1.0f) < 1e-6f, "block %d sample %u: level %g", b, i, (double)L[i]);
+    }
+    for (uint16_t i = 0; i < 3 * N; i++) {
+        float want = i < kRouteFadeLength ? (float)(i + 1) / kRouteFadeLength : 1.0f;
+        CHECK(std::fabs(reverbShare[i] - want) < 1e-6f, "reverb share at %u: %g want %g", i, (double)reverbShare[i], (double)want);
+    }
+
+    // A module output: EQ -> FX 2 instead of Filter 1, signal entering at EQ. Level stays 1.
+    RouteState st2;
+    RouteSource eqIn = {dc, routeBit(NODE_EQ), nullptr};
+    RoutePatch p = kDefaultRoutePatch;
+    routeBlock<N>(p, st2, buf, &eqIn, 1, passThrough);
+    p.moduleDest[NODE_EQ] = routeBit(NODE_FX2);
+    for (int b = 0; b < 3; b++) {
+        routeBlock<N>(p, st2, buf, &eqIn, 1, passThrough);
+        for (uint16_t i = 0; i < N; i++) CHECK(std::fabs(L[i] - 1.0f) < 1e-6f, "module route change: block %d sample %u level %g", b, i, (double)L[i]);
+    }
+    CHECK(!routeFading(st2.module[NODE_EQ]) && st2.module[NODE_EQ].mask == routeBit(NODE_FX2), "module fade must finish on FX 2");
+
+    // Turning the encoder fast: a new destination every block. With every module sending
+    // straight to the master, node m's input is exactly the source's share in m, so we can check
+    // that no share ever moves by more than one fade step per sample, across block boundaries
+    // too, and that the total at the master stays 1.
+    RoutePatch flat = {{routeBit(NODE_MASTER), routeBit(NODE_MASTER), routeBit(NODE_MASTER), routeBit(NODE_MASTER), routeBit(NODE_MASTER), routeBit(NODE_MASTER)}};
+    std::mt19937 rng(7);
+    std::uniform_int_distribution<int> dest(0, 6);
+    RouteState st3;
+    RouteFade f3;
+    RouteSource s3 = {dc, routeBit(NODE_MASTER), &f3};
+    routeBlock<N>(flat, st3, buf, &s3, 1, passThrough);  // first route snaps (by design); start from here
+    float prev[7] = {0, 0, 0, 0, 0, 0, 1};
+    float worstStep = 0;
+    for (int b = 0; b < 400; b++) {
+        s3.mask = routeBit((uint8_t)dest(rng));
+        float share[N][7] = {};
+        routeBlock<N>(flat, st3, buf, &s3, 1, [&](uint8_t m) {
+            for (uint16_t i = 0; i < N; i++) share[i][m] = node[m][i];
+            if (m == NODE_REV) memcpy(revR, node[m], sizeof(revR));
+        });
+        for (uint16_t i = 0; i < N; i++) {
+            float modules = 0;
+            for (uint8_t m = 0; m < 6; m++) modules += share[i][m];
+            share[i][6] = L[i] - modules;  // direct-to-master share
+            CHECK(std::fabs(L[i] - 1.0f) < 1e-5f, "fast changes: block %d sample %u level %g", b, i, (double)L[i]);
+            for (uint8_t m = 0; m < 7; m++) {
+                worstStep = std::fmax(worstStep, std::fabs(share[i][m] - prev[m]));
+                prev[m] = share[i][m];
+            }
+        }
+    }
+    CHECK(worstStep <= 1.0f / kRouteFadeLength + 1e-5f, "a share jumped by %g in one sample", (double)worstStep);
+}
+
 int main() {
     testLegacyConversion();
     testDefaultPatchMatchesLegacy();
     testParallelPaths();
     testValidation();
+    testCrossfades();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

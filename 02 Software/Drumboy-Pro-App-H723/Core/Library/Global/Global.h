@@ -6440,6 +6440,7 @@ static inline void resetLayerInstGraphCache(uint8_t layerNum_) {
 /*----------------------------------------------------------------------------*/
 
 #include "Fill.h"
+#include "Routing.h"
 
 static_assert(kMaxLayerFillType == kMaxFillType, "UI fill type range must match the fill library");
 

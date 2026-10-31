@@ -93,6 +93,7 @@ class Controller {
 
     volatile uint32_t i2sOvrCount = 0;                                  // I2S3 rx overruns; nonzero means word alignment may have shifted
     volatile uint32_t i2sUdrCount = 0;                                  // I2S3 tx underruns; nonzero means the audio isr missed its deadline
+    RoutePatch routePatch = kDefaultRoutePatch;                         // where each module's output goes (Routing.h)
 #ifdef DSP_PROFILE
     // DSP load measurement (make PROFILE=1): CPU cycles spent in processAudioBlock
     volatile uint32_t dspCyclesSum = 0;                                 // summed since the last readout
@@ -108,12 +109,12 @@ class Controller {
     float audioMetronome[I2S_BLOCK_SIZE];                               // Metronome click buffer
     float audioLayer[kLayerLibrarySize][I2S_BLOCK_SIZE];                // Individual layer audio buffers
 
-    float audioEq[I2S_BLOCK_SIZE];                                      // Post-EQ audio buffer
-    float audioFilter[kFilterLibrarySize][I2S_BLOCK_SIZE];              // Post-Filter audio buffers
-    float audioEffect[kEffectLibrarySize][I2S_BLOCK_SIZE];              // Post-Effect audio buffers
-    float audioReverb_L[I2S_BLOCK_SIZE];                                // Reverb Left channel
+    float audioEq[I2S_BLOCK_SIZE];                                      // EQ node: routed input, processed in place
+    float audioFilter[kFilterLibrarySize][I2S_BLOCK_SIZE];              // Filter 1/2 nodes: routed input, processed in place
+    float audioEffect[kEffectLibrarySize][I2S_BLOCK_SIZE];              // FX 1/2 nodes: routed input, processed in place
+    float audioReverb_L[I2S_BLOCK_SIZE];                                // Reverb node: routed input, then left output
     float audioReverb_R[I2S_BLOCK_SIZE];                                // Reverb Right channel
-    float audioSend_L[I2S_BLOCK_SIZE];                                  // Final Master Left buffer
+    float audioSend_L[I2S_BLOCK_SIZE];                                  // Master pair: everything routed to MASTER
     float audioSend_R[I2S_BLOCK_SIZE];                                  // Final Master Right buffer
     float audioPeak_L;                                                  // Peak meter value for Left channel
     float audioPeak_R;                                                  // Peak meter value for Right channel
@@ -1038,9 +1039,10 @@ class Controller {
     void processAudioReceive(uint32_t* inputtBuffer);
     void processAudioMetronome();
     void processAudioLayer();
+    void processAudioRouting();
     void processAudioEq();
-    void processAudioFilter();
-    void processAudioEffect();
+    void processAudioFilter(uint8_t filterNum_);
+    void processAudioEffect(uint8_t effectNum_);
     void processAudioReverb();
     void processAudioSend(uint32_t* outputBuffer);
 

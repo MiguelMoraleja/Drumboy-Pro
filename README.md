@@ -75,6 +75,17 @@ Built with **STM32CubeIDE**, written in C/C++ against the STM32 HAL.
 - Bootloader owns flash sector 0 (`0x08000000`–`0x0801FFFF`)
 - Application owns sectors 1–7 (`0x08020000`–`0x080FFFFF`), with the vector table relocated at startup
 
+### Prebuilt firmware
+
+`02 Software/Firmware/` holds SD-card update packages (36-byte header + application binary, see `Drumboy-Pro-Firmware-Builder.cpp`):
+
+| File | Version | Notes |
+|---|---|---|
+| `Drumboy_Pro_Fw_01_01.bin` | V1.01 | Original release, built from the application source in this repo |
+| `Drumboy_Pro_Fw_01_02.bin` | V1.02 | Adds 8 fill types (ROLL, TECHNO, BREAKS, GARAGE, TRIPLET, EUCLID, RATCHET, FOOTWORK) to the original 7. Its source is not in this repo yet |
+
+To update, copy **one** package to the SD card root and power on. The bootloader flashes the first file it finds matching `Drumboy_Pro_Fw?*.bin`, so don't leave more than one on the card. Songs saved on V1.02 with the new fill types should not be opened on V1.01, which doesn't range-check fill types on load.
+
 To flash over SWD, wire an ST-Link V2 to the board's `SWDIO` (PA13), `SWCLK` (PA14), and `GND` pins, then build and flash from STM32CubeIDE. See the wiki's [Build, Flash & Debug](https://www.randomwaves.io/drumboy-pro/drumboy-pro-wiki.html) section for details.
 
 ## License

@@ -16,3 +16,6 @@ Release/
 
 # Rhino
 *.3dmbak
+
+# Command-line build output (Makefile)
+02 Software/Drumboy-Pro-App-H723/build/

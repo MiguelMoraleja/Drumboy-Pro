@@ -88,7 +88,7 @@ Every push runs the tests and a warning-free build in GitHub Actions. Our own co
 The version lives in one place, `Core/Library/Global/Version.h`. To release:
 
 1. Bump `FW_VERSION_MINOR` (or `MAJOR`) in `Version.h` and merge it to `main`.
-2. Tag that commit with the same version and push the tag: `git tag v1.04 && git push origin v1.04`.
+2. Tag that commit with the same version and push the tag: `git tag v1.04 && git push origin v1.04`. Without a computer, use github.com instead: **Releases → Draft a new release**, type `v1.04` as a new tag on `main`, and publish.
 3. The **Release** workflow checks the tag matches `Version.h`, runs the tests, builds, and publishes `Drumboy_Pro_Fw_01_04.bin` on the repo's Releases page.
 
 - Bootloader owns flash sector 0 (`0x08000000`–`0x0801FFFF`)
@@ -102,7 +102,8 @@ The version lives in one place, `Core/Library/Global/Version.h`. To release:
 |---|---|---|
 | `Drumboy_Pro_Fw_01_01.bin` | V1.01 | Original release |
 | `Drumboy_Pro_Fw_01_02.bin` | V1.02 | Adds 8 fill types (ROLL, TECHNO, BREAKS, GARAGE, TRIPLET, EUCLID, RATCHET, FOOTWORK) to the original 7. The application source in this repo contains the same fill library |
-| `Drumboy_Pro_Fw_01_03.bin` | V1.03 | First package built from this repo's source with `make package` (arm-none-eabi-gcc 13.2). Same fills as V1.02, plus a range check that makes unknown fill types in a song file load as plain beats. **Not yet tested on hardware** |
+| `Drumboy_Pro_Fw_01_03.bin` | V1.03 | First package built from this repo's source with `make package` (arm-none-eabi-gcc 13.2). Same fills as V1.02, plus a range check that makes unknown fill types in a song file load as plain beats. Superseded by V1.04 |
+| `Drumboy_Pro_Fw_01_04.bin` | V1.04 | **Current, tested on hardware.** Fixes memory bugs found by the compiler (buffer overflows in on-screen text and long instrument names, dangling text pointers, paste with an empty clipboard). Same fills as V1.03. Also on the repo's Releases page |
 
 To update, copy **one** package to the SD card root and power on. The bootloader flashes the first file it finds matching `Drumboy_Pro_Fw?*.bin`, so don't leave more than one on the card. Songs saved on V1.02 with the new fill types should not be opened on V1.01, which doesn't range-check fill types on load.
 

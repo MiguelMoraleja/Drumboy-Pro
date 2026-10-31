@@ -70,21 +70,33 @@ A full BOM for the main board is generated from KiCad at `01 Hardware/Main/Produ
 
 ## Firmware
 
-Built with **STM32CubeIDE**, written in C/C++ against the STM32 HAL.
+Built with **STM32CubeIDE**, written in C/C++ against the STM32 HAL. The application can also be built from the command line, which is what CI uses:
+
+```sh
+cd "02 Software/Drumboy-Pro-App-H723"
+make                        # build/app.elf, build/app.bin
+make package VERSION=1.03   # build/Drumboy_Pro_Fw_01_03.bin, ready for the SD card
+```
+
+This needs `arm-none-eabi-gcc` (on Ubuntu: `apt install gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib`). `02 Software/tools/package_firmware.py --check <file>` validates a package the same way the bootloader does.
 
 - Bootloader owns flash sector 0 (`0x08000000`–`0x0801FFFF`)
 - Application owns sectors 1–7 (`0x08020000`–`0x080FFFFF`), with the vector table relocated at startup
 
 ### Prebuilt firmware
 
-`02 Software/Firmware/` holds SD-card update packages (36-byte header + application binary, see `Drumboy-Pro-Firmware-Builder.cpp`):
+`02 Software/Firmware/` holds SD-card update packages (36-byte header + application binary, see `02 Software/tools/package_firmware.py`):
 
 | File | Version | Notes |
 |---|---|---|
-| `Drumboy_Pro_Fw_01_01.bin` | V1.01 | Original release, built from the application source in this repo |
-| `Drumboy_Pro_Fw_01_02.bin` | V1.02 | Adds 8 fill types (ROLL, TECHNO, BREAKS, GARAGE, TRIPLET, EUCLID, RATCHET, FOOTWORK) to the original 7. Its source is not in this repo yet |
+| `Drumboy_Pro_Fw_01_01.bin` | V1.01 | Original release |
+| `Drumboy_Pro_Fw_01_02.bin` | V1.02 | Adds 8 fill types (ROLL, TECHNO, BREAKS, GARAGE, TRIPLET, EUCLID, RATCHET, FOOTWORK) to the original 7. The application source in this repo contains the same fill library |
 
 To update, copy **one** package to the SD card root and power on. The bootloader flashes the first file it finds matching `Drumboy_Pro_Fw?*.bin`, so don't leave more than one on the card. Songs saved on V1.02 with the new fill types should not be opened on V1.01, which doesn't range-check fill types on load.
+
+### Adding fill types
+
+Fills live in `Core/Library/Global/Global.h`: `kFillTypeDataLibrary` (type names) and `kFillPatternDataLibrary` (8 patterns per type). Each pattern lists `stepSize` hits as start times in `0.0`–`1.0` of the beat, followed by a final `1.0`; `stepSize` can be at most 16. To add a type, bump `kFillTypeLibrarySize` and `kMaxLayerFillType` and append the new entries at the end, so fill types stored in existing song files keep their meaning. Song files store the type in 4 bits, so there is room for one more type (16 in total); compile-time checks enforce this.
 
 To flash over SWD, wire an ST-Link V2 to the board's `SWDIO` (PA13), `SWCLK` (PA14), and `GND` pins, then build and flash from STM32CubeIDE. See the wiki's [Build, Flash & Debug](https://www.randomwaves.io/drumboy-pro/drumboy-pro-wiki.html) section for details.
 

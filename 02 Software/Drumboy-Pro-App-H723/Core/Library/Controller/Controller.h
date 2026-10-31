@@ -93,6 +93,14 @@ class Controller {
 
     volatile uint32_t i2sOvrCount = 0;                                  // I2S3 rx overruns; nonzero means word alignment may have shifted
     volatile uint32_t i2sUdrCount = 0;                                  // I2S3 tx underruns; nonzero means the audio isr missed its deadline
+#ifdef DSP_PROFILE
+    // DSP load measurement (make PROFILE=1): CPU cycles spent in processAudioBlock
+    volatile uint32_t dspCyclesSum = 0;                                 // summed since the last readout
+    volatile uint32_t dspBlocks = 0;                                    // blocks since the last readout
+    volatile uint32_t dspCyclesPeak = 0;                                // worst block since the last readout
+    uint32_t dspCyclesPeakAll = 0;                                      // worst block since power-on
+    uint32_t dspLastDrawTick = 0;
+#endif
 
     /* Audio Buffers (I2s Block Processing) ---------------------- */
 
@@ -499,6 +507,9 @@ class Controller {
     // Sd functions
     void lcd_drawSdDataIntro();
     void lcd_drawSdData();
+#ifdef DSP_PROFILE
+    void lcd_drawDspProfile();
+#endif
     void lcd_clearSdData();
     void lcd_drawSdAlert(SdResult result_);
     void lcd_clearSdAlert();

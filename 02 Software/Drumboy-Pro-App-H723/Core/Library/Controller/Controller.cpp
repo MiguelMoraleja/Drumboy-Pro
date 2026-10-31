@@ -352,6 +352,10 @@ void Controller::update() {
         // Push buffered graphical changes to the LCD.
         lcd_update();
 
+#ifdef DSP_PROFILE
+        lcd_drawDspProfile();
+#endif
+
         // 4. FILESYSTEM MAINTENANCE
         // Recover SD subsystem if media access is lost.
         if (!sd.ready) {
@@ -21768,6 +21772,10 @@ void Controller::triggerReset() {
 void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffer_) {
     /// @brief Orchestrates the complete real-time audio processing pipeline, managing signal generation, sequential DSP stages, and final output buffering.
 
+#ifdef DSP_PROFILE
+    const uint32_t dspStart = DWT_CYCCNT;
+#endif
+
     // 0. I2S ERROR FLAG POLL
     // Count and clear overrun/underrun. The HAL never enables these interrupts, so polling
     // here is the only visibility; an rx overrun can permanently shift I2S word alignment.
@@ -21811,7 +21819,55 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
         // Apply final mix and write to I2S output buffer.
         processAudioSend(outputBuffer_);
     }
+
+#ifdef DSP_PROFILE
+    // 5. LOAD MEASUREMENT
+    // Unsigned subtraction handles the 32-bit cycle counter wrapping.
+    const uint32_t dspCycles = DWT_CYCCNT - dspStart;
+    dspCyclesSum += dspCycles;
+    dspBlocks += 1;
+    if (dspCycles > dspCyclesPeak) dspCyclesPeak = dspCycles;
+#endif
 }
+
+#ifdef DSP_PROFILE
+void Controller::lcd_drawDspProfile() {
+    /// @brief Shows DSP load as a share of the audio block time, refreshed twice a second.
+    ///        AVG and PEAK cover the last half second, MAX everything since power-on.
+
+    if ((menu == INIT_MENU) || (menu == TEST_MENU)) return;
+    if ((HAL_GetTick() - dspLastDrawTick) < 500) return;
+    dspLastDrawTick = HAL_GetTick();
+
+    // Snapshot and reset the interval counters with the audio interrupt held off.
+    __disable_irq();
+    const uint32_t sum = dspCyclesSum, blocks = dspBlocks, peak = dspCyclesPeak;
+    dspCyclesSum = 0;
+    dspBlocks = 0;
+    dspCyclesPeak = 0;
+    __enable_irq();
+    if (blocks == 0) return;
+    if (peak > dspCyclesPeakAll) dspCyclesPeakAll = peak;
+
+    // Cycles available per block: core clock x block length.
+    const float budget = (float)SystemCoreClock * (float)I2S_BLOCK_SIZE / AUDIO_SAMPLE_RATE;
+    // Tenths of a percent as integers: newlib-nano's printf has no %f.
+    const unsigned long avg = (unsigned long)(1000.0f * ((float)sum / (float)blocks) / budget);
+    const unsigned long pk = (unsigned long)(1000.0f * (float)peak / budget);
+    const unsigned long mx = (unsigned long)(1000.0f * (float)dspCyclesPeakAll / budget);
+
+    char text[96];
+    int len = snprintf(text, sizeof(text), "DSP AVG %3lu.%lu%%  PEAK %3lu.%lu%%  MAX %3lu.%lu%%  UDR %3lu  OVR %3lu",
+                       avg / 10, avg % 10, pk / 10, pk % 10, mx / 10, mx % 10, (unsigned long)i2sUdrCount, (unsigned long)i2sOvrCount);
+    if (len < 0) return;
+
+    lcd.setForeColor(YELLOW);
+    lcd.setBackColor(BLACK);
+    lcd.setAlignment(CENTER);
+    lcd.setFont(FONT_05x07);
+    lcd.drawText(text, strlen(text), 480, 524);
+}
+#endif
 
 // Scale applied to the summed L+R input. 2^-32 maps a full-scale ADC pair to 1.0, which is
 // the natural mapping and costs nothing in SNR - it undoes an attenuation rather than adding

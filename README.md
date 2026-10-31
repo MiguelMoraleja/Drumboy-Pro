@@ -91,6 +91,7 @@ This needs `arm-none-eabi-gcc` (on Ubuntu: `apt install gcc-arm-none-eabi libnew
 |---|---|---|
 | `Drumboy_Pro_Fw_01_01.bin` | V1.01 | Original release |
 | `Drumboy_Pro_Fw_01_02.bin` | V1.02 | Adds 8 fill types (ROLL, TECHNO, BREAKS, GARAGE, TRIPLET, EUCLID, RATCHET, FOOTWORK) to the original 7. The application source in this repo contains the same fill library |
+| `Drumboy_Pro_Fw_01_03.bin` | V1.03 | First package built from this repo's source with `make package` (arm-none-eabi-gcc 13.2). Same fills as V1.02, plus a range check that makes unknown fill types in a song file load as plain beats. **Not yet tested on hardware** |
 
 To update, copy **one** package to the SD card root and power on. The bootloader flashes the first file it finds matching `Drumboy_Pro_Fw?*.bin`, so don't leave more than one on the card. Songs saved on V1.02 with the new fill types should not be opened on V1.01, which doesn't range-check fill types on load.
 

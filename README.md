@@ -74,11 +74,22 @@ Built with **STM32CubeIDE**, written in C/C++ against the STM32 HAL. The applica
 
 ```sh
 cd "02 Software/Drumboy-Pro-App-H723"
-make                        # build/app.elf, build/app.bin
-make package VERSION=1.03   # build/Drumboy_Pro_Fw_01_03.bin, ready for the SD card
+make WERROR=1       # build/app.elf, build/app.bin; warnings in our code fail the build
+make package        # build/Drumboy_Pro_Fw_01_04.bin, ready for the SD card
+make -C "../tests"  # fill engine tests, run on the PC
 ```
 
 This needs `arm-none-eabi-gcc` (on Ubuntu: `apt install gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib`). `02 Software/tools/package_firmware.py --check <file>` validates a package the same way the bootloader does.
+
+Every push runs the tests and a warning-free build in GitHub Actions. Our own code (`Core/`) builds with zero warnings; keep it that way, since a new warning is often a real bug.
+
+### Releasing a version
+
+The version lives in one place, `Core/Library/Global/Version.h`. To release:
+
+1. Bump `FW_VERSION_MINOR` (or `MAJOR`) in `Version.h` and merge it to `main`.
+2. Tag that commit with the same version and push the tag: `git tag v1.04 && git push origin v1.04`.
+3. The **Release** workflow checks the tag matches `Version.h`, runs the tests, builds, and publishes `Drumboy_Pro_Fw_01_04.bin` on the repo's Releases page.
 
 - Bootloader owns flash sector 0 (`0x08000000`–`0x0801FFFF`)
 - Application owns sectors 1–7 (`0x08020000`–`0x080FFFFF`), with the vector table relocated at startup
@@ -97,7 +108,7 @@ To update, copy **one** package to the SD card root and power on. The bootloader
 
 ### Adding fill types
 
-Fills live in `Core/Library/Global/Global.h`: `kFillTypeDataLibrary` (type names) and `kFillPatternDataLibrary` (8 patterns per type). Each pattern lists `stepSize` hits as start times in `0.0`–`1.0` of the beat, followed by a final `1.0`; `stepSize` can be at most 16. To add a type, bump `kFillTypeLibrarySize` and `kMaxLayerFillType` and append the new entries at the end, so fill types stored in existing song files keep their meaning. Song files store the type in 4 bits, so there is room for one more type (16 in total); compile-time checks enforce this.
+Fills live in `Core/Library/Global/Fill.h`, which has no hardware dependencies so the tests in `02 Software/tests` can run it on a PC: `kFillTypeDataLibrary` (type names) and `kFillPatternDataLibrary` (8 patterns per type). Each pattern lists `stepSize` hits as start times in `0.0`–`1.0` of the beat, followed by a final `1.0`; `stepSize` can be at most 16. To add a type, bump `kFillTypeLibrarySize` and `kMaxLayerFillType` and append the new entries at the end, so fill types stored in existing song files keep their meaning. Song files store the type in 4 bits, so there is room for one more type (16 in total); compile-time checks enforce this. Run `make -C "02 Software/tests"` after changing a pattern: it checks every type, pattern and mode.
 
 To flash over SWD, wire an ST-Link V2 to the board's `SWDIO` (PA13), `SWCLK` (PA14), and `GND` pins, then build and flash from STM32CubeIDE. See the wiki's [Build, Flash & Debug](https://www.randomwaves.io/drumboy-pro/drumboy-pro-wiki.html) section for details.
 

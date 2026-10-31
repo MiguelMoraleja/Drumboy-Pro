@@ -67,14 +67,14 @@ class Controller {
 
     /* Preset Data Buffers --------------------------------------- */
 
-    char dataSystemPreset[kSystemPresetDataSize];                       // Buffer for global system settings
-    char dataEncoderGlobalPreset[kEncoderGlobalPresetDataSize];         // Shared encoder mappings
-    char dataEncoderLocalPreset[kEncoderLocalPresetDataSize];           // Context-specific encoder values
+    char dataSystemPreset[kSystemPresetDataSize]{0};                    // Buffer for global system settings
+    char dataEncoderGlobalPreset[kEncoderGlobalPresetDataSize]{0};      // Shared encoder mappings
+    char dataEncoderLocalPreset[kEncoderLocalPresetDataSize]{0};        // Context-specific encoder values
 
     /* Libraries & Data Structures ------------------------------- */
 
-    Lfo lfoLibrary[kLfoLibrarySize];                                    // Collection of all LFO configurations
-    Layer layerLibrary[kLayerLibrarySize];                              // Collection of all instrument layers (Drum kits/Synths)
+    Lfo lfoLibrary[kLfoLibrarySize]{{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}};                                    // Collection of all LFO configurations
+    Layer layerLibrary[kLayerLibrarySize]{{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}};                              // Collection of all instrument layers (Drum kits/Synths)
 
     /* Clipboard / Buffered Operations --------------------------- */
 
@@ -138,9 +138,9 @@ class Controller {
 
     /* Sd Card & Filesystem -------------------------------------- */
 
-    bool sdInsertCheck;                                                 // Hardware detection of SD card presence
-    bool loadAction;                                                    // Flag to trigger file loading
-    bool saveAction;                                                    // Flag to trigger file saving
+    bool sdInsertCheck = false;                                         // Hardware detection of SD card presence
+    bool loadAction = false;                                            // Flag to trigger file loading
+    bool saveAction = false;                                            // Flag to trigger file saving
     uint16_t fileLibrarySize;                                           // Total projects found on SD
     uint16_t drumkitLibrarySize;                                        // Total drum kits found on SD
     uint16_t instLibrarySize;                                           // Total instruments found on SD
@@ -175,7 +175,7 @@ class Controller {
     FileStatus fileStatus;                                              // Current operation status of project files
     FileStatus drumkitStatus;                                           // Current operation status of drum kits
 
-    TriggerMode triggerMode;                                            // Quantization setting
+    TriggerMode triggerMode = TRIG_BAR;                                 // Quantization setting
     bool playActive;                                                    // Transport status: Playing
     bool recordActive;                                                  // Transport status: Recording
     bool precountPendingBeat[kLayerLibrarySize];                        // Layer hits during precount, committed to interval 0 when playback starts
@@ -287,13 +287,13 @@ class Controller {
 
     /* Hardware Peripherals -------------------------------------- */
 
-    Lcd lcd;                                                            // Main graphical display controller
-    Dac dac;                                                            // High-fidelity audio output interface
-    Sd  sd;                                                             // SD card filesystem manager
+    Lcd lcd{LANDSCAPE_1, WHITE, BLACK, FONT_07x09};                     // Main graphical display controller
+    Dac dac{};                                                          // High-fidelity audio output interface
+    Sd  sd{};                                                           // SD card filesystem manager
 
     /* Input Hardware -------------------------------------------- */
 
-    Keyboard keyboard;                                                  // Button matrix handler (Layers, Left, Right keypads)
+    Keyboard keyboard{};                                                // Button matrix handler (Layers, Left, Right keypads)
 
     Encoder encoder[kEncoderSize];                                      // Physical rotary encoder instances
     EncoderFunc encoderGlobalFunction[kEncoderBankSize][kEncoderSize] = {};
@@ -302,9 +302,9 @@ class Controller {
 
     /* Visual Output Hardware ------------------------------------ */
 
-    Led ledEqLeft;                                                      // Left-channel LED VU/EQ meter
-    Led ledEqRight;                                                     // Right-channel LED VU/EQ meter
-    Led ledLayer;                                                       // Multi-color performance pad indicators
+    Led ledEqLeft{};                                                    // Left-channel LED VU/EQ meter
+    Led ledEqRight{};                                                   // Right-channel LED VU/EQ meter
+    Led ledLayer{};                                                     // Multi-color performance pad indicators
 
     /* State Accessors (Getters) --------------------------------- */
 
@@ -312,7 +312,7 @@ class Controller {
     Mixer  getMixer() { return mixer; }                                 // Get Master audio levels
     Menu   getMenu()  { return menu; }                                  // Get currently active UI screen
 
-    TestMode testMode;                                                  // Current hardware diagnostic sub-mode
+    TestMode testMode = TEST_NONE;                                      // Current hardware diagnostic sub-mode
 
     /* Main Functions -------------------------------------------- */
 
@@ -456,7 +456,7 @@ class Controller {
     SdResult sd_getSpace();
     SdResult sd_checkFileExist(const char* fileAddress);
     SdResult sd_checkFolderExist(const char* folderAddress);
-    SdResult sd_loadImage(char* fileAddress, uint32_t paletteAddress, uint32_t dataAddress, uint16_t paletteSize, uint16_t width, uint16_t height, RGBMode mode);
+    SdResult sd_loadImage(const char* fileAddress, uint32_t paletteAddress, uint32_t dataAddress, uint16_t paletteSize, uint16_t width, uint16_t height, RGBMode mode);
     void sd_getLibraries();
     SdResult sd_getFileLibrary();
     SdResult sd_getDrumkitLibrary();

@@ -2,22 +2,14 @@
 
 Controller::Controller()
 
-    /* --- SECTION 1: HARDWARE PERIPHERALS & DSP MODULES -------------------- */
+    /* --- SECTION 1: DSP MODULES (hardware drivers: see Controller.h) ----- */
 
-    : lcd(LANDSCAPE_1, WHITE, BLACK, FONT_07x09),
-      dac(),
-      sd(),
-      keyboard(),
-      ledEqLeft(),
-      ledEqRight(),
-      ledLayer(),
-      rhythm(),
+    : rhythm(),
       metronome(),
       eq(),
       filter{{0}, {1}},
       effect{{0}, {1}},
       reverb(),
-      testMode(TEST_NONE),
 
       /* --- SECTION 2: AUDIO BUFFERS (BLOCK PROCESSING) -------------------- */
 
@@ -36,11 +28,6 @@ Controller::Controller()
 
       /* --- SECTION 3: DATA PRESETS & LIBRARIES ---------------------------- */
 
-      dataSystemPreset{0},
-      dataEncoderGlobalPreset{0},
-      dataEncoderLocalPreset{0},
-      lfoLibrary{{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}},
-      layerLibrary{{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}},
 
       /* --- SECTION 4: NAVIGATION & UI SELECTION --------------------------- */
 
@@ -81,9 +68,6 @@ Controller::Controller()
 
       alertFlag(false),
       alertType(ALERT_OFF),
-      sdInsertCheck(false),
-      loadAction(false),
-      saveAction(false),
       resetPlayFlag(false),
       fileStatus(FILE_NONE),
       drumkitStatus(FILE_NONE),
@@ -91,7 +75,6 @@ Controller::Controller()
       recordActive(false),
       precountPendingBeat{false},
     ignoreNextMidiStopAfterSpecialCmd(false),
-      triggerMode(TRIG_BAR),
       playTimerPeriod(0),
       measureTimerPeriod(0),
       midiClockPeriod(0),
@@ -461,7 +444,7 @@ void Controller::update() {
             layerInstCopyActionFlag = false;
             layerInst_copy();
         }
-        if ((layerInstPasteActionFlag) && (layerInstCopy.copyActive != -1)) {
+        if ((layerInstPasteActionFlag) && (layerInstCopy.copyActive)) {
             layerInstPasteActionFlag = false;
             layerInst_paste();
         }
@@ -476,7 +459,7 @@ void Controller::update() {
             layerSongCopyActionFlag = false;
             layerSong_copy();
         }
-        if ((layerSongPasteActionFlag) && (layerSongCopy.copyActive != -1)) {
+        if ((layerSongPasteActionFlag) && (layerSongCopy.copyActive)) {
             layerSongPasteActionFlag = false;
             layerSong_paste();
         }
@@ -1284,7 +1267,7 @@ uint16_t Controller::calculateTriggerInterval() {
     /// @brief Calculates the target sample index for the next synchronized trigger event.
     /// This ensures that transport changes (like Stop or Reset) occur exactly on a musical boundary.
 
-    uint16_t interval;
+    uint16_t interval = songInterval - 1;  // TRIG_SONG behaviour if the mode is unknown
 
     // 1. BOUNDARY CALCULATION DISPATCHER
     // Select snap boundary according to the active trigger mode.
@@ -1738,6 +1721,8 @@ void Controller::keyboard_action() {
                                         case LAYER_SONG_MENU:
                                             layerSong_menuUp(0);
                                             break;
+                                        default:
+                                            break;
                                     }
                                 }
                                 break;
@@ -1809,6 +1794,8 @@ void Controller::keyboard_action() {
                                         case LAYER_SONG_MENU:
                                             layerSong_menuDown(0);
                                             break;
+                                        default:
+                                            break;
                                     }
                                 }
                                 break;
@@ -1875,6 +1862,8 @@ void Controller::keyboard_action() {
                                         case LAYER_SONG_MENU:
                                             (keyboard.shiftKeyPress) ? layerSong_shiftSelectedBeat(false) : layerSong_beatLeft();
                                             break;
+                                        default:
+                                            break;
                                     }
                                 }
                                 break;
@@ -1940,6 +1929,8 @@ void Controller::keyboard_action() {
 
                                         case LAYER_SONG_MENU:
                                             (keyboard.shiftKeyPress) ? layerSong_shiftSelectedBeat(true) : layerSong_beatRight();
+                                            break;
+                                        default:
                                             break;
                                     }
                                 }
@@ -2017,6 +2008,8 @@ void Controller::keyboard_action() {
 
                                         case ALERT_CLEARDRUMKIT:
                                             drumkit_clearAction();
+                                            break;
+                                        default:
                                             break;
                                     }
                                 } else if (keyboard.muteKeyPress) {
@@ -2254,6 +2247,8 @@ void Controller::keyboard_action() {
                                         lfoCopyKeyFlag = true;
                                         startLongKeyTimer();
                                         break;
+                                    default:
+                                        break;
                                 }
                                 break;
 
@@ -2277,6 +2272,8 @@ void Controller::keyboard_action() {
                                     case LFO_MENU:
                                         lfoPasteKeyFlag = true;
                                         startLongKeyTimer();
+                                        break;
+                                    default:
                                         break;
                                 }
                                 break;
@@ -2776,6 +2773,8 @@ void Controller::keyboard_upLong() {
         case LAYER_SONG_MENU:
             layerSong_menuUp(0);
             break;
+        default:
+            break;
     }
 }
 
@@ -2851,6 +2850,8 @@ void Controller::keyboard_downLong() {
 
         case LAYER_SONG_MENU:
             layerSong_menuDown(0);
+            break;
+        default:
             break;
     }
 }
@@ -3335,11 +3336,9 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
     /// Applies bounds checks and target-selection guards before dispatch.
 
     // 1. CONTEXTUAL REFERENCES & SAFETY GUARDS
-    Effect& effect_0 = effect[0];
     uint8_t type_0 = effect[0].type;
     SubEffect& subEffect_0 = effect[0].subEffect[type_0];
 
-    Effect& effect_1 = effect[1];
     uint8_t type_1 = effect[1].type;
     SubEffect& subEffect_1 = effect[1].subEffect[type_1];
 
@@ -3907,11 +3906,9 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
     /// Applies lower-bound checks and target-selection guards before dispatch.
 
     // 1. CONTEXTUAL REFERENCES & SAFETY GUARDS
-    Effect& effect_0 = effect[0];
     uint8_t type_0 = effect[0].type;
     SubEffect& subEffect_0 = effect[0].subEffect[type_0];
 
-    Effect& effect_1 = effect[1];
     uint8_t type_1 = effect[1].type;
     SubEffect& subEffect_1 = effect[1].subEffect[type_1];
 
@@ -4971,7 +4968,7 @@ SdResult Controller::sd_checkFolderExist(const char* folderAddress) {
     return SD_ERROR;
 }
 
-SdResult Controller::sd_loadImage(char* fileAddress, uint32_t paletteAddress, uint32_t dataAddress, uint16_t paletteSize, uint16_t width, uint16_t height, RGBMode mode) {
+SdResult Controller::sd_loadImage(const char* fileAddress, uint32_t paletteAddress, uint32_t dataAddress, uint16_t paletteSize, uint16_t width, uint16_t height, RGBMode mode) {
     /// @brief Loads a custom RW image from SD directly into RAM palette/pixel buffers.
     /// Validates signature, metadata, and section markers before accepting image payload data.
 
@@ -5082,7 +5079,7 @@ SdResult Controller::sd_getFileLibrary() {
     // Iterate through all possible file slots defined by the kFileLibrarySize constant.
     for (uint8_t i = 0; i < kFileLibrarySize; i++) {
         char fileName[50];
-        char fileNum[3];
+        char fileNum[16];
 
         // 3. FILENAME CONSTRUCTION
         // Generate a formatted 3-digit number (e.g., 001, 002) to create the full path.
@@ -5138,7 +5135,7 @@ SdResult Controller::sd_getDrumkitLibrary() {
     // Iterate through all possible drumkit slots defined by kDrumkitLibrarySize.
     for (uint8_t i = 0; i < kDrumkitLibrarySize; i++) {
         char fileName[50];
-        char fileNum[3];
+        char fileNum[16];
 
         // 3. FILENAME GENERATION
         // Format the current index into a 3-digit string (e.g., Drumkit_001.rwd).
@@ -5215,7 +5212,7 @@ void Controller::sd_getInstLibrary() {
                 // Calculate the destination pointer and copy the filename into SDRAM.
                 char* entryPtr = ramPtr + (instLibrarySize * kFileNameSize);
                 memset(entryPtr, 0, kFileNameSize);
-                strncpy(entryPtr, sd.fileInfo.fname, kFileNameSize - 1);
+                strcpy(entryPtr, sd.fileInfo.fname);  // length checked < kFileNameSize above
 
                 // Store pointer address for the sorting algorithm
                 sortArray[instLibrarySize] = entryPtr;
@@ -5328,7 +5325,7 @@ void Controller::sd_getSampleLibrary() {
                             // Copy the filename into External SDRAM for sorting and metadata generation.
                             char* entryPtr = (char*)(RAM_SAMPLE_ADDRESS + (sampleLibrarySize[i] * kFileNameSize));
                             memset(entryPtr, 0, kFileNameSize);
-                            strncpy(entryPtr, fname, kFileNameSize - 1);
+                            strcpy(entryPtr, fname);  // length checked < kFileNameSize above
 
                             sortArray[sampleLibrarySize[i]] = entryPtr;
                             sampleLibrarySize[i]++;
@@ -5633,7 +5630,6 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                     // 5.4 ASSET REFERENCE EXTRACTION
                     // Extract instrument/sample names and activation markers per layer.
                     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-                        Layer& layer = layerLibrary[i];
                         uint16_t layerOffset = 500 + (i * 100);
                         (data[layerOffset] == 'x') ? instActive[i] = true : instActive[i] = false;
                         (data[layerOffset + 50] == 'x') ? sampleActive[i] = true : sampleActive[i] = false;
@@ -5686,9 +5682,9 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
 
                         // Sample lookup in per-instrument index
                         if ((sampleActive[i]) && (instActive[i]) && (!instMissing[i])) {
-                            char instFileName[kFileNameSize + 15] = "System/Data/";
-                            strncat(instFileName, instName[i], kFileNameSize);
-                            strncat(instFileName, ".ins", 4);
+                            char instFileName[kFileNameSize + 17] = "System/Data/";
+                            strcat(instFileName, instName[i]);
+                            strcat(instFileName, ".ins");
                             if ((f_open(&sd.file, instFileName, FA_READ) == FR_OK) && (f_lseek(&sd.file, 25) == FR_OK)) {
                                 char searchName[kFileNameSize + 1];
                                 bool searchActive = true;
@@ -5776,9 +5772,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
 
                     // 6.4 BEAT DECODE
                     // Decode packed beat metadata and restore bank beat lists.
-                    Layer& layer = layerLibrary[i];
                     for (uint8_t j = 0; j < kBankLibrarySize; j++) {
-                        Bank& bank = layer.bankLibrary[j];
                         uint16_t offsetBank = 1 + (j * 257);
 
                         // Decode beat entries in reverse index order
@@ -6440,7 +6434,6 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                     bool sampleActive[kLayerLibrarySize];
                     bool sampleMissing[kLayerLibrarySize];
                     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-                        Layer& layer = layerLibrary[i];
                         uint16_t offset = 500 + (i * 100);
                         (data[offset] == 'x') ? instActive[i] = true : instActive[i] = false;
                         (data[offset + 50] == 'x') ? sampleActive[i] = true : sampleActive[i] = false;
@@ -6493,9 +6486,9 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
 
                         // Sample lookup in per-instrument index
                         if ((sampleActive[i]) && (instActive[i]) && (!instMissing[i])) {
-                            char instFileName[kFileNameSize + 15] = "System/Data/";
-                            strncat(instFileName, instName[i], kFileNameSize);
-                            strncat(instFileName, ".ins", 4);
+                            char instFileName[kFileNameSize + 17] = "System/Data/";
+                            strcat(instFileName, instName[i]);
+                            strcat(instFileName, ".ins");
                             if ((f_open(&sd.file, instFileName, FA_READ) == FR_OK) && (f_lseek(&sd.file, 25) == FR_OK)) {
                                 char searchName[kFileNameSize + 1];
                                 bool searchActive = true;
@@ -7590,7 +7583,7 @@ void Controller::lcd_drawAlert() {
 
     // 3. ALERT TEXT RESOLUTION
     // Select alert text constant according to active alert type.
-    const char* alertText;
+    const char* alertText = "";
     switch (alertType) {
         case ALERT_MEASUREUP:
 
@@ -7676,6 +7669,8 @@ void Controller::lcd_drawAlert() {
 
         case ALERT_MISSINGSAMPLES:
             alertText = kAlertTextMissingSamples;
+            break;
+        default:
             break;
     }
     // 4. ALERT TEXT DRAW
@@ -7773,7 +7768,7 @@ void Controller::lcd_drawSdData() {
     // 3. FILE COUNT APPEND
     // Append file count or placeholder when SD is unavailable.
     if (sd.ready) {
-        char numFile[4];
+        char numFile[16];
         sprintf(numFile, "%03d", fileLibrarySize);
         strcat(sdText, numFile);
     } else {
@@ -7785,7 +7780,7 @@ void Controller::lcd_drawSdData() {
     // 4. DRUMKIT COUNT APPEND
     // Append drumkit count or placeholder when SD is unavailable.
     if (sd.ready) {
-        char numDrumkit[4];
+        char numDrumkit[16];
         sprintf(numDrumkit, "%03d", drumkitLibrarySize);
         strcat(sdText, numDrumkit);
     } else {
@@ -7797,7 +7792,7 @@ void Controller::lcd_drawSdData() {
     // 5. INSTRUMENT COUNT APPEND
     // Append instrument count or placeholder when SD is unavailable.
     if (sd.ready) {
-        char numInst[4];
+        char numInst[16];
         sprintf(numInst, "%04d", instLibrarySize);
         strcat(sdText, numInst);
     } else {
@@ -7809,12 +7804,12 @@ void Controller::lcd_drawSdData() {
     // 6. SAMPLE COUNT APPEND
     // Append sample count (or compact K format) or placeholder.
     if (sd.ready) {
-        char numSample[4];
+        char numSample[16];
         if (totalSampleLibrarySize < 10000) {
-            sprintf(numSample, "%04d", totalSampleLibrarySize);
+            sprintf(numSample, "%04lu", (unsigned long)totalSampleLibrarySize);
             strcat(sdText, numSample);
         } else {
-            sprintf(numSample, "%04d", totalSampleLibrarySize / 1000);
+            sprintf(numSample, "%04lu", (unsigned long)(totalSampleLibrarySize / 1000));
             strcat(sdText, numSample);
             strcat(sdText, "K");
         }
@@ -7851,7 +7846,7 @@ void Controller::lcd_drawSdAlert(SdResult result_) {
 
     // 2. ALERT TEXT RESOLUTION
     // Map SD result code to corresponding alert message.
-    const char* alertText;
+    const char* alertText = "";
     switch (result_) {
         case SD_ERROR_DETECT:
             alertText = kSdAlertTextInsert;
@@ -7903,6 +7898,8 @@ void Controller::lcd_drawSdAlert(SdResult result_) {
 
         case SD_ANALYZE:
             alertText = kSdAlertTextAnalyze;
+            break;
+        default:
             break;
     }
     // 3. ALERT TEXT DRAW
@@ -7958,7 +7955,7 @@ void Controller::lcd_drawEncoderBankTab() {
     // 3. BANK VALUE DRAW
     // Draw two-digit active encoder bank index.
     lcd.setForeColor(WHITE);
-    char textData[3];
+    char textData[16];
     sprintf(textData, "%02d", activeEncoderBank + 1);
     lcd.drawText(textData, 2, 76, 489);
 }
@@ -7982,7 +7979,7 @@ void Controller::lcd_drawSongBankTab(uint8_t bank_, bool mode_) {
 
     // 4. BANK VALUE DRAW
     // Draw two-digit selected bank index.
-    char textData[3];
+    char textData[16];
     sprintf(textData, "%02d", bank_ + 1);
     lcd.drawText(textData, 2, 886, 489);
 }
@@ -8158,7 +8155,6 @@ void Controller::lcd_drawEncoderBox(uint8_t encoderNum_) {
                 // Draw activity indicator
                 lcd.fillRect(kMenuEncoderBoxX[encoderNum_], kMenuEncoderBoxY[encoderNum_], kMenuEncoderBoxWidth, kMenuEncoderBoxHeight);
             } else if ((encoderNum_ != 2) && (encoderNum_ != 3)) {
-                bool active = (encoder[encoderNum_].function != ENC_FNC_NONE) ? true : false;
 
                 // Draw activity indicator
                 lcd.fillRect(kMenuEncoderBoxX[encoderNum_], kMenuEncoderBoxY[encoderNum_], kMenuEncoderBoxWidth, kMenuEncoderBoxHeight);
@@ -8524,6 +8520,8 @@ void Controller::lcd_transitionSelect() {
                 dataPtr = (const uint8_t*)(RAM_ICON_SELECT_ON_DATA_ADDRESS);
                 lcd.drawRGB16Image(indexPtr, dataPtr, 64, kMenuSelectX[menuTab], kMenuSelectY[menuTab], kIconSelectWidth, kIconSelectHeight);
                 break;
+            default:
+                break;
         }
     }
 }
@@ -8648,6 +8646,8 @@ void Controller::lcd_drawGlobalMenuFunction(uint8_t encoderNum_) {
 void Controller::lcd_drawGlobalMenuData(uint8_t encoderNum_) {
     /// @brief Draws global-menu data value for selected encoder slot.
 
+    char textData[kMenuDataTextSize + 12];  // formatted values; outlives the switch below (textPtr may point here)
+
     // 1. ENCODER CONTEXT LOAD
     // Load encoder data and process only global-mode slots.
     Encoder enc = encoder[encoderNum_];
@@ -8702,7 +8702,6 @@ void Controller::lcd_drawGlobalMenuData(uint8_t encoderNum_) {
                 // Rhythm functions
 
             case ENC_RHYTHM_TEMPO:
-                char textData[kMenuDataTextSize + 1];
                 sprintf(textData, "       %03d", rhythm.tempo);
                 textPtr = textData;
                 break;
@@ -8761,9 +8760,8 @@ void Controller::lcd_drawGlobalMenuData(uint8_t encoderNum_) {
 
             case ENC_IO_MIDIIN: {
                 if (keyboard.shiftKeyPress) {
-                    char midiInChanText[kMenuDataTextSize + 1];
-                    sprintf(midiInChanText, "      CH%02d", io.midiInChannel + 1);
-                    textPtr = midiInChanText;
+                    sprintf(textData, "      CH%02d", io.midiInChannel + 1);
+                    textPtr = textData;
                 } else {
                     textPtr = kIoMidiModeDataLibrary[io.midiIn].nameLongR;
                 }
@@ -8772,9 +8770,8 @@ void Controller::lcd_drawGlobalMenuData(uint8_t encoderNum_) {
 
             case ENC_IO_MIDIOUT: {
                 if (keyboard.shiftKeyPress) {
-                    char midiOutChanText[kMenuDataTextSize + 1];
-                    sprintf(midiOutChanText, "      CH%02d", io.midiOutChannel + 1);
-                    textPtr = midiOutChanText;
+                    sprintf(textData, "      CH%02d", io.midiOutChannel + 1);
+                    textPtr = textData;
                 } else {
                     textPtr = kIoMidiModeDataLibrary[io.midiOut].nameLongR;
                 }
@@ -9511,9 +9508,9 @@ void Controller::lcd_drawFile_LoadData() {
     // Build FILE_XXX label and draw when Load tab is active.
     char* text;
     char file[11] = "  FILE_";
-    char num[4];
+    char num[16];
     sprintf(num, "%03d", fileMenuCounter + 1);
-    strncat(file, num, 3);
+    strncat(file, num, sizeof(file) - strlen(file) - 1);
     (menuTab == 1) ? text = file : text = (char*)kDataDashR;
     lcd.drawText(text, kMenuDataTextSize, kMenuDataX[1], kMenuDataY[1]);
 }
@@ -9529,9 +9526,9 @@ void Controller::lcd_drawFile_SaveData() {
     // Build FILE_XXX label and draw when Save tab is active.
     char* text;
     char file[11] = "  FILE_";
-    char num[4];
+    char num[16];
     sprintf(num, "%03d", fileMenuCounter + 1);
-    strncat(file, num, 3);
+    strncat(file, num, sizeof(file) - strlen(file) - 1);
     (menuTab == 2) ? text = file : text = (char*)kDataDashR;
     lcd.drawText(text, kMenuDataTextSize, kMenuDataX[2], kMenuDataY[2]);
 }
@@ -9547,9 +9544,9 @@ void Controller::lcd_drawFile_ClearData() {
     // Build FILE_XXX label and draw when Clear tab is active.
     char* text;
     char file[11] = "  FILE_";
-    char num[4];
+    char num[16];
     sprintf(num, "%03d", fileMenuCounter + 1);
-    strncat(file, num, 3);
+    strncat(file, num, sizeof(file) - strlen(file) - 1);
     (menuTab == 3) ? text = file : text = (char*)kDataDashR;
     lcd.drawText(text, kMenuDataTextSize, kMenuDataX[3], kMenuDataY[3]);
 }
@@ -9617,9 +9614,9 @@ void Controller::lcd_drawDrumkit_LoadData() {
     // Build DRUM_XXX label and draw when Load tab is active.
     char* text;
     char drum[11] = "  DRUM_";
-    char num[4];
+    char num[16];
     sprintf(num, "%03d", drumkitMenuCounter + 1);
-    strncat(drum, num, 3);
+    strncat(drum, num, sizeof(drum) - strlen(drum) - 1);
     (menuTab == 1) ? text = drum : text = (char*)kDataDashR;
     lcd.drawText(text, kMenuDataTextSize, kMenuDataX[1], kMenuDataY[1]);
 }
@@ -9635,9 +9632,9 @@ void Controller::lcd_drawDrumkit_SaveData() {
     // Build DRUM_XXX label and draw when Save tab is active.
     char* text;
     char drum[11] = "  DRUM_";
-    char num[4];
+    char num[16];
     sprintf(num, "%03d", drumkitMenuCounter + 1);
-    strncat(drum, num, 3);
+    strncat(drum, num, sizeof(drum) - strlen(drum) - 1);
     (menuTab == 2) ? text = drum : text = (char*)kDataDashR;
     lcd.drawText(text, kMenuDataTextSize, kMenuDataX[2], kMenuDataY[2]);
 }
@@ -9653,9 +9650,9 @@ void Controller::lcd_drawDrumkit_ClearData() {
     // Build DRUM_XXX label and draw when Clear tab is active.
     char* text;
     char drum[11] = "  DRUM_";
-    char num[4];
+    char num[16];
     sprintf(num, "%03d", drumkitMenuCounter + 1);
-    strncat(drum, num, 3);
+    strncat(drum, num, sizeof(drum) - strlen(drum) - 1);
     (menuTab == 3) ? text = drum : text = (char*)kDataDashR;
     lcd.drawText(text, kMenuDataTextSize, kMenuDataX[3], kMenuDataY[3]);
 }
@@ -9875,7 +9872,7 @@ void Controller::lcd_drawRhythm_TempoData() {
 
     // 2. TEMPO DRAW
     // Format and draw current tempo value.
-    char kData[kMenuDataTextSize];
+    char kData[kMenuDataTextSize + 12];
     sprintf(kData, "       %03d", rhythm.tempo);
     lcd.drawText(kData, kMenuDataTextSize, kMenuDataX[0], kMenuDataY[0]);
 
@@ -10127,7 +10124,7 @@ void Controller::lcd_drawIo_MidiInData() {
     // 2. CHANNEL NUMBER DRAW
     // Show channel number in sign field only when MIDI-In is active (not OFF).
     if (io.midiIn != 0) {
-        char chanBuf[4];
+        char chanBuf[16];
         sprintf(chanBuf, " %02d", io.midiInChannel + 1);
         lcd_setMenuSignState(CYAN);
         lcd.drawText(chanBuf, kMenuSignTextSize, kMenuSignBoxX[2], kMenuSignBoxY[2]);
@@ -10147,7 +10144,7 @@ void Controller::lcd_drawIo_MidiOutData() {
     // 2. CHANNEL NUMBER DRAW
     // Show channel number in sign field only when MIDI-Out is active (not OFF).
     if (io.midiOut != 0) {
-        char chanBuf[4];
+        char chanBuf[16];
         sprintf(chanBuf, " %02d", io.midiOutChannel + 1);
         lcd_setMenuSignState(CYAN);
         lcd.drawText(chanBuf, kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]);
@@ -10595,7 +10592,7 @@ void Controller::lcd_drawEffect_BData(uint8_t effectNum_) {
     // 2. VALUE RESOLUTION
     // Resolve parameter-B value text based on effect type.
     lcd_setMenuDataState(WHITE);
-    const char* textPtr;
+    const char* textPtr = kDataDashR;
     switch (type_) {
         case EF_DELAY:
             textPtr = kNumberDataLibrary[effect_.delay.bLevel].nameLongR;
@@ -10654,7 +10651,7 @@ void Controller::lcd_drawEffect_CData(uint8_t effectNum_) {
     // 2. VALUE RESOLUTION
     // Resolve parameter-C value text based on effect type.
     lcd_setMenuDataState(WHITE);
-    const char* textPtr;
+    const char* textPtr = kDataDashR;
     switch (type_) {
         case EF_DELAY:
             textPtr = kNumberDataLibrary[effect_.delay.cFeedback].nameLongR;
@@ -10713,7 +10710,7 @@ void Controller::lcd_drawEffect_DData(uint8_t effectNum_) {
     // 2. VALUE RESOLUTION
     // Resolve parameter-D value text based on effect type.
     lcd_setMenuDataState(WHITE);
-    const char* textPtr;
+    const char* textPtr = kDataDashR;
     switch (type_) {
         case EF_DELAY:
             textPtr = kNumberDataLibrary[effect_.delay.dDamping].nameLongR;
@@ -10772,7 +10769,7 @@ void Controller::lcd_drawEffect_EData(uint8_t effectNum_) {
     // 2. VALUE RESOLUTION
     // Resolve parameter-E value text based on effect type.
     lcd_setMenuDataState(WHITE);
-    const char* textPtr;
+    const char* textPtr = kDataDashR;
     switch (type_) {
         case EF_DELAY:
             textPtr = kNumberDataLibrary[effect_.delay.eDry].nameLongR;
@@ -10831,7 +10828,7 @@ void Controller::lcd_drawEffect_FData(uint8_t effectNum_) {
     // 2. VALUE RESOLUTION
     // Resolve parameter-F value text based on effect type.
     lcd_setMenuDataState(WHITE);
-    const char* textPtr;
+    const char* textPtr = kDataDashR;
     switch (type_) {
         case EF_DELAY:
             textPtr = kNumberDataLibrary[effect_.delay.fWet].nameLongR;
@@ -11132,7 +11129,7 @@ void Controller::lcd_drawLfo_GraphData(uint8_t lfoNum_) {
     }
 
     lcd.setFont(FONT_05x07);
-    char timeBuf[8];
+    char timeBuf[24];
     const char* rateStr;
 
     // 2. Determine display data based on active state
@@ -11502,7 +11499,7 @@ void Controller::lcd_drawLayerInst_GraphData(uint8_t layerNum_) {
     // Total duration adjusted for selection window and playback speed
     float effectiveTime = (sData.timeData * selectionRatio) / pitchFactor;
 
-    char timeBuf[8];
+    char timeBuf[24];
     int32_t integral = static_cast<int32_t>(effectiveTime);
     int32_t fractional = static_cast<int32_t>((effectiveTime - integral) * 100.0f);
     if (fractional < 0) fractional = 0;
@@ -12278,7 +12275,6 @@ void Controller::lcd_drawIcon() {
     // Resolve icon palette and shared draw pointers.
     const RGB16Color* indexPtr;
     const uint8_t* dataPtr;
-    uint16_t xPos;
     indexPtr = (const RGB16Color*)(RAM_ICON_PLAY_PALETTE_ADDRESS);
 
     // 2. RESET ICON UPDATE
@@ -12377,7 +12373,7 @@ void Controller::lcd_drawCountDown() {
 
             // 3. DRAW & DECREMENT
             // Draw current countdown value then decrement by one.
-            char kCountDownData[2];
+            char kCountDownData[16];
             sprintf(kCountDownData, "%02d", metronome.countDown);
             lcd.drawText(kCountDownData, 2, 163, 112);
             metronome.countDown -= 1;
@@ -12496,7 +12492,6 @@ void Controller::lcd_drawMeasureBar() {
 
     // 1. GRID SPACING PRE-CALC
     // Calculate bar and measure spacing in pixels.
-    float barX = (float)kPlayWidth / rhythm.bar;                         // Bar width
     float measureX = (float)kPlayWidth / (rhythm.measure * rhythm.bar);  // Measure width
 
     // 2. DRAW STYLE SETUP
@@ -13038,6 +13033,8 @@ void Controller::file_loadAction() {
             // Load succeeded partially but one or more samples are missing.
             alertType = ALERT_MISSINGSAMPLE;
             break;
+        default:
+            break;
     }
 
     // 4. TRANSACTION FLAG RESTORE
@@ -13446,6 +13443,8 @@ void Controller::drumkit_loadAction() {
 
             // Load succeeded partially but one or more samples are missing.
             alertType = ALERT_MISSINGSAMPLE;
+            break;
+        default:
             break;
     }
 
@@ -15740,7 +15739,7 @@ void Controller::filter_select(uint8_t filterNum_) {
 
     // 1. MENU SWITCH CONDITION
     // Enter filter menu when not already in filter context or when switching filter index.
-    if (((menu == FILTER_0_MENU) && (filterNum_ == 1)) || ((menu == FILTER_1_MENU) && (filterNum_ == 0)) || (menu != FILTER_0_MENU) && (menu != FILTER_1_MENU)) {
+    if (((menu == FILTER_0_MENU) && (filterNum_ == 1)) || ((menu == FILTER_1_MENU) && (filterNum_ == 0)) || ((menu != FILTER_0_MENU) && (menu != FILTER_1_MENU))) {
         // 2. MENU STATE TRANSITION
         // Store previous menu context and activate target filter menu.
         preMenu = menu;
@@ -16301,7 +16300,7 @@ void Controller::effect_select(uint8_t effectNum_) {
 
     // 1. MENU SWITCH CONDITION
     // Enter effect menu when not already in effect context or when switching effect index.
-    if (((menu == EFFECT_0_MENU) && (effectNum_ == 1)) || ((menu == EFFECT_1_MENU) && (effectNum_ == 0)) || (menu != EFFECT_0_MENU) && (menu != EFFECT_1_MENU)) {
+    if (((menu == EFFECT_0_MENU) && (effectNum_ == 1)) || ((menu == EFFECT_1_MENU) && (effectNum_ == 0)) || ((menu != EFFECT_0_MENU) && (menu != EFFECT_1_MENU))) {
         // 2. MENU STATE TRANSITION
         // Store previous menu context and activate target effect menu.
         preMenu = menu;
@@ -17016,8 +17015,8 @@ void Controller::effect_setEData(uint8_t effectNum_, uint8_t subEffectNum_, uint
         // Resolve dry/wet targets per sub-effect and enforce optional sum limit.
         uint8_t targetDry;
         uint8_t targetWet;
-        float targetDryFloat;
-        float targetWetFloat;
+        float targetDryFloat = effect_.dryFloat;  // unknown sub-effect: keep the current mix
+        float targetWetFloat = effect_.wetFloat;
         switch (subEffectNum_) {
             case EF_DELAY: {
                 Delay& delay = effect_.delay;
@@ -17190,8 +17189,8 @@ void Controller::effect_setFData(uint8_t effectNum_, uint8_t subEffectNum_, uint
         // Resolve dry/wet targets per sub-effect and enforce optional sum limit.
         uint8_t targetDry;
         uint8_t targetWet;
-        float targetDryFloat;
-        float targetWetFloat;
+        float targetDryFloat = effect_.dryFloat;  // unknown sub-effect: keep the current mix
+        float targetWetFloat = effect_.wetFloat;
         switch (subEffectNum_) {
             case EF_DELAY: {
                 Delay& delay = effect_.delay;
@@ -17366,7 +17365,7 @@ void Controller::effect_genTransition(uint8_t effectNum_, EffectTransitionMode m
     gTransition.activeType = activeType_;
     gTransition.targetType = targetType_;
     Menu targetMenu;
-    EncoderFunc targetFunc;
+    EncoderFunc targetFunc = ENC_FNC_NONE;
 
     // 2. MODE-SPECIFIC TARGET MAPPING
     // Map requested mode to dry/wet (and record-wet where applicable) start/target pairs.
@@ -17432,6 +17431,8 @@ void Controller::effect_genTransition(uint8_t effectNum_, EffectTransitionMode m
                     case EF_MODE_FEEDBACK:
                         targetFunc = ENC_EFFECT_0_PARAM_B;
                         break;
+                    default:
+                        break;
                 }
             } else {
                 targetMenu = EFFECT_1_MENU;
@@ -17447,10 +17448,12 @@ void Controller::effect_genTransition(uint8_t effectNum_, EffectTransitionMode m
                     case EF_MODE_FEEDBACK:
                         targetFunc = ENC_EFFECT_1_PARAM_B;
                         break;
+                    default:
+                        break;
                 }
             }
             checkMenuTransition(targetMenu, true);
-            checkEncoderTransition(targetFunc, true);
+            if (targetFunc != ENC_FNC_NONE) checkEncoderTransition(targetFunc, true);
             break;
     }
 
@@ -18088,6 +18091,8 @@ void Controller::reverb_genTransition(ReverbTransitionMode mode_, bool activeAct
             checkMenuTransition(REVERB_MENU, true);
             checkEncoderTransition(ENC_REVERB_SURROUND, true);
             break;
+        default:
+            break;
     }
 
     // 3. TRANSITION PRE-CALC & ARM
@@ -18707,7 +18712,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                         aBD.newBeatFlag = true;
                     } else {
                         memcpy(&aBD, &tBD, sizeof(BeatPlayData));
-                        memset(&tBD, 0x00, sizeof(BeatPlayData));
+                        memset(&tBD, 0, sizeof(BeatPlayData));
                     }
                     __set_PRIMASK(primaskBeat);
                 }
@@ -18726,7 +18731,7 @@ void Controller::layerInst_select(uint8_t layerNum_) {
 
     // 1. MENU ENTRY / LAYER SWITCH
     // Enter Layer Inst flow when current menu differs or selected layer changes.
-    if (((menu != LAYER_INST_0_MENU) && (menu != LAYER_INST_1_MENU) && (menu != LAYER_INST_2_MENU)) || ((menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU)) && (selectedLayerNum != layerNum_)) {
+    if (((menu != LAYER_INST_0_MENU) && (menu != LAYER_INST_1_MENU) && (menu != LAYER_INST_2_MENU)) || (((menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU)) && (selectedLayerNum != layerNum_))) {
         // 2. MENU CONTEXT PREPARATION
         // Store previous menu/tab state and open Layer Inst page-0.
         preMenu = menu;
@@ -18742,7 +18747,6 @@ void Controller::layerInst_select(uint8_t layerNum_) {
         layer.instSelectedData = layer.instLoadedData;
         layer.sampleSelectedData = layer.sampleLoadedData;
         layer.wavSelectedData = layer.wavLoadedData;
-        uint8_t targetSector = layer.playSampleSector;
 
         // 4. UI TRANSITION & RENDER
         // Clear previous selection context, then animate and draw layer menu.
@@ -18914,6 +18918,8 @@ void Controller::layerInst_menuUp() {
                 case LAYER_INST_2_MENU:
                     (layer.eq < kMaxLayerEq) ? layerInst_setEq(selectedLayerNum, layer.eq + 1) : layerInst_setEq(selectedLayerNum, kMinLayerEq);
                     break;
+                default:
+                    break;
             }
             break;
 
@@ -18936,6 +18942,8 @@ void Controller::layerInst_menuUp() {
 
                 case LAYER_INST_2_MENU:
                     (layer.filter < kMaxLayerFilter) ? layerInst_setFilter(selectedLayerNum, layer.filter + 1) : layerInst_setFilter(selectedLayerNum, kMinLayerFilter);
+                    break;
+                default:
                     break;
             }
             break;
@@ -18960,6 +18968,8 @@ void Controller::layerInst_menuUp() {
                 case LAYER_INST_2_MENU:
                     (layer.effect < kMaxLayerEffect) ? layerInst_setEffect(selectedLayerNum, layer.effect + 1) : layerInst_setEffect(selectedLayerNum, kMinLayerEffect);
                     break;
+                default:
+                    break;
             }
             break;
 
@@ -18981,6 +18991,8 @@ void Controller::layerInst_menuUp() {
 
                 case LAYER_INST_2_MENU:
                     (layer.reverb < kMaxLayerReverb) ? layerInst_setReverb(selectedLayerNum, layer.reverb + 1) : layerInst_setReverb(selectedLayerNum, kMinLayerReverb);
+                    break;
+                default:
                     break;
             }
     }
@@ -19025,6 +19037,8 @@ void Controller::layerInst_menuDown() {
                 case LAYER_INST_2_MENU:
                     (layer.eq > kMinLayerEq) ? layerInst_setEq(selectedLayerNum, layer.eq - 1) : layerInst_setEq(selectedLayerNum, kMaxLayerEq);
                     break;
+                default:
+                    break;
             }
             break;
 
@@ -19046,6 +19060,8 @@ void Controller::layerInst_menuDown() {
 
                 case LAYER_INST_2_MENU:
                     (layer.filter > kMinLayerFilter) ? layerInst_setFilter(selectedLayerNum, layer.filter - 1) : layerInst_setFilter(selectedLayerNum, kMaxLayerFilter);
+                    break;
+                default:
                     break;
             }
             break;
@@ -19070,6 +19086,8 @@ void Controller::layerInst_menuDown() {
                 case LAYER_INST_2_MENU:
                     (layer.effect > kMinLayerEffect) ? layerInst_setEffect(selectedLayerNum, layer.effect - 1) : layerInst_setEffect(selectedLayerNum, kMaxLayerEffect);
                     break;
+                default:
+                    break;
             }
             break;
 
@@ -19092,6 +19110,8 @@ void Controller::layerInst_menuDown() {
                 case LAYER_INST_2_MENU:
                     (layer.reverb > kMinLayerReverb) ? layerInst_setReverb(selectedLayerNum, layer.reverb - 1) : layerInst_setReverb(selectedLayerNum, kMaxLayerReverb);
                     break;
+                default:
+                    break;
             }
             break;
     }
@@ -19110,56 +19130,56 @@ void Controller::layerInst_setInstSelected(uint8_t layerNum_, int16_t inst_) {
         // 2. INSTRUMENT INDEX UPDATE
         // Store selected index and clear previous instrument metadata cache.
         layer.instSelected = inst_;
-        memset(&(layer.instSelectedData), 0x00, sizeof(InstData));
+        memset(static_cast<void*>(&layer.instSelectedData), 0x00, sizeof(InstData));
         if (inst_ != -1) {
             // 3. INSTRUMENT LIBRARY READ
             // Resolve instrument labels and derive file/folder paths.
             sprintf(layer.instSelectedData.num, "%04d", layer.instSelected + 1);
-            char temp[kFileNameSize + 1];
+            char temp[kFileNameSize + 1] = {};  // f_read fills 32 bytes; temp[32] stays the terminator
             f_close(&sd.file);
             if ((f_open(&sd.file, "System/Data/Inst.lib", FA_READ) == FR_OK) && (f_lseek(&sd.file, 25 + (layer.instSelected * 32)) == FR_OK) && (f_read(&sd.file, temp, kFileNameSize, &sd.bytesread) == FR_OK)) {
                 f_close(&sd.file);
 
                 // Construct file path
                 strcpy(layer.instSelectedData.fileName, "System/Data/");
-                strncat(layer.instSelectedData.fileName, temp, kFileNameSize);
-                strncat(layer.instSelectedData.fileName, ".ins", 4);
+                strcat(layer.instSelectedData.fileName, temp);
+                strcat(layer.instSelectedData.fileName, ".ins");
 
                 // Construct folder path
                 strcpy(layer.instSelectedData.folderName, "Sample/");
-                strncat(layer.instSelectedData.folderName, temp, kFileNameSize);
-                strncat(layer.instSelectedData.folderName, "/", 1);
+                strcat(layer.instSelectedData.folderName, temp);
+                strcat(layer.instSelectedData.folderName, "/");
 
                 // Copy full name
-                strncpy(layer.instSelectedData.nameLong, temp, kFileNameSize);
+                strcpy(layer.instSelectedData.nameLong, temp);
 
                 // Format short names for display
                 uint8_t length = strlen(temp);
 
                 // Left-aligned short name
                 if (length > 12) {
-                    strncpy(layer.instSelectedData.nameShortL, temp, 11);
+                    memcpy(layer.instSelectedData.nameShortL, temp, 11);
                     strcat(layer.instSelectedData.nameShortL, "_");
                 } else if (length == 12) {
-                    strncpy(layer.instSelectedData.nameShortL, temp, length);
+                    memcpy(layer.instSelectedData.nameShortL, temp, length);
                 } else {
                     char bText[] = "            ";
                     uint8_t bLength = 12 - length;
-                    strncpy(layer.instSelectedData.nameShortL, temp, length);
-                    strncat(layer.instSelectedData.nameShortL, bText, bLength);
+                    memcpy(layer.instSelectedData.nameShortL, temp, length);
+                    memcpy(layer.instSelectedData.nameShortL + length, bText, bLength);
                 }
 
                 // Right-aligned short name
                 if (length > 10) {
-                    strncpy(layer.instSelectedData.nameShortR, temp, 9);
+                    memcpy(layer.instSelectedData.nameShortR, temp, 9);
                     strcat(layer.instSelectedData.nameShortR, "_");
                 } else if (length == 10) {
-                    strncpy(layer.instSelectedData.nameShortR, temp, length);
+                    memcpy(layer.instSelectedData.nameShortR, temp, length);
                 } else {
                     char bText[] = "            ";
                     uint8_t bLength = 10 - length;
-                    strncpy(layer.instSelectedData.nameShortR, bText, bLength);
-                    strncat(layer.instSelectedData.nameShortR, temp, length);
+                    memcpy(layer.instSelectedData.nameShortR, bText, bLength);
+                    memcpy(layer.instSelectedData.nameShortR + bLength, temp, length);
                 }
             }
         } else {
@@ -19193,7 +19213,7 @@ void Controller::layerInst_setInstLoaded(uint8_t layerNum_) {
     if (strcmp(layer.instSelectedData.fileName, layer.instLoadedData.fileName) != 0) {
         // 2. LOADED STATE UPDATE
         // Clear previous loaded cache and copy selected state.
-        memset(&(layer.instLoadedData), 0x00, sizeof(InstData));
+        memset(static_cast<void*>(&layer.instLoadedData), 0x00, sizeof(InstData));
         layer.instLoaded = layer.instSelected;
         layer.instLoadedData = layer.instSelectedData;
 
@@ -19219,7 +19239,7 @@ void Controller::layerInst_setSampleSelected(uint8_t layerNum_, int16_t sample_)
         layer.sampleSelected = sample_;
         layer.sampleSelectedReadError = false;
         layer.sampleSelectedTypeError = false;
-        memset(&(layer.sampleSelectedData), 0x00, sizeof(SampleData));
+        memset(static_cast<void*>(&layer.sampleSelectedData), 0x00, sizeof(SampleData));
         memset(&(layer.wavSelectedData), 0x00, sizeof(WavData));
         if (sample_ != -1) {
             // 3. SAMPLE LIBRARY LOOKUP
@@ -19232,24 +19252,25 @@ void Controller::layerInst_setSampleSelected(uint8_t layerNum_, int16_t sample_)
 
                 // Construct full file path
                 strcpy(layer.sampleSelectedData.fileName, layer.instSelectedData.folderName);
-                strncat(layer.sampleSelectedData.fileName, temp, kFileNameSize);
+                strcat(layer.sampleSelectedData.fileName, temp);
 
                 // Copy full name
-                strncpy(layer.sampleSelectedData.nameLong, temp, kFileNameSize);
+                strcpy(layer.sampleSelectedData.nameLong, temp);
 
                 // Format short name
                 char* temp2 = strtok(temp, ".");
+                if (temp2 == NULL) temp2 = temp;  // empty name: no token
                 uint8_t length = strlen(temp2);
                 if (length > 10) {
-                    strncpy(layer.sampleSelectedData.nameShortR, temp2, 9);
+                    memcpy(layer.sampleSelectedData.nameShortR, temp2, 9);
                     strcat(layer.sampleSelectedData.nameShortR, "_");
                 } else if (length == 10) {
-                    strncpy(layer.sampleSelectedData.nameShortR, temp2, length);
+                    memcpy(layer.sampleSelectedData.nameShortR, temp2, length);
                 } else {
                     char bText[] = "          ";
                     uint8_t bLength = 10 - length;
-                    strncpy(layer.sampleSelectedData.nameShortR, bText, bLength);
-                    strncat(layer.sampleSelectedData.nameShortR, temp2, length);
+                    memcpy(layer.sampleSelectedData.nameShortR, bText, bLength);
+                    memcpy(layer.sampleSelectedData.nameShortR + bLength, temp2, length);
                 }
 
                 // 4. WAV HEADER PARSING
@@ -19472,7 +19493,7 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
         layer.sampleLoading = true;
 
         // Step 1: Metadata Preparation
-        memset(&(layer.sampleLoadedData), 0x00, sizeof(SampleData));
+        memset(static_cast<void*>(&layer.sampleLoadedData), 0x00, sizeof(SampleData));
         memset(&(layer.wavLoadedData), 0x00, sizeof(WavData));
         if (layer.sampleSelected != -1) {
             // Copy metadata from selection to active load slot
@@ -21807,6 +21828,7 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
 void Controller::processAudioReceive(uint32_t* inputBuffer_) {
     static float dcX1 = 0, dcY1 = 0;              // dc blocker state
     static float lpfState1 = 0, lpfState2 = 0;    // low-pass state (stage 2 used only at LINE_IN_LPF_ENABLE == 2)
+    (void)lpfState2;                              // unused in the one-pole configuration
     static float env = 0.0f, gateGain = 0.0f;     // expander state
     static uint32_t holdCounter = 0;
 
@@ -21929,7 +21951,6 @@ void Controller::processAudioLayer() {
     // Process playback pipeline for each layer independently.
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
         LayerPlayData& lD = layerPlayData[i];
-        BeatPlayData& tBD = lD.tempBeatPlayData;
         BeatPlayData& aBD = lD.activeBeatPlayData;
 
         // Reset the audio buffer for the current layer
@@ -21944,7 +21965,7 @@ void Controller::processAudioLayer() {
 
                 // Transfer temporary beat data to the active state
                 memcpy(&aBD, &lD.tempBeatPlayData, sizeof(BeatPlayData));
-                memset(&lD.tempBeatPlayData, 0x00, sizeof(BeatPlayData));
+                memset(&lD.tempBeatPlayData, 0, sizeof(BeatPlayData));
 
                 // Deactivate layer if necessary and trigger MIDI Note Off
                 if (!aBD.active) {
@@ -23698,6 +23719,8 @@ void Controller::interruptTransition() {
                     mixer.masterVolumeFloat -= kChangeVal;
                 }
                 break;
+            default:
+                break;
         }
         if (vTransition.actionVolume == MIXER_ACTION_NONE) {
             vTransition.active = false;
@@ -23724,6 +23747,8 @@ void Controller::interruptTransition() {
                     mixer.volumeLeftFloat -= kChangeVal;
                 }
                 break;
+            default:
+                break;
         }
         switch (pTransition.actionVolumeRight) {
             case MIXER_ACTION_UP:
@@ -23740,6 +23765,8 @@ void Controller::interruptTransition() {
                 } else {
                     mixer.volumeRightFloat -= kChangeVal;
                 }
+                break;
+            default:
                 break;
         }
         if ((pTransition.actionVolumeLeft == MIXER_ACTION_NONE) && (pTransition.actionVolumeRight == MIXER_ACTION_NONE)) {
@@ -23767,6 +23794,8 @@ void Controller::interruptTransition() {
                     metronome.volumeFloat -= kChangeVal;
                 }
                 break;
+            default:
+                break;
         }
         if (vTransition.actionVolume == MET_ACTION_NONE) {
             vTransition.active = false;
@@ -23793,6 +23822,8 @@ void Controller::interruptTransition() {
                     gTransition.activeDry -= kChangeVal;
                 }
                 break;
+            default:
+                break;
         }
         switch (gTransition.actionWet) {
             case EQ_ACTION_UP:
@@ -23809,6 +23840,8 @@ void Controller::interruptTransition() {
                 } else {
                     gTransition.activeWet -= kChangeVal;
                 }
+                break;
+            default:
                 break;
         }
         if ((gTransition.actionDry == EQ_ACTION_NONE) && (gTransition.actionWet == EQ_ACTION_NONE)) {
@@ -23853,6 +23886,8 @@ void Controller::interruptTransition() {
                         gTransition.activeDry -= kChangeVal;
                     }
                     break;
+                default:
+                    break;
             }
             switch (gTransition.actionWet) {
                 case FIL_ACTION_UP:
@@ -23869,6 +23904,8 @@ void Controller::interruptTransition() {
                     } else {
                         gTransition.activeWet -= kChangeVal;
                     }
+                    break;
+                default:
                     break;
             }
             if ((gTransition.actionDry == FIL_ACTION_NONE) && (gTransition.actionWet == FIL_ACTION_NONE)) {
@@ -23943,6 +23980,8 @@ void Controller::interruptTransition() {
                         filter_.dryFloat -= kChangeVal;
                     }
                     break;
+                default:
+                    break;
             }
             switch (mTransition.actionWet) {
                 case FIL_ACTION_UP:
@@ -23959,6 +23998,8 @@ void Controller::interruptTransition() {
                     } else {
                         filter_.wetFloat -= kChangeVal;
                     }
+                    break;
+                default:
                     break;
             }
             if ((mTransition.actionDry == FIL_ACTION_NONE) && (mTransition.actionWet == FIL_ACTION_NONE)) {
@@ -23988,6 +24029,8 @@ void Controller::interruptTransition() {
                         gTransition.activeDry -= kChangeVal;
                     }
                     break;
+                default:
+                    break;
             }
             switch (gTransition.actionWet) {
                 case EF_ACTION_UP:
@@ -24004,6 +24047,8 @@ void Controller::interruptTransition() {
                     } else {
                         gTransition.activeWet -= kChangeVal;
                     }
+                    break;
+                default:
                     break;
             }
             switch (gTransition.actionRecordWet) {
@@ -24022,10 +24067,12 @@ void Controller::interruptTransition() {
                         gTransition.activeRecordWet -= kChangeVal;
                     }
                     break;
+                default:
+                    break;
             }
             if ((gTransition.actionDry == EF_ACTION_NONE) && (gTransition.actionWet == EF_ACTION_NONE) && (gTransition.actionRecordWet == EF_ACTION_NONE)) {
                 Menu targetMenu;
-                EncoderFunc targetFunc;
+                EncoderFunc targetFunc = ENC_FNC_NONE;
                 switch (gTransition.mode) {
                     case EF_MODE_NONE:
                         gTransition.active = false;
@@ -24095,6 +24142,8 @@ void Controller::interruptTransition() {
                                                 break;
                                         }
                                         break;
+                                    default:
+                                        break;
                                 }
                                 gTransition.phase = EF_PHASE_B;
                                 gTransition.activeDry = 1.0;
@@ -24119,6 +24168,8 @@ void Controller::interruptTransition() {
                                         case EF_MODE_FEEDBACK:
                                             targetFunc = ENC_EFFECT_0_PARAM_B;
                                             break;
+                                        default:
+                                            break;
                                     }
                                 } else {
                                     targetMenu = EFFECT_1_MENU;
@@ -24134,10 +24185,12 @@ void Controller::interruptTransition() {
                                         case EF_MODE_FEEDBACK:
                                             targetFunc = ENC_EFFECT_1_PARAM_B;
                                             break;
+                                        default:
+                                            break;
                                     }
                                 }
                                 checkMenuTransition(targetMenu, true);
-                                checkEncoderTransition(targetFunc, true);
+                                if (targetFunc != ENC_FNC_NONE) checkEncoderTransition(targetFunc, true);
                                 break;
 
                             case EF_PHASE_B:
@@ -24155,6 +24208,8 @@ void Controller::interruptTransition() {
                                         case EF_MODE_FEEDBACK:
                                             targetFunc = ENC_EFFECT_0_PARAM_B;
                                             break;
+                                        default:
+                                            break;
                                     }
                                 } else {
                                     targetMenu = EFFECT_1_MENU;
@@ -24170,6 +24225,8 @@ void Controller::interruptTransition() {
                                         case EF_MODE_FEEDBACK:
                                             targetFunc = ENC_EFFECT_1_PARAM_B;
                                             break;
+                                        default:
+                                            break;
                                     }
                                 }
                                 gTransition.active = false;
@@ -24177,7 +24234,7 @@ void Controller::interruptTransition() {
                                 gTransition.phase = EF_PHASE_NONE;
                                 transitionClearFlag = true;
                                 checkMenuTransition(targetMenu, false);
-                                checkEncoderTransition(targetFunc, false);
+                                if (targetFunc != ENC_FNC_NONE) checkEncoderTransition(targetFunc, false);
                                 break;
                         }
                         break;
@@ -24203,6 +24260,8 @@ void Controller::interruptTransition() {
                         effect_.dryFloat -= kChangeVal;
                     }
                     break;
+                default:
+                    break;
             }
             switch (mTransition.actionWet) {
                 case EF_ACTION_UP:
@@ -24219,6 +24278,8 @@ void Controller::interruptTransition() {
                     } else {
                         effect_.wetFloat -= kChangeVal;
                     }
+                    break;
+                default:
                     break;
             }
             if ((mTransition.actionDry == EF_ACTION_NONE) && (mTransition.actionWet == EF_ACTION_NONE)) {
@@ -24247,6 +24308,8 @@ void Controller::interruptTransition() {
                     gTransition.activeDry -= kChangeVal;
                 }
                 break;
+            default:
+                break;
         }
         switch (gTransition.actionWet) {
             case REV_ACTION_UP:
@@ -24263,6 +24326,8 @@ void Controller::interruptTransition() {
                 } else {
                     gTransition.activeWet -= kChangeVal;
                 }
+                break;
+            default:
                 break;
         }
         if ((gTransition.actionDry == REV_ACTION_NONE) && (gTransition.actionWet == REV_ACTION_NONE)) {
@@ -24348,6 +24413,8 @@ void Controller::interruptTransition() {
                             break;
                     }
                     break;
+                default:
+                    break;
             }
         }
     }
@@ -24369,6 +24436,8 @@ void Controller::interruptTransition() {
                     reverb.dryFloat -= kChangeVal;
                 }
                 break;
+            default:
+                break;
         }
         switch (mTransition.actionWet) {
             case REV_ACTION_UP:
@@ -24385,6 +24454,8 @@ void Controller::interruptTransition() {
                 } else {
                     reverb.wetFloat -= kChangeVal;
                 }
+                break;
+            default:
                 break;
         }
         if ((mTransition.actionDry == REV_ACTION_NONE) && (mTransition.actionWet == REV_ACTION_NONE)) {

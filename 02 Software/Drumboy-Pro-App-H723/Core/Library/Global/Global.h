@@ -156,7 +156,7 @@ typedef enum {
 #define CYCCNTENA                                   (1 << 0)
 #define DWT_LAR_UNLOCK                              (0xC5ACCE55)
 
-static void dwt_initialize() {
+static inline void dwt_initialize() {
     // 1. Enable the Debug Exception and Monitor Control Register (Trace unit)
     DEMCR |= TRCENA;
 
@@ -173,7 +173,7 @@ static inline uint32_t dwt_getMicros() {
     return DWT_CYCCNT / (SystemCoreClock / 1000000);
 }
 
-static void delay_us(uint32_t us) {
+static inline void delay_us(uint32_t us) {
     uint32_t startTick = DWT_CYCCNT;
     uint32_t ticks = us * (SystemCoreClock / 1000000);
 
@@ -2368,7 +2368,7 @@ struct Io {
     Sync sync;
 };
 
-static void clearMidiArmedState(bool& playArmed_, bool& recordArmed_, Icon& playIcon_, Icon& recordIcon_, bool& textClearFlag_) {
+static inline void clearMidiArmedState(bool& playArmed_, bool& recordArmed_, Icon& playIcon_, Icon& recordIcon_, bool& textClearFlag_) {
     if (!playArmed_ && !recordArmed_) return;
 
     playArmed_ = false;
@@ -6356,7 +6356,7 @@ const struct FrequencyData kFrequencyDataLibrary[] = {
 
 struct InstData {
     char num[4 + 1]                                 = "----";
-    char fileName[kFileNameSize + 10]               = "";  // Data/InstName.ins
+    char fileName[kFileNameSize + 17]               = "";  // System/Data/InstName.ins (12 + 32 + 4 + nul)
     char folderName[kFileNameSize + 10]             = "";
     char nameLong[kFileNameSize + 1]                = "";
     char nameShortL[12 + 1]                         = "------------";
@@ -6430,7 +6430,7 @@ static uint8_t gLayerInstGraphPrevEndIdx[kLayerLibrarySize] = {0};
 static uint8_t gLayerInstGraphPrevBitDepth[kLayerLibrarySize] = {0xFF};
 static char gLayerInstGraphPrevTimeText[kLayerLibrarySize][8] = {{0}};
 
-static void resetLayerInstGraphCache(uint8_t layerNum_) {
+static inline void resetLayerInstGraphCache(uint8_t layerNum_) {
     if (layerNum_ >= kLayerLibrarySize) return;
 
     gLayerInstGraphCacheInit[layerNum_] = false;
@@ -6844,7 +6844,6 @@ struct BeatFill {
         uint16_t totalInterval = static_cast<uint16_t>(endInterval_ - startInterval_);
 
         uint8_t stepSize;
-        uint8_t stepMid = refFill.stepMid;
         uint16_t interval;
         uint8_t level;
         float levelInc;

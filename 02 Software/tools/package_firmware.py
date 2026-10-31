@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+import os
 import struct
 import sys
 import zlib
@@ -24,6 +25,8 @@ import zlib
 MAGIC = b"RW_DRUMBOY_PRO_FIRMWARE "
 HEADER = struct.Struct("<HHII")
 MAX_SIZE = 917504          # bootloader limit (sectors 1-7)
+MAX_NAME = 31              # bootloader FatFs (_MAX_LFN 32) ignores long names of 32+ characters
+NAME_PREFIX = "Drumboy_Pro_Fw"   # bootloader looks for Drumboy_Pro_Fw?*.bin in the card's root
 APP_BASE = 0x08020000      # application flash start
 
 
@@ -45,7 +48,16 @@ def check_payload(payload):
         raise ValueError(f"reset vector 0x{reset:08x} is not a Thumb address inside the application")
 
 
+def check_name(path):
+    name = os.path.basename(path)
+    if not (name.startswith(NAME_PREFIX) and len(name) > len(NAME_PREFIX) and name.lower().endswith(".bin")):
+        raise ValueError(f"{name}: the bootloader only flashes files named {NAME_PREFIX}?*.bin")
+    if len(name) > MAX_NAME:
+        raise ValueError(f"{name}: {len(name)} characters; the bootloader ignores names longer than {MAX_NAME}")
+
+
 def check(path):
+    check_name(path)
     data = open(path, "rb").read()
     if data[:24] != MAGIC:
         raise ValueError("bad magic")
@@ -73,6 +85,7 @@ def main():
             return
         if not (args.output and args.version):
             ap.error("output and --version are required when packaging")
+        check_name(args.output)
         major, minor = parse_version(args.version)
         payload = open(args.input, "rb").read()
         check_payload(payload)

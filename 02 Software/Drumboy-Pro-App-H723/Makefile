@@ -55,7 +55,7 @@ VERSION_FILE = Core/Library/Global/Version.h
 VERSION ?= $(shell awk '/define FW_VERSION_MAJOR/{a=$$3} /define FW_VERSION_MINOR/{b=$$3} END{printf "%d.%02d", a, b}' $(VERSION_FILE))
 VERSION_MAJOR = $(word 1,$(subst ., ,$(VERSION)))
 VERSION_MINOR = $(word 2,$(subst ., ,$(VERSION)))
-PACKAGE = $(BUILD)/Drumboy_Pro_Fw_$(shell echo $(VERSION) | awk -F. '{printf "%02d_%02d", $$1, $$2}')$(if $(PROFILE),_profile).bin
+PACKAGE = $(BUILD)/Drumboy_Pro_Fw_$(shell echo $(VERSION) | awk -F. '{printf "%02d_%02d", $$1, $$2}')$(if $(PROFILE),_dsp).bin
 
 .PHONY: all package version clean
 

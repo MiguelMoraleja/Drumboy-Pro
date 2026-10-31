@@ -326,7 +326,32 @@ static void testFileStorage() {
     CHECK(routeUnpackMetro(0) == NODE_REV && routeUnpackMetro(1) == NODE_REV, "unset metronome route must be the reverb");
 }
 
+// Encoder stepping on the ROUTING page: every value offered must be a valid destination,
+// all valid destinations must be reachable, and stepping must wrap both ways.
+static void testModuleOutStepping() {
+    for (uint8_t m = 0; m < NODE_REV; m++) {
+        uint8_t cur = routeFirstNode(kDefaultRoutePatch.moduleDest[m]);
+        bool seen[kRouteNodeCount] = {};
+        for (int i = 0; i < 20; i++) {
+            cur = routeNextModuleOut(m, cur, true);
+            CHECK(routeModuleDestValid(m, routeBit(cur)), "module %u stepped up to invalid %u", m, cur);
+            seen[cur] = true;
+        }
+        for (uint8_t n = 0; n < kRouteNodeCount; n++) CHECK(seen[n] == (n > m), "module %u: node %u reachable=%d", m, n, (int)seen[n]);
+        for (int i = 0; i < 20; i++) {
+            uint8_t down = routeNextModuleOut(m, cur, false);
+            CHECK(routeModuleDestValid(m, routeBit(down)), "module %u stepped down to invalid %u", m, down);
+            CHECK(routeNextModuleOut(m, down, true) == cur, "module %u: down then up must return", m);
+            cur = down;
+        }
+        CHECK(routeNextModuleOut(m, NODE_MASTER, true) == m + 1 && routeNextModuleOut(m, m + 1, false) == NODE_MASTER, "module %u must wrap", m);
+        CHECK(routeNextModuleOut(m, m, true) == m + 1, "module %u: invalid current must snap to first", m);
+    }
+    CHECK(routeFirstNode(0) == NODE_MASTER && routeFirstNode(routeBit(NODE_FX1) | routeBit(NODE_MASTER)) == NODE_FX1, "routeFirstNode");
+}
+
 int main() {
+    testModuleOutStepping();
     testFileStorage();
     testLegacyConversion();
     testDefaultPatchMatchesLegacy();

@@ -1195,7 +1195,17 @@ typedef enum {
     ENC_SONG_TIMING                                 = 0x5F,
     ENC_SONG_VELOCITY                               = 0x60,
 
-    ENC_FNC_NONE                                    = 0x61
+    ENC_FNC_NONE                                    = 0x61,
+
+    ENC_ROUTE_EQ_OUT                                = 0x62,
+    ENC_ROUTE_F1_OUT                                = 0x63,
+    ENC_ROUTE_F2_OUT                                = 0x64,
+    ENC_ROUTE_FX1_OUT                               = 0x65,
+    ENC_ROUTE_FX2_OUT                               = 0x66,
+    ENC_ROUTE_METRO_OUT                             = 0x67,
+    ENC_ROUTE_LINEIN_OUT                            = 0x68,
+
+    kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
 const EncoderFunc encoderLocalFunction[][8] = {
@@ -1238,7 +1248,9 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // LAYER_SONG_MENU = 0x12
     {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_FNC_NONE, ENC_FNC_NONE},
     // TEST_MENU = 0x13
-    {ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE}};
+    {ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
+    // ROUTING_MENU = 0x14
+    {ENC_ROUTE_EQ_OUT, ENC_ROUTE_F1_OUT, ENC_ROUTE_F2_OUT, ENC_ROUTE_FX1_OUT, ENC_ROUTE_FX2_OUT, ENC_ROUTE_METRO_OUT, ENC_ROUTE_LINEIN_OUT, ENC_FNC_NONE}};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1361,8 +1373,21 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_SONG_FILL,           ENC_RES_M, "FILL      ", "SONG  ", "   ", false},
     {ENC_SONG_PATTERN,        ENC_RES_M, "PATTERN   ", "SONG  ", "   ", false},
     {ENC_SONG_TIMING,         ENC_RES_M, "TIMING    ", "SONG  ", "   ", false},
-    {ENC_SONG_VELOCITY,       ENC_RES_M, "VELOCITY  ", "SONG  ", "   ", false}
+    {ENC_SONG_VELOCITY,       ENC_RES_M, "VELOCITY  ", "SONG  ", "   ", false},
+
+    // 0x61: empty slot. Lookups of ENC_FNC_NONE used to read one past the end of this table.
+    {ENC_FNC_NONE,            ENC_RES_F, "----------", "      ", "   ", false},
+
+    {ENC_ROUTE_EQ_OUT,        ENC_RES_S, "EQ        ", "ROUTE ", "OUT", false},
+    {ENC_ROUTE_F1_OUT,        ENC_RES_S, "FILTER-1  ", "ROUTE ", "OUT", false},
+    {ENC_ROUTE_F2_OUT,        ENC_RES_S, "FILTER-2  ", "ROUTE ", "OUT", false},
+    {ENC_ROUTE_FX1_OUT,       ENC_RES_S, "EFFECT-1  ", "ROUTE ", "OUT", false},
+    {ENC_ROUTE_FX2_OUT,       ENC_RES_S, "EFFECT-2  ", "ROUTE ", "OUT", false},
+    {ENC_ROUTE_METRO_OUT,     ENC_RES_S, "METRONOME ", "ROUTE ", "OUT", false},
+    {ENC_ROUTE_LINEIN_OUT,    ENC_RES_S, "LINE-IN   ", "ROUTE ", "OUT", false}
 };
+
+static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
 
 typedef enum {
     ENC_MODE_GLOBAL                                 = 0x00,
@@ -1483,7 +1508,8 @@ typedef enum {
     LAYER_INST_1_MENU                               = 0x10,
     LAYER_INST_2_MENU                               = 0x11,
     LAYER_SONG_MENU                                 = 0x12,
-    TEST_MENU                                       = 0x13
+    TEST_MENU                                       = 0x13,
+    ROUTING_MENU                                    = 0x14   // MIXER pressed again
 } Menu;
 
 typedef enum {

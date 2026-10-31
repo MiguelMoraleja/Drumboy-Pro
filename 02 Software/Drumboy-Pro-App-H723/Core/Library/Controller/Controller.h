@@ -981,6 +981,10 @@ class Controller {
     void layerInst_calculateMixMode(uint8_t layerNum_);
     void layerInst_setOut(uint8_t layerNum_, uint8_t out_);
 
+    void routing_select();
+    void lcd_drawRoutingMenu();
+    void lcd_drawRouting_Data(uint8_t tab_);
+    void routing_stepModuleOut(uint8_t module_, bool up_);
     void routing_setModuleOut(uint8_t module_, uint8_t out_);
     void routing_setMetroOut(uint8_t out_);
     void routing_setPatch(const uint8_t* kit_);

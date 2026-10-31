@@ -125,6 +125,21 @@ inline uint8_t routeUnpackMetro(uint8_t presetByte_) {
     return (v >= 1 && v <= kRouteNodeCount) ? static_cast<uint8_t>(v - 1) : static_cast<uint8_t>(NODE_REV);
 }
 
+// The destination shown for a mask: its first node (single-destination routes have one).
+inline uint8_t routeFirstNode(uint8_t mask_) {
+    for (uint8_t n = 0; n < kRouteNodeCount; n++)
+        if (mask_ & routeBit(n)) return n;
+    return NODE_MASTER;
+}
+
+// Encoder stepping for a module's OUT: only later nodes and MASTER, wrapping around.
+inline uint8_t routeNextModuleOut(uint8_t module_, uint8_t current_, bool up_) {
+    const uint8_t first = module_ + 1, last = NODE_MASTER;
+    if (current_ < first || current_ > last) return first;
+    if (up_) return (current_ < last) ? current_ + 1 : first;
+    return (current_ > first) ? current_ - 1 : last;
+}
+
 // Buffers for one block. node[m] is module m's input, processed in place to become its output.
 // The Reverb writes its left output in place and its right output to reverbRight.
 struct RouteBuffers {

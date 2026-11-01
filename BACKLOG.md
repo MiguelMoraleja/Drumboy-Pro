@@ -18,6 +18,9 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 8 | [LIMITER setting does nothing](#8-limiter-setting-does-nothing) | Bug | S |
 | 9 | [Song/kit file format version](#9-songkit-file-format-version) | Groundwork | M |
 | 10 | [Housekeeping](#10-housekeeping) | Chores | S |
+| 11 | [Euclidean rhythm page (EUCLID)](#11-euclidean-rhythm-page-euclid) | Feature | M |
+| 12 | [Free beat placement on Layer Song](#12-free-beat-placement-on-layer-song) | Feature | M |
+| 13 | [Sample preview while browsing](#13-sample-preview-while-browsing) | Feature | L |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -121,3 +124,47 @@ Kit and song files have a signature but no format version. Several items above c
 - **Vendor warnings:** two GCC warnings remain in FatFs (`ff.c`), both known false positives. Our code is held at zero (`make WERROR=1` in CI).
 - **Bootloader:** it ignores update files whose name is 32+ characters (FatFs `_MAX_LFN`). `package_firmware.py` enforces ≤ 31.
 - **Upstream:** offer the fixes and the routing work to Randomwaves/Drumboy-Pro as a pull request from the fork.
+
+---
+
+## Sequencer and samples
+
+### 11. Euclidean rhythm page (EUCLID)
+
+**Today.** The only beat generator is a long ADD press on the Layer Song page, and only when the layer's bank is empty (`layerBeatKeyFlag` is set only when `lastActiveBeatNum == -1`). Each step of the hold runs a fixed preset from `layerSong_generateBeat()`: one beat per bar, two off-beat layouts, then BASIC_4 and BASIC_8 fills on every beat. Nothing is adjustable, and an existing pattern can't be extended. (The EUCLID *fill type* in `Fill.h` is different: it places hits inside one beat, not beats across the bar.)
+
+**Proposal.** A EUCLID page for the selected layer and bank, opened the same way as ROUTING (press the Layer Song key again):
+- **STEPS** 1–32, **HITS** 0–STEPS, **ROTATE** 0–STEPS−1, **GRID** (a quantize value from `kQuantizeInterval`, e.g. 1/16 = 200 ticks, since `kMeasureInterval` = 800 per quarter note). The pattern repeats to the end of the song (`songInterval`).
+- Changes apply live while the sequencer plays: rebuild the bank's beats and call `layerSong_calculatePlayBeatNum()`, as `layerSong_generateBeat()` does now.
+- **MERGE** adds the Euclidean hits to the beats already there. A hit that lands on an existing beat keeps that beat and its fill.
+- **CLEAR** restores the bank as it was when the page was opened. Keep a snapshot in a `LayerSongCopy`-style buffer; don't use the copy/paste clipboard.
+- Put the distribution (Bjorklund / Bresenham) in a hardware-free header (e.g. `Euclid.h`) with host tests in `02 Software/tests`: hit counts, rotation, known patterns such as E(3,8) = `x..x..x.` and E(5,8).
+
+**Limits to respect.** A bank holds 64 beats (`kBeatLibrarySize`) and 32 fills (`kBeatFillLibrarySize`). 32 steps over several bars can exceed 64, so stop at the limit and show it. Every rebuild must keep beats sorted with correct end intervals (`layerSong_arrangeActiveBeats()`).
+
+**Done when.** E(3,8) and E(5,16) sound right on the device while playing; MERGE keeps the beats and fills already there; CLEAR restores exactly what was there; songs save and load unchanged (the result is ordinary beats, so no file format change).
+
+### 12. Free beat placement on Layer Song
+
+**Today.** SHIFT + LEFT/RIGHT (`layerSong_shiftSelectedBeat()`) moves the selected beat one quantize step, but it stops at the neighbouring beat and resets the fill of the moved beat and of the one before it (`setBeatFill(…, 0, 0, 0, 0)`). There is no way to shift a whole layer, and the only way to add a single beat is live recording (`record()`).
+
+**Proposal.**
+- **MOVE:** the selected beat steps one quantize step and can pass its neighbours. Take it out, insert it at the new position, re-sort and fix the end intervals (`layerSong_arrangeActiveBeats()`), and keep the selection on the moved beat. Its fill is kept; recompute it for the new length with `layerSong_calculateBeatFill()` rather than clearing it. Show the exact position as bar.beat.16th (e.g. `2.3.4`) while moving.
+- **SHIFT ALL:** rotate every beat of the layer's bank by one quantize step, wrapping at `songInterval`. Reversible: rotating back returns the identical pattern, fills included.
+- **Insert:** a short ADD press adds one beat in the middle of the gap after the selected beat, snapped to the quantize grid (`layerSong_setBeat()`). A long ADD press keeps its current meaning.
+- Put the move, rotate and insert arithmetic on the beat list in a hardware-free header with host tests (wrap-around, passing neighbours, full bank, rotation followed by its inverse).
+
+**Done when.** A beat can move anywhere in the bar while keeping its fill; SHIFT ALL left then right gives back the identical bank; inserting into a full bank (64 beats) is refused with a message; all of it works while playing without glitches.
+
+### 13. Sample preview while browsing
+
+**Today.** On the instrument page, turning SAMPLE only selects a file (`layerInst_setSampleSelected()` reads its WAV header). To hear it, you have to load it with ADD (`layerInst_setSampleLoaded()`), which replaces the layer's sample, copies the whole file from SD to SDRAM and calls `keyboard_disable()` until it's done. The sample is cut at 5.44 s (`kSampleSize` = 240,000 samples).
+
+**Proposal.**
+- When the SAMPLE encoder stops (e.g. 250 ms after the last step), play the selected sample on a separate preview voice. The layer key replays it. The layer's loaded sample doesn't change until ADD.
+- Stream the preview from the SD card through a small ring buffer in SDRAM, filled from the main loop in chunks, so even long files start at once and nothing locks the keyboard. Stop the preview when another sample is selected, the menu is left or ADD loads it.
+- The audio interrupt only reads the ring buffer. FatFs is not reentrant, so every SD read stays in the main loop. When the buffer runs dry, fade out instead of clicking.
+- **PREVIEW** on/off and **PREVIEW LEVEL** in the Metronome menu (which already has its own voice and level). The system preset has no free bytes (all 21 are used), so it needs to grow, and older system files (21 bytes) must still load.
+- Measure with `make PROFILE=1`: one more voice plus SD reads while the sequencer plays. UDR/OVR must stay 0.
+
+**Done when.** Turning through samples plays each one after a short pause, including files longer than 5 s; the keyboard never locks while browsing; the loaded sample is untouched until ADD; the preview setting survives a restart; no I2S errors in the profile build.

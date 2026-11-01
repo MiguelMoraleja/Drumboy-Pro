@@ -115,6 +115,10 @@ Fills live in `Core/Library/Global/Fill.h`, which has no hardware dependencies s
 
 To flash over SWD, wire an ST-Link V2 to the board's `SWDIO` (PA13), `SWCLK` (PA14), and `GND` pins, then build and flash from STM32CubeIDE. See the wiki's [Build, Flash & Debug](https://www.randomwaves.io/drumboy-pro/drumboy-pro-wiki.html) section for details.
 
+## Backlog
+
+Planned work, known issues and where to start in the code: [BACKLOG.md](BACKLOG.md).
+
 ## License
 
 Released under the [MIT License](LICENSE).

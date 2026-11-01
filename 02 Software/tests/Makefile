@@ -6,7 +6,7 @@ APP       = ../Drumboy-Pro-App-H723/Core/Library
 CXXFLAGS  = -std=gnu++14 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -I$(APP)/Global
 BUILD    ?= build
 
-TESTS = test_fill test_routing test_beatlist
+TESTS = test_fill test_routing test_beatlist test_euclid
 
 .PHONY: all clean
 all: $(addprefix $(BUILD)/,$(TESTS))

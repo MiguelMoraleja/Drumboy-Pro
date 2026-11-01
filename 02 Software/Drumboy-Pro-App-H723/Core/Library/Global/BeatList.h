@@ -87,6 +87,15 @@ inline void beatListRebuild(Bank& bank_, uint16_t songInterval_) {
     }
 }
 
+// Removes every beat and fill.
+inline void beatListClear(Bank& bank_) {
+    for (uint8_t i = 0; i < kBeatLibrarySize; i++) bank_.beatLibrary[i].reset();
+    for (uint8_t i = 0; i < kBeatFillLibrarySize; i++) bank_.beatFillLibrary[i].reset();
+    bank_.lastActiveBeatNum = -1;
+    bank_.playBeatNum = -1;
+    bank_.playBeatMicroNum = -1;
+}
+
 // Adds a plain beat at start_ without rebuilding (call beatListRebuild afterwards; several
 // beats can be added first). Returns false when start_ is outside the song, already taken,
 // or the bank is full.

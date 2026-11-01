@@ -1,5 +1,13 @@
 #include "Controller.h"
 
+// Edited copy of the selected layer's bank. Beat-list edits (BeatList.h) are made here and
+// swapped in by layerSong_commitBank() with the sequencer interrupt held off, so playback
+// never sees a half-edited bank.
+static Bank layerSongScratch;
+
+// Layer's beats when the EUCLID page was opened: the base for MERGE and what CLEAR restores.
+static Bank euclidSnapshot;
+
 Controller::Controller()
 
     /* --- SECTION 1: DSP MODULES (hardware drivers: see Controller.h) ----- */
@@ -153,6 +161,7 @@ Controller::Controller()
       layerSongAddArmed(false),
       layerSongAddUsed(false),
       layerSongShift(0),
+      layerSongKeyUsed(false),
 
       /* --- SECTION 8: INPUT & LED ENGINE STATE ---------------------------- */
 
@@ -1551,6 +1560,7 @@ void Controller::keyboard_action() {
                 switch (keyboard.keyLayer.changeState[layerNum]) {
                     case KEYSTATE_PRESS:
                         layerSongAddUsed = true;
+                        layerSongKeyUsed = true;
                         if (keyboard.muteKeyPress) {
                             layerInst_setMute(layerNum, !layerLibrary[layerNum].mute);
                         } else if (keyboard.fillKeyPress) {
@@ -2237,6 +2247,10 @@ void Controller::keyboard_action() {
                                             }
                                             break;
 
+                                        case EUCLID_MENU:
+                                            euclid_clear();
+                                            break;
+
                                         default:
                                             break;
                                     }
@@ -2561,6 +2575,7 @@ void Controller::keyboard_action() {
 
                             case KEY_LAYER_SONG:
                                 keyboard.layerSongKeyPress = true;
+                                layerSongKeyUsed = false;
                                 break;
 
                             case KEY_SONG:
@@ -2584,6 +2599,14 @@ void Controller::keyboard_action() {
 
                             case KEY_LAYER_SONG:
                                 keyboard.layerSongKeyPress = false;
+                                // Tapped on its own: switch between the Layer Song and EUCLID pages.
+                                if (!layerSongKeyUsed && !alertFlag && (selectedLayerNum != -1)) {
+                                    if (menu == LAYER_SONG_MENU) {
+                                        euclid_select();
+                                    } else if (menu == EUCLID_MENU) {
+                                        layerSong_select(selectedLayerNum, activeSongBank);
+                                    }
+                                }
                                 break;
 
                             case KEY_SONG:
@@ -3191,7 +3214,7 @@ void Controller::encoder_update() {
 
     if (activeEncoderBank >= kEncoderBankSize) activeEncoderBank = kMinEncoderGlobalTab;
     const uint8_t encoderFuncCount = sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]);
-    const Menu menuSafe = ((menu >= INIT_MENU) && (menu <= ROUTING_MENU)) ? menu : INIT_MENU;
+    const Menu menuSafe = ((menu >= INIT_MENU) && (menu <= EUCLID_MENU)) ? menu : INIT_MENU;
 
     // 1. MODE/FUNCTION BINDING
     // Bind each encoder to global or local function map based on active menu.
@@ -3931,6 +3954,14 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             layerSong_shiftAll(true);
             break;
 
+        case ENC_EUC_STEPS:
+        case ENC_EUC_HITS:
+        case ENC_EUC_ROTATE:
+        case ENC_EUC_GRID:
+        case ENC_EUC_MODE:
+            euclid_step(encoder[encoderNum_].function, true);
+            break;
+
         default:
             break;
     }
@@ -4481,6 +4512,14 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
 
         case ENC_SONG_SHIFT:
             layerSong_shiftAll(false);
+            break;
+
+        case ENC_EUC_STEPS:
+        case ENC_EUC_HITS:
+        case ENC_EUC_ROTATE:
+        case ENC_EUC_GRID:
+        case ENC_EUC_MODE:
+            euclid_step(encoder[encoderNum_].function, false);
             break;
 
         default:
@@ -8146,6 +8185,10 @@ void Controller::lcd_drawMenuIcon(Menu menu_) {
                 iconStr = "RT";
                 break;
 
+            case EUCLID_MENU:
+                iconStr = "EU";
+                break;
+
             case METRO_MENU:
                 iconStr = "ME";
                 break;
@@ -8399,7 +8442,8 @@ void Controller::lcd_transitionMenu() {
             break;
 
         case ROUTING_MENU:
-            // Remove the chain overview and restore the tab divider it covered.
+        case EUCLID_MENU:
+            // Remove the chain overview / pattern and restore the tab divider it covered.
             lcd.setBackColor(BLACK);
             lcd.setForeColor(GRAY_50);
             lcd.clearRect(493, 30, 325, 60);
@@ -8472,6 +8516,13 @@ void Controller::lcd_transitionMenu() {
             // Tabs 2-3 hold the chain overview.
             lcd.setBackColor(BLACK);
             lcd.clearRect(493, 29, 325, 60);
+            break;
+
+        case EUCLID_MENU:
+            // Tabs 2-3 hold the pattern; tab 7 is unused.
+            lcd.setBackColor(BLACK);
+            lcd.clearRect(493, 29, 325, 60);
+            lcd_clearMenuTab(7);
             break;
 
         case LAYER_SONG_MENU:
@@ -11776,10 +11827,10 @@ void Controller::lcd_drawLayerSongMenu(uint8_t layerNum_) {
     lcd_setMenuHeaderState(CYAN);
     lcd.drawText(kHeaderType, kMenuHeaderTextSize, kMenuHeaderX[0], kMenuHeaderY[0]);
     lcd.drawText(kHeaderPattern, kMenuHeaderTextSize, kMenuHeaderX[1], kMenuHeaderY[1]);
-    lcd.drawText(kHeaderMove, kMenuHeaderTextSize, kMenuHeaderX[2], kMenuHeaderY[2]);
-    lcd.drawText(kHeaderShiftAll, kMenuHeaderTextSize, kMenuHeaderX[3], kMenuHeaderY[3]);
     lcd.drawText(kHeaderTiming, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
     lcd.drawText(kHeaderVelocity, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
+    lcd.drawText(kHeaderMove, kMenuHeaderTextSize, kMenuHeaderX[6], kMenuHeaderY[6]);
+    lcd.drawText(kHeaderShiftAll, kMenuHeaderTextSize, kMenuHeaderX[7], kMenuHeaderY[7]);
 
     // 4. DATA DRAW
     // Draw beat-fill values and graph.
@@ -11796,10 +11847,10 @@ void Controller::lcd_drawLayerSongMenu(uint8_t layerNum_) {
     lcd_setMenuSignState(CYAN);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[0], kMenuSignBoxY[0]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[1], kMenuSignBoxY[1]);
-    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[2], kMenuSignBoxY[2]);
-    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[6], kMenuSignBoxY[6]);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[7], kMenuSignBoxY[7]);
 
     // 6. GRAPH BACKGROUND DRAW
     // Draw graph axes and boundary markers.
@@ -11817,7 +11868,7 @@ void Controller::lcd_drawLayerSongMenu(uint8_t layerNum_) {
 }
 
 void Controller::lcd_drawLayerSong_PositionData(uint8_t layerNum_) {
-    /// @brief Draws the selected beat's position as bar.beat.16th (MOVE field, tab 2).
+    /// @brief Draws the selected beat's position as bar.beat.16th (MOVE field, tab 6).
 
     const Bank& bank = layerLibrary[layerNum_].bankLibrary[activeSongBank];
     char text[kMenuDataTextSize + 1];
@@ -11829,11 +11880,11 @@ void Controller::lcd_drawLayerSong_PositionData(uint8_t layerNum_) {
         memcpy(text, kDataDashR, sizeof(text));
     }
     lcd_setMenuDataState(WHITE);
-    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[2], kMenuDataY[2]);
+    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
 }
 
 void Controller::lcd_drawLayerSong_ShiftData(uint8_t layerNum_) {
-    /// @brief Draws the net SHIFT ALL since the page was opened as bars.beats.16ths (tab 3).
+    /// @brief Draws the net SHIFT ALL since the page was opened as bars.beats.16ths (tab 7).
 
     char offset[32];  // room for any shift; trimmed to the field below
     char text[kMenuDataTextSize + 1];
@@ -11844,7 +11895,7 @@ void Controller::lcd_drawLayerSong_ShiftData(uint8_t layerNum_) {
         memcpy(text, kDataDashR, sizeof(text));
     }
     lcd_setMenuDataState(WHITE);
-    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[3], kMenuDataY[3]);
+    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[7], kMenuDataY[7]);
 }
 
 void Controller::lcd_drawLayerSong_BeatFillTypeData(uint8_t layerNum_) {
@@ -20378,6 +20429,154 @@ void Controller::routing_select() {
     }
 }
 
+void Controller::euclid_select() {
+    /// @brief Opens the EUCLID page for the selected layer (LAYER SONG tapped on the Layer Song
+    /// page). Nothing changes until a field is turned.
+
+    if ((menu == EUCLID_MENU) || (selectedLayerNum == -1)) return;
+    euclidSnapshot = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    euclidBank = activeSongBank;
+    euclidApplied = false;
+    euclidDropped = 0;
+
+    preMenu = menu;
+    preMenuTab = menuTab;
+    menuTab = -1;  // every field has its own encoder
+    menu = EUCLID_MENU;
+    lcd_transitionMenu();
+    lcd_transitionSelect();
+    lcd_drawEuclidMenu();
+    encoder_update();
+}
+
+void Controller::euclid_apply() {
+    /// @brief Rebuilds the layer from the current settings: the pattern alone (REPLACE) or added
+    /// to the beats from before (MERGE). Applied live, also while playing.
+
+    if (selectedLayerNum == -1) return;
+    if (activeSongBank != euclidBank) {
+        // The song bank changed while on the page: work on the new bank from here on.
+        euclidSnapshot = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+        euclidBank = activeSongBank;
+    }
+    const uint32_t pattern = euclidPattern(euclidSteps, euclidHits, euclidRotate);
+    euclidDropped = euclidApply(layerSongScratch, euclidSnapshot, euclidMerge, pattern, euclidSteps, static_cast<uint16_t>(kQuantizeInterval[euclidGrid]), songInterval);
+    euclidApplied = true;
+    layerSong_commitBank(0);
+    if (euclidDropped) textFullFlag = true;
+    lcd_drawEuclidOverview();
+}
+
+void Controller::euclid_clear() {
+    /// @brief CLEAR on the EUCLID page: gives the layer back the beats it had when the page was
+    /// opened.
+
+    if ((selectedLayerNum == -1) || !euclidApplied || (activeSongBank != euclidBank)) return;
+    layerSongScratch = euclidSnapshot;
+    layerSong_commitBank(0);
+    euclidApplied = false;
+    euclidDropped = 0;
+    lcd_drawEuclidOverview();
+}
+
+void Controller::euclid_step(EncoderFunc function_, bool up_) {
+    /// @brief Steps one EUCLID field (wrapping) and applies the pattern.
+
+    switch (function_) {
+        case ENC_EUC_STEPS:
+            euclidSteps = up_ ? ((euclidSteps < kEuclidMaxSteps) ? euclidSteps + 1 : 1) : ((euclidSteps > 1) ? euclidSteps - 1 : kEuclidMaxSteps);
+            if (euclidHits > euclidSteps) euclidHits = euclidSteps;
+            if (euclidRotate >= euclidSteps) euclidRotate = 0;
+            break;
+        case ENC_EUC_HITS:
+            euclidHits = up_ ? ((euclidHits < euclidSteps) ? euclidHits + 1 : 0) : ((euclidHits > 0) ? euclidHits - 1 : euclidSteps);
+            break;
+        case ENC_EUC_ROTATE:
+            euclidRotate = up_ ? ((euclidRotate + 1 < euclidSteps) ? euclidRotate + 1 : 0) : ((euclidRotate > 0) ? euclidRotate - 1 : euclidSteps - 1);
+            break;
+        case ENC_EUC_GRID: {
+            const uint8_t last = static_cast<uint8_t>(sizeof(kQuantizeInterval) / sizeof(kQuantizeInterval[0]) - 1);
+            euclidGrid = up_ ? ((euclidGrid < last) ? euclidGrid + 1 : 0) : ((euclidGrid > 0) ? euclidGrid - 1 : last);
+        } break;
+        case ENC_EUC_MODE:
+            euclidMerge = !euclidMerge;
+            break;
+        default:
+            return;
+    }
+    lcd_drawEuclid_Data();
+    euclid_apply();
+}
+
+// EUCLID page fields (index -> tab): STEPS, HITS | pattern | ROTATE, GRID, MODE.
+static const uint8_t kEuclidTab[5] = {0, 1, 4, 5, 6};
+
+void Controller::lcd_drawEuclidMenu() {
+    /// @brief Draws the EUCLID page: settings, the pattern and where it lands.
+
+    lcd_drawMenuIcon(EUCLID_MENU);
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kDataMenuNum + selectedLayerNum, 1, kMenuNumX, kMenuNumY);
+    for (uint8_t f = 0; f < 5; f++) {
+        const uint8_t tab = kEuclidTab[f];
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_EUC_STEPS + f].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[tab], kMenuHeaderY[tab]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[tab], kMenuSignBoxY[tab]);
+    }
+    lcd_drawEuclid_Data();
+    lcd_drawEuclidOverview();
+}
+
+void Controller::lcd_drawEuclid_Data() {
+    /// @brief Draws the five EUCLID field values.
+
+    char text[5][kMenuDataTextSize + 1];
+    snprintf(text[0], sizeof(text[0]), "%10u", static_cast<unsigned>(euclidSteps));
+    snprintf(text[1], sizeof(text[1]), "%10u", static_cast<unsigned>(euclidHits));
+    snprintf(text[2], sizeof(text[2]), "%10u", static_cast<unsigned>(euclidRotate));
+    memcpy(text[3], kQuantizeDataLibrary[euclidGrid].nameLongR, sizeof(text[3]));
+    memcpy(text[4], euclidMerge ? "     MERGE" : "   REPLACE", sizeof(text[4]));
+    lcd_setMenuDataState(WHITE);
+    for (uint8_t f = 0; f < 5; f++) {
+        const uint8_t tab = kEuclidTab[f];
+        lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[tab], kMenuDataY[tab]);
+    }
+}
+
+void Controller::lcd_drawEuclidOverview() {
+    /// @brief Draws the pattern (x = hit) in the top-right area, with what the layer holds now.
+
+    // Same area and 7x9 font as the ROUTING overview: 36 characters x 5 lines.
+    const uint16_t kX = 494, kY = 32, kLineStep = 11, kAreaX = 493, kAreaY = 30, kAreaW = 325, kAreaH = 60;
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(kAreaX, kAreaY, kAreaW, kAreaH);
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(LEFT);
+
+    char line[40];
+    int len = snprintf(line, sizeof(line), "E(%u,%u) ROT %u  %s", static_cast<unsigned>(euclidHits), static_cast<unsigned>(euclidSteps), static_cast<unsigned>(euclidRotate), euclidMerge ? "MERGE" : "REPLACE");
+    lcd.setForeColor(CYAN);
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY);
+
+    euclidText(euclidPattern(euclidSteps, euclidHits, euclidRotate), euclidSteps, line);
+    lcd.setForeColor(WHITE);
+    lcd.drawText(line, euclidSteps, kX, kY + 2 * kLineStep);
+
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    if (euclidDropped) {
+        len = snprintf(line, sizeof(line), "FULL: %u HITS NOT ADDED", static_cast<unsigned>(euclidDropped));
+        lcd.setForeColor(RED);
+    } else if (euclidApplied) {
+        len = snprintf(line, sizeof(line), "%d BEATS  CLEAR: UNDO", bank.lastActiveBeatNum + 1);
+        lcd.setForeColor(GRAY_75);
+    } else {
+        len = snprintf(line, sizeof(line), "TURN A FIELD TO APPLY");
+        lcd.setForeColor(GRAY_75);
+    }
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 4 * kLineStep);
+}
+
 // ROUTING page fields (route index -> tab): EQ, Filter 1 | overview | Filter 2, Effect 1, Effect 2, Metronome.
 static const uint8_t kRoutingTab[6] = {0, 1, 4, 5, 6, 7};
 
@@ -20703,7 +20902,11 @@ void Controller::layerSong_menuRight() {
     // 1. TAB STATE UPDATE
     // Save previous tab and advance with hidden-tab skip.
     preMenuTab = menuTab;
-    (menuTab < 5) ? menuTab += 1 : menuTab = kMinMenu8Tab;
+    // Tabs 0, 1, 4-7 (2-3 hold the fill graph).
+    if (menuTab < kMaxMenu8Tab)
+        (menuTab == 1) ? menuTab = 4 : menuTab += 1;
+    else
+        menuTab = kMinMenu8Tab;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation.
@@ -20716,7 +20919,11 @@ void Controller::layerSong_menuLeft() {
     // 1. TAB STATE UPDATE
     // Save previous tab and decrement with hidden-tab skip.
     preMenuTab = menuTab;
-    (menuTab > kMinMenu8Tab) ? menuTab -= 1 : menuTab = 5;
+    // Tabs 0, 1, 4-7 (2-3 hold the fill graph).
+    if (menuTab > kMinMenu8Tab)
+        (menuTab == 4) ? menuTab = 1 : menuTab -= 1;
+    else
+        menuTab = kMaxMenu8Tab;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation.
@@ -21151,11 +21358,6 @@ void Controller::layerSong_generateBeat(uint8_t type) {
     // Recompute play beat index after generation changes.
     layerSong_calculatePlayBeatNum(selectedLayerNum, activeSongBank, playInterval);
 }
-
-// Edited copy of the selected layer's bank. Beat-list edits (BeatList.h) are made here and
-// swapped in by layerSong_commitBank() with the sequencer interrupt held off, so playback
-// never sees a half-edited bank.
-static Bank layerSongScratch;
 
 void Controller::layerSong_shiftSelectedBeat(bool direction_) {
     /// @brief Moves the selected beat one quantize step, jumping over neighbouring beats and

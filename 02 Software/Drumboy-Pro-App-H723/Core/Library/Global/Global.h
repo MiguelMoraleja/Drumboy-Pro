@@ -1207,8 +1207,14 @@ typedef enum {
     ENC_ROUTE_METRO_OUT                             = 0x67,
     ENC_ROUTE_LINEIN_OUT                            = 0x68,
 
-    ENC_SONG_MOVE                                   = 0x69,  // move the selected beat (Layer Song tab 2)
-    ENC_SONG_SHIFT                                  = 0x6A,  // shift the whole layer (Layer Song tab 3)
+    ENC_SONG_MOVE                                   = 0x69,  // move the selected beat (Layer Song tab 6)
+    ENC_SONG_SHIFT                                  = 0x6A,  // shift the whole layer (Layer Song tab 7)
+
+    ENC_EUC_STEPS                                   = 0x6B,
+    ENC_EUC_HITS                                    = 0x6C,
+    ENC_EUC_ROTATE                                  = 0x6D,
+    ENC_EUC_GRID                                    = 0x6E,
+    ENC_EUC_MODE                                    = 0x6F,
 
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
@@ -1251,12 +1257,16 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // LAYER_INST_2_MENU = 0x11
     {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // LAYER_SONG_MENU = 0x12
-    {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_SONG_MOVE, ENC_SONG_SHIFT, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_FNC_NONE, ENC_FNC_NONE},
+    // Tabs 2-3 hold the fill graph.
+    {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_SONG_MOVE, ENC_SONG_SHIFT},
     // TEST_MENU = 0x13
     {ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // ROUTING_MENU = 0x14
     // Tabs 2-3 show the chain overview; line-in is set on the mixer page (MIXER IN).
-    {ENC_ROUTE_EQ_OUT, ENC_ROUTE_F1_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_ROUTE_F2_OUT, ENC_ROUTE_FX1_OUT, ENC_ROUTE_FX2_OUT, ENC_ROUTE_METRO_OUT}};
+    {ENC_ROUTE_EQ_OUT, ENC_ROUTE_F1_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_ROUTE_F2_OUT, ENC_ROUTE_FX1_OUT, ENC_ROUTE_FX2_OUT, ENC_ROUTE_METRO_OUT},
+    // EUCLID_MENU = 0x15
+    // Tabs 2-3 show the pattern.
+    {ENC_EUC_STEPS, ENC_EUC_HITS, ENC_FNC_NONE, ENC_FNC_NONE, ENC_EUC_ROTATE, ENC_EUC_GRID, ENC_EUC_MODE, ENC_FNC_NONE}};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1393,7 +1403,13 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_ROUTE_LINEIN_OUT,    ENC_RES_S, "LINE-IN   ", "ROUTE ", "OUT", false},
 
     {ENC_SONG_MOVE,           ENC_RES_M, "MOVE      ", "SONG  ", "   ", false},
-    {ENC_SONG_SHIFT,          ENC_RES_M, "SHIFT ALL ", "SONG  ", "   ", false}
+    {ENC_SONG_SHIFT,          ENC_RES_M, "SHIFT ALL ", "SONG  ", "   ", false},
+
+    {ENC_EUC_STEPS,           ENC_RES_M, "STEPS     ", "EUCLID", "   ", false},
+    {ENC_EUC_HITS,            ENC_RES_M, "HITS      ", "EUCLID", "   ", false},
+    {ENC_EUC_ROTATE,          ENC_RES_M, "ROTATE    ", "EUCLID", "   ", false},
+    {ENC_EUC_GRID,            ENC_RES_M, "GRID      ", "EUCLID", "   ", false},
+    {ENC_EUC_MODE,            ENC_RES_M, "MODE      ", "EUCLID", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -1518,7 +1534,8 @@ typedef enum {
     LAYER_INST_2_MENU                               = 0x11,
     LAYER_SONG_MENU                                 = 0x12,
     TEST_MENU                                       = 0x13,
-    ROUTING_MENU                                    = 0x14   // MIXER pressed again
+    ROUTING_MENU                                    = 0x14,  // MIXER pressed again
+    EUCLID_MENU                                     = 0x15   // LAYER SONG tapped on the Layer Song page
 } Menu;
 
 typedef enum {

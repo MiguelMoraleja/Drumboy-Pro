@@ -117,6 +117,7 @@ Kit and song files have a signature but no format version. Several items above c
 - **Fill types:** 15 of 16 possible. The type is stored in 4 bits; a 17th type needs item 9.
 - **`ENC_ROUTE_LINEIN_OUT`:** still has encoder handlers but is no longer on the ROUTING page (line-in is set with the mixer's MIXER IN). Remove it or put it back on the page.
 - **Releases:** the Release workflow only runs for tags starting with lowercase `v` (`v1.10`). The `V1.04` release has no build attached for that reason.
+- **Reproducible release builds:** the release file is built by GitHub's runner, whose toolchain libraries differ slightly from a local build (v1.09: 587,980 vs 587,976 bytes; `.data` 124 vs 120 bytes). Pin the toolchain (e.g. a fixed Arm GNU Toolchain download or container image used both locally and in CI) so the file tested on hardware is byte-identical to the published one.
 - **Vendor warnings:** two GCC warnings remain in FatFs (`ff.c`), both known false positives. Our code is held at zero (`make WERROR=1` in CI).
 - **Bootloader:** it ignores update files whose name is 32+ characters (FatFs `_MAX_LFN`). `package_firmware.py` enforces ≤ 31.
 - **Upstream:** offer the fixes and the routing work to Randomwaves/Drumboy-Pro as a pull request from the fork.

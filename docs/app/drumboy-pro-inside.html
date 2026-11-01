@@ -1,0 +1,1223 @@
+<title>Drumboy Pro Inside</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a patch-bay schematic of the DSP buses on one tab, a step-sequencer workbench on the other. */
+:root {
+  --bg: #eceff4;
+  --panel: #f9fafc;
+  --ink: #172036;
+  --muted: #5a6479;
+  --line: #c8cfdb;
+  --signal: #2346d4;
+  --signal-soft: #dfe5fb;
+  --hit: #c86a00;
+  --hit-soft: #f7e3c8;
+  --clip: #c23a2c;
+  --font-display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10141c; --panel: #171d28; --ink: #e5e9f1; --muted: #98a1b4; --line: #2b3445;
+    --signal: #8aa2ff; --signal-soft: #1f2a4d; --hit: #ffad42; --hit-soft: #3a2a14; --clip: #ff6f61;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10141c; --panel: #171d28; --ink: #e5e9f1; --muted: #98a1b4; --line: #2b3445;
+  --signal: #8aa2ff; --signal-soft: #1f2a4d; --hit: #ffad42; --hit-soft: #3a2a14; --clip: #ff6f61;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+}
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-block: 20px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 20px;
+}
+header.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing: .01em; text-wrap: balance; margin: 0; line-height: 1.05; }
+h1 { font-size: clamp(2rem, 5vw, 3rem); text-transform: uppercase; }
+h1 small { display: block; font-family: var(--font-mono); font-weight: 400; font-size: .8rem; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; }
+h2 { font-size: 1.6rem; text-transform: uppercase; }
+h3 { font-size: 1.15rem; text-transform: uppercase; letter-spacing: .03em; }
+p { margin: 0; max-width: 68ch; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.label { font-family: var(--font-mono); font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+
+nav.tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+nav.tabs a {
+  font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); text-decoration: none; padding: 8px 16px; border-radius: 7px;
+}
+nav.tabs a[aria-selected="true"] { background: var(--ink); color: var(--panel); }
+nav.tabs a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; min-width: 0; }
+.intro { display: grid; gap: 8px; }
+
+/* Segmented controls */
+.seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.seg button {
+  font-family: var(--font-mono); font-size: .78rem; letter-spacing: .06em; text-transform: uppercase;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink); padding: 7px 10px; border-radius: 6px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--signal); border-color: var(--signal); color: var(--panel); }
+.seg.hit button[aria-pressed="true"] { background: var(--hit); border-color: var(--hit); color: var(--panel); }
+
+/* Signal path */
+.diagram-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.diagram-scroll svg { display: block; min-width: 900px; width: 100%; height: auto; }
+svg text { font-family: var(--font-mono); fill: var(--ink); }
+svg .node rect { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+svg .node { cursor: pointer; transition: opacity .2s; }
+svg .node.on rect { stroke: var(--signal); stroke-width: 2.5; }
+svg .node.sel rect { fill: var(--signal-soft); }
+svg .node.off { opacity: .38; }
+svg .node .t { font-family: var(--font-display); font-weight: 800; font-size: 17px; letter-spacing: .04em; }
+svg .node .s { font-size: 10.5px; fill: var(--muted); }
+svg .wire { stroke: var(--line); stroke-width: 2; fill: none; }
+svg .wire.on { stroke: var(--signal); stroke-width: 3; }
+svg .tap { fill: var(--panel); stroke: var(--line); stroke-width: 2; }
+svg .tap.on { fill: var(--signal); stroke: var(--signal); }
+svg .ann { font-size: 11px; fill: var(--muted); letter-spacing: .06em; }
+svg .ah { fill: var(--line); }
+svg .ah.on { fill: var(--signal); }
+
+.stages { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.stage { border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 6px; align-content: start; background: var(--panel); cursor: pointer; }
+.stage.sel { border-color: var(--signal); box-shadow: inset 0 0 0 1px var(--signal); }
+.stage .label { color: var(--signal); }
+.stage ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: .9rem; }
+.stage p { font-size: .92rem; }
+
+.src-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.src { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); cursor: pointer; }
+.src.sel { border-color: var(--signal); box-shadow: inset 0 0 0 1px var(--signal); }
+.src label { font-family: var(--font-mono); font-size: .72rem; letter-spacing: .08em; color: var(--muted); }
+.src select, .modout select { font-size: .8rem; padding: 5px 6px; }
+.mod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.modout { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+.modout.dim { opacity: .45; }
+.modout label { font-family: var(--font-mono); font-size: .72rem; letter-spacing: .08em; color: var(--muted); }
+svg .edge { fill: none; stroke: var(--line); stroke-width: 1.6; }
+svg .edge.on { stroke: var(--signal); stroke-width: 3; }
+svg .chip rect { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; }
+svg .chip.on rect { stroke: var(--signal); stroke-width: 2.2; fill: var(--signal-soft); }
+svg .chip text { font-size: 12px; }
+svg .node.dim { opacity: .35; }
+.device { background: #0b0d10; border-radius: 10px; padding: 10px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; font-family: var(--font-mono); }
+.device .tab { border: 1px solid #2a2f38; border-radius: 4px; padding: 6px 8px; display: grid; gap: 3px; min-width: 0; }
+.device .tab .h { color: #4fd6e8; font-size: .7rem; letter-spacing: .06em; }
+.device .tab.dim .h { color: #6b7380; }
+.device .tab .v { color: #f2f4f7; font-size: .82rem; text-align: right; white-space: nowrap; overflow: hidden; }
+.device .tab .g { color: #6b7380; font-size: .62rem; }
+.device .ov { grid-column: span 2; border: 1px solid #2a2f38; border-radius: 4px; padding: 6px 8px; color: #f2f4f7; font-size: .78rem; line-height: 1.4; white-space: pre; overflow-x: auto; }
+.device .empty { visibility: hidden; }
+@media (max-width: 620px) { .device { grid-template-columns: repeat(2, minmax(0, 1fr)); } .device .ov { grid-column: span 2; } }
+.lines { font-family: var(--font-mono); font-size: .85rem; display: grid; gap: 4px; }
+
+/* Fill lab */
+.lab { display: grid; grid-template-columns: minmax(0, 330px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 860px) { .lab { grid-template-columns: minmax(0, 1fr); } }
+.controls { display: grid; gap: 16px; }
+.field { display: grid; gap: 6px; }
+.field-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+select, input[type="range"] { width: 100%; }
+select {
+  font-family: var(--font-mono); font-size: .9rem; padding: 8px 10px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+}
+input[type="range"] { accent-color: var(--hit); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.switch { position: relative; width: 52px; height: 28px; border-radius: 14px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--muted); transition: transform .15s; }
+.switch[aria-checked="true"] { background: var(--hit); border-color: var(--hit); }
+.switch[aria-checked="true"]::after { transform: translateX(24px); background: var(--panel); }
+.divider { border-top: 1px solid var(--line); }
+
+.stagecol { display: grid; gap: 16px; min-width: 0; }
+.transport { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.play {
+  font-family: var(--font-display); font-weight: 800; font-size: 1.15rem; letter-spacing: .08em; text-transform: uppercase;
+  background: var(--hit); color: var(--panel); border: none; border-radius: 8px; padding: 10px 22px; cursor: pointer; min-width: 120px;
+}
+.play[aria-pressed="true"] { background: var(--ink); }
+.ghost { font-family: var(--font-mono); font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; background: none; border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+.ghost:disabled { opacity: .4; cursor: default; }
+.readout { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.lcd {
+  font-family: var(--font-mono); font-size: .8rem; letter-spacing: .06em; text-transform: uppercase;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+}
+.lcd div { background: var(--panel); padding: 8px 10px; display: grid; gap: 2px; min-width: 0; }
+.lcd b { font-weight: 500; font-size: .95rem; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lcd span { color: var(--muted); font-size: .68rem; }
+@media (max-width: 520px) { .lcd { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.timeline svg { display: block; width: 100%; height: auto; }
+.timeline text { font-family: var(--font-mono); font-size: 10px; fill: var(--muted); }
+.grid-major { stroke: var(--line); stroke-width: 1.5; }
+.grid-minor { stroke: var(--line); stroke-width: .75; stroke-dasharray: 2 3; }
+.ref { stroke: var(--line); stroke-width: 1; }
+.bar { fill: var(--hit); }
+.bar.skip { fill: none; stroke: var(--hit); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.bar.flash { fill: var(--ink); }
+.playhead { stroke: var(--signal); stroke-width: 2; }
+
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-size: .8rem; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-weight: 500; color: var(--muted); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
+th:first-child, td:first-child { text-align: left; }
+tr.skip td { color: var(--muted); text-decoration: line-through; }
+tr.now td { background: var(--hit-soft); }
+
+.chain { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; font-family: var(--font-mono); }
+.chain .term { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 2px; background: var(--bg); min-width: 0; }
+.chain .term b { font-weight: 500; font-size: 1rem; }
+.chain .term span { font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.chain .op { align-self: center; color: var(--muted); font-size: 1rem; }
+.chain .term.result { border-color: var(--hit); }
+.chain .term.result b { color: var(--hit); }
+.pill { display: inline-block; font-family: var(--font-mono); font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.pill.ok { color: var(--signal); }
+.pill.warn { color: var(--clip); }
+
+.curve svg { display: block; width: 100%; height: auto; }
+.curve text { font-family: var(--font-mono); font-size: 10px; fill: var(--muted); }
+.curve .ln { stroke: var(--signal); stroke-width: 2.5; fill: none; }
+.curve .dot-l { fill: var(--hit); }
+.curve .dot-m { fill: var(--signal); }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 720px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+.notes { display: grid; gap: 8px; font-size: .9rem; }
+.notes p { color: var(--muted); }
+.notes b { color: var(--ink); font-weight: 600; }
+footer { font-size: .8rem; color: var(--muted); }
+
+/* Euclid */
+.lane { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.lane svg { display: block; width: 100%; min-width: 640px; height: auto; }
+.lane text { font-family: var(--font-mono); font-size: 10px; fill: var(--muted); }
+.lane .beat { fill: var(--hit); cursor: pointer; }
+.lane .beat.base { fill: var(--muted); }
+.lane .beat.sel { fill: var(--signal); }
+.lane .span { fill: var(--hit-soft); }
+.lane .span.base { fill: var(--line); }
+.lane .beat.flash { fill: var(--ink); }
+.steps { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 3px; }
+.steps span { aspect-ratio: 1; border: 1px solid var(--line); border-radius: 3px; background: var(--bg); }
+.steps span.on { background: var(--hit); border-color: var(--hit); }
+.btnrow { display: flex; flex-wrap: wrap; gap: 6px; }
+.keys { display: grid; gap: 10px; }
+.keys .k { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; align-items: start; font-size: .9rem; }
+.keycap { font-family: var(--font-display); font-weight: 800; font-size: 1.1rem; text-align: center; border: 1px solid var(--line); border-bottom-width: 3px; border-radius: 6px; padding: 4px 0; background: var(--bg); }
+.msg { font-family: var(--font-mono); font-size: .78rem; color: var(--clip); min-height: 1.2em; }
+
+/* Releases */
+table.rel th, table.rel td { white-space: normal; text-align: left; vertical-align: top; }
+table.rel td:first-child { white-space: nowrap; font-weight: 500; }
+table.rel ul { margin: 0; padding-left: 16px; }
+table.rel li { margin: 2px 0; }
+table.rel td.new { min-width: 280px; }
+.tag { display: inline-block; font-family: var(--font-mono); font-size: .66rem; letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; border: 1px solid currentColor; color: var(--muted); }
+@media (max-width: 720px) {
+  table.rel thead { display: none; }
+  table.rel, table.rel tbody, table.rel tr, table.rel td { display: block; width: 100%; }
+  table.rel tr { border-bottom: 1px solid var(--line); padding: 10px 0; }
+  table.rel td { border: none; padding: 3px 0; }
+  table.rel td.new { min-width: 0; }
+  table.rel td[data-l]::before { content: attr(data-l); display: block; font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+  table.rel td:first-child { font-family: var(--font-display); font-size: 1.3rem; font-weight: 800; }
+}
+.tag.pub { color: var(--signal); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1><small>Drumboy Pro · firmware V1.10</small>How it sounds inside</h1>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
+      <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
+      <a href="#euclid" id="tab-euclid" role="tab" aria-selected="false" aria-controls="view-euclid">Euclid</a>
+      <a href="#releases" id="tab-releases" role="tab" aria-selected="false" aria-controls="view-releases">Releases</a>
+    </nav>
+  </header>
+
+  <!-- SIGNAL PATH -->
+  <section id="view-signal" role="tabpanel" aria-labelledby="tab-signal" class="stagecol">
+    <div class="panel intro">
+      <h2>A patch, not a chain</h2>
+      <p>Firmware V1.05+ replaces the fixed chain with a small patch. Every source (10 layers, the metronome, line-in) picks where it <b>enters</b>, and every module picks where its <b>output goes</b>: a later module or straight to MASTER. Modules always run in the same order (EQ, Filter 1, Filter 2, Effect 1, Effect 2, Reverb), so a patch can never loop. The default patch is the old serial chain.</p>
+      <p class="muted">On the device: a layer's OUT is on its third instrument page (hold I and press the layer pad, then tap I twice), module outputs and the metronome are on the ROUTING page (press MIXER twice), line-in is the mixer's MIXER IN.</p>
+    </div>
+
+    <div class="panel" style="display:grid; gap:14px">
+      <div class="field-row" style="flex-wrap:wrap; gap:10px"><h3>Try a patch</h3><div class="seg" id="presets" role="group" aria-label="Example patches"></div></div>
+      <div class="diagram-scroll"><svg id="diagram" viewBox="0 0 1160 430" role="img" aria-label="Routing diagram"></svg></div>
+      <p class="muted" id="path-text" style="font-size:.9rem"></p>
+      <div class="field"><span class="label">Sources: where each one enters (tap one to trace it)</span><div class="src-grid" id="sources"></div></div>
+      <div class="field"><span class="label">Modules: where each one sends its output</span><div class="mod-grid" id="modules"></div></div>
+    </div>
+
+    <div class="panel" style="display:grid; gap:12px">
+      <h3>The ROUTING page on the device</h3>
+      <div class="device" id="device" aria-label="ROUTING page preview"></div>
+      <p class="muted" style="font-size:.85rem">Top right lists one line per entry point: the sources that enter there and the chain they travel (L = layer, MT = metronome, LI = line-in, OUT = master). A module that nothing feeds has a grey header.</p>
+    </div>
+
+    <div class="stages" id="stages"></div>
+  </section>
+
+  <!-- FILLS & VOLUME -->
+  <section id="view-fills" role="tabpanel" aria-labelledby="tab-fills" hidden>
+    <div class="lab">
+      <div class="panel controls">
+        <h2>Fill</h2>
+        <p class="muted" style="font-size:.85rem">On the device: the song page (hold S on the right and press a layer pad), fields TYPE, PATTERN, TIMING and VELOCITY for the selected beat.</p>
+        <div class="two">
+          <div class="field"><label class="label" for="type">Type</label><select id="type"></select></div>
+          <div class="field"><label class="label" for="pattern">Pattern</label><select id="pattern"></select></div>
+        </div>
+        <div class="field"><span class="label" id="time-label">Time</span><div class="seg hit" id="time" role="group" aria-labelledby="time-label"></div></div>
+        <div class="field"><span class="label" id="level-label">Level</span><div class="seg hit" id="level" role="group" aria-labelledby="level-label"></div></div>
+        <div class="toggle">
+          <div><div class="label">Layer fill</div><div class="muted" style="font-size:.85rem">Off plays only the first hit. On the device: hold F (left) and press the layer pad</div></div>
+          <button class="switch" id="fillsw" role="switch" aria-checked="true" aria-label="Layer fill"></button>
+        </div>
+        <div class="field"><span class="label" id="span-label">Gap to next beat</span><div class="seg" id="span" role="group" aria-labelledby="span-label"></div></div>
+        <div class="divider"></div>
+        <h2>Volume</h2>
+        <div class="field"><div class="field-row"><label class="label" for="lvl">Layer level</label><span class="mono" id="lvl-v"></span></div><input type="range" id="lvl" min="0" max="100" value="75"></div>
+        <div class="field"><div class="field-row"><label class="label" for="mst">Master</label><span class="mono" id="mst-v"></span></div><input type="range" id="mst" min="0" max="100" value="75"></div>
+        <div class="field"><div class="field-row"><label class="label" for="pan">Pan</label><span class="mono" id="pan-v"></span></div><input type="range" id="pan" min="0" max="40" value="20"></div>
+        <div class="field"><div class="field-row"><label class="label" for="lim">Limiter (output ceiling)</label><span class="mono" id="lim-v"></span></div><input type="range" id="lim" min="0" max="10" value="10"></div>
+        <div class="divider"></div>
+        <div class="two">
+          <div class="field"><div class="field-row"><label class="label" for="bpm">Tempo</label><span class="mono" id="bpm-v"></span></div><input type="range" id="bpm" min="40" max="200" value="120"></div>
+          <div class="field"><label class="label" for="snd">Test sound</label><select id="snd"><option value="snare">Snare</option><option value="hat">Hat</option><option value="kick">Kick</option></select></div>
+        </div>
+      </div>
+
+      <div class="stagecol">
+        <div class="panel" style="display:grid; gap:14px">
+          <div class="transport">
+            <button class="play" id="play" aria-pressed="false">Play</button>
+            <button class="ghost" id="reroll" disabled>New random levels</button>
+            <span class="muted" id="loopnote" style="font-size:.85rem"></span>
+          </div>
+          <div class="lcd" id="lcd"></div>
+          <div class="timeline"><svg id="tl" viewBox="0 0 760 230" role="img" aria-label="Fill hits on a timeline"></svg></div>
+          <div class="tablewrap"><table id="hits"></table></div>
+        </div>
+
+        <div class="panel" style="display:grid; gap:14px">
+          <h3>What one hit's volume is made of</h3>
+          <div class="chain" id="chain"></div>
+          <div class="cols">
+            <div class="curve"><div class="label" style="margin-bottom:6px">Every 0–100 setting is cubed</div><svg id="curve" viewBox="0 0 360 200" role="img" aria-label="Setting to gain curve"></svg></div>
+            <div class="notes">
+              <p><b>Cubed controls.</b> Level, master, pan and fill velocity all go through the same x³ table, so the top half of each knob does most of the work: 50 is about −18 dB, not −6 dB.</p>
+              <p><b>Fill velocities.</b> Fill hits use 100 (high), 75 (the quiet STEP hits) and 40 (the bottom of DESCEND, ASCEND and RANDOM). GHOST is a single hit at 50.</p>
+              <p><b>Soft clip and LIMITER.</b> After master and pan the output is bent smoothly toward a ceiling instead of clipping hard. LIMITER on the mixer page sets that ceiling from −10 to +0 dB (V1.10+); the bend starts at 2/3 of it. At +0 dB, the default, that is 0.667 (−3.5 dBFS), as before V1.10.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- EUCLID -->
+  <section id="view-euclid" role="tabpanel" aria-labelledby="tab-euclid" hidden>
+    <div class="lab">
+      <div class="panel controls">
+        <h2>Euclid</h2>
+        <p class="muted" style="font-size:.85rem">Spreads HITS as evenly as possible over STEPS, then repeats the pattern from the song start to the song end. Same algorithm as the firmware (V1.10).</p>
+        <div class="field"><div class="field-row"><label class="label" for="eu-steps">Steps</label><span class="mono" id="eu-steps-v"></span></div><input type="range" id="eu-steps" min="1" max="32" value="8"></div>
+        <div class="field"><div class="field-row"><label class="label" for="eu-hits">Hits</label><span class="mono" id="eu-hits-v"></span></div><input type="range" id="eu-hits" min="0" max="8" value="3"></div>
+        <div class="field"><div class="field-row"><label class="label" for="eu-rot">Rotate</label><span class="mono" id="eu-rot-v"></span></div><input type="range" id="eu-rot" min="0" max="7" value="0"></div>
+        <div class="field"><span class="label" id="eu-grid-label">Grid (one step)</span><div class="seg hit" id="eu-grid" role="group" aria-labelledby="eu-grid-label"></div></div>
+        <div class="field"><span class="label" id="eu-mode-label">Mode</span><div class="seg hit" id="eu-mode" role="group" aria-labelledby="eu-mode-label"></div></div>
+        <div class="divider"></div>
+        <div class="two">
+          <div class="field"><label class="label" for="eu-bars">Song length</label><select id="eu-bars"><option value="1">1 bar</option><option value="2" selected>2 bars</option><option value="4">4 bars</option></select></div>
+          <div class="field"><label class="label" for="eu-snd">Test sound</label><select id="eu-snd"><option value="hat">Hat</option><option value="snare">Snare</option><option value="kick">Kick</option></select></div>
+        </div>
+        <div class="field"><div class="field-row"><label class="label" for="eu-bpm">Tempo</label><span class="mono" id="eu-bpm-v"></span></div><input type="range" id="eu-bpm" min="40" max="200" value="120"></div>
+        <p class="muted" style="font-size:.85rem">Grey beats are the layer's beats from before (one on beats 1 and 3, the first with a WAVE fill). MERGE keeps them; REPLACE drops them.</p>
+      </div>
+
+      <div class="stagecol">
+        <div class="panel" style="display:grid; gap:14px">
+          <div class="transport">
+            <button class="play" id="eu-play" aria-pressed="false">Play</button>
+            <span class="muted" id="eu-note" style="font-size:.85rem"></span>
+          </div>
+          <div class="steps" id="eu-cells" aria-label="Pattern steps"></div>
+          <div class="lane"><svg id="eu-lane" viewBox="0 0 760 120" role="img" aria-label="Layer beats on the song timeline"></svg></div>
+          <div class="field"><span class="label">The EUCLID page on the device</span><div class="device" id="eu-device" aria-label="EUCLID page preview"></div></div>
+        </div>
+
+        <div class="panel" style="display:grid; gap:12px">
+          <h3>Then shape it by hand: the song page</h3>
+          <p class="muted" style="font-size:.9rem">Tap a beat on the lane to select it. MOVE steps it one quantize step and jumps over neighbours, keeping its fill. SHIFT ALL rotates the whole layer; shifting back gives the same layer. INSERT is a short ADD press: one beat in the middle of the gap after the selected one.</p>
+          <div class="field"><span class="label" id="eu-q-label">Quantize (RHYTHM page)</span><div class="seg" id="eu-q" role="group" aria-labelledby="eu-q-label"></div></div>
+          <div class="btnrow">
+            <button class="ghost" id="eu-mv-l">◀ Move</button><button class="ghost" id="eu-mv-r">Move ▶</button>
+            <button class="ghost" id="eu-sh-l">◀ Shift all</button><button class="ghost" id="eu-sh-r">Shift all ▶</button>
+            <button class="ghost" id="eu-ins">Insert (short ADD)</button>
+          </div>
+          <div class="msg" id="eu-msg" aria-live="polite"></div>
+          <div class="lcd" id="eu-lcd"></div>
+        </div>
+
+        <div class="panel keys">
+          <h3>Getting there on the device</h3>
+          <div class="k"><span class="keycap">S</span><div><b>Hold S</b> (right side, the L I S row) <b>and press a layer pad</b>: that layer's song page. <b>Tap S</b> on its own: EUCLID. Tap again: back to the song page. Holding S and pressing the same pad again also opens EUCLID.</div></div>
+          <div class="k"><span class="keycap">I</span><div><b>Tap I</b>: the same layer's instrument pages, 1 → 2 → 3 → 1. From an instrument page, tap S for the song page.</div></div>
+          <div class="k"><span class="keycap">C</span><div><b>CLEAR on EUCLID</b>: the layer gets back the beats it had when you opened the page. Nothing changes until you turn a field; after that the pattern is rebuilt live, also while playing.</div></div>
+          <div class="k"><span class="keycap">+</span><div><b>Song page</b>: MOVE and SHIFT ALL are the last two fields on the bottom row (or hold ADD and press ◀ ▶ to move). A short ADD press inserts a beat. A bank holds 64 beats; when full, FULL is shown.</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RELEASES -->
+  <section id="view-releases" role="tabpanel" aria-labelledby="tab-releases" class="stagecol" hidden>
+    <div class="panel intro">
+      <h2>Releases and changes</h2>
+      <p>Every firmware version of this fork (MiguelMoraleja/Drumboy-Pro), newest first. This tab and the others are updated with every release.</p>
+      <p class="muted">To update: copy one <span class="mono">Drumboy_Pro_Fw_01_YY.bin</span> to the SD card root (delete older ones), check its size matches exactly, and power on. A smaller file means a cut-off copy (the bootloader shows SIZE-CHECK).</p>
+    </div>
+    <div class="panel"><div class="tablewrap"><table class="rel" id="rel"></table></div></div>
+  </section>
+
+  <footer>Built from the Drumboy Pro firmware source (<span class="mono">Controller.cpp</span>, <span class="mono">Global.h</span>): fill tables, level rules, the routing patch (<span class="mono">Routing.h</span>), Euclidean patterns and beat editing (<span class="mono">Euclid.h</span>, <span class="mono">BeatList.h</span>) and volume math match the code. The test sounds are synthesized in the browser; the device plays your samples.</footer>
+</div>
+
+<script>
+const FILLS=[["BASIC",[["FLAT",1,[0.0,0.0]],["GHOST",1,[0.0,0.0]],["MUTED",1,[0.0,0.0]],["BASIC_2",2,[0.0,0.5,1.0]],["BASIC_3",3,[0.0,0.333333,0.666666,1.0]],["BASIC_4",4,[0.0,0.25,0.5,0.75,1.0]],["BASIC_6",6,[0.0,0.166666,0.333333,0.5,0.666666,0.833333,1.0]],["BASIC_8",8,[0.0,0.125,0.25,0.375,0.5,0.625,0.75,0.875,1.0]]]],["WAVE",[["WAVE_A",12,[0.0,0.0625,0.125,0.1875,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["WAVE_B",12,[0.0,0.125,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]],["WAVE_C",9,[0.0,0.083333,0.166666,0.25,0.333333,0.416666,0.5,0.666666,0.833333,1.0]],["WAVE_D",9,[0.0,0.166666,0.333333,0.5,0.583333,0.666666,0.75,0.833333,0.916666,1.0]],["WAVE_E",11,[0.0,0.0625,0.125,0.1875,0.25,0.3125,0.375,0.4375,0.5,0.666666,0.833333,1.0]],["WAVE_F",10,[0.0,0.125,0.25,0.375,0.5,0.583333,0.666666,0.75,0.833333,0.916666,1.0]],["WAVE_G",10,[0.0,0.083333,0.166666,0.25,0.333333,0.416666,0.5,0.625,0.75,0.875,1.0]],["WAVE_H",11,[0.0,0.166666,0.333333,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]]]],["TRAP-A",[["TRAP_A1",5,[0.0,0.25,0.5,0.625,0.75,1.0]],["TRAP_A2",5,[0.0,0.125,0.25,0.5,0.75,1.0]],["TRAP_A3",7,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.75,1.0]],["TRAP_A4",7,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.75,1.0]],["TRAP_A5",7,[0.0,0.25,0.3125,0.375,0.5,0.75,0.875,1.0]],["TRAP_A6",7,[0.0,0.25,0.5,0.5625,0.625,0.6875,0.75,1.0]],["TRAP_A7",8,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.666666,0.833333,1.0]],["TRAP_A8",9,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.75,0.833333,0.916666,1.0]]]],["TRAP-B",[["TRAP_B1",8,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.75,0.875,1.0]],["TRAP_B2",8,[0.0,0.25,0.5,0.5625,0.625,0.6875,0.75,0.875,1.0]],["TRAP_B3",7,[0.0,0.25,0.5,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_B4",9,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["TRAP_B5",10,[0.0,0.125,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["TRAP_B6",10,[0.0,0.041666,0.083333,0.125,0.166666,0.25,0.333333,0.5,0.666666,0.833333,1.0]],["TRAP_B7",10,[0.0,0.166667,0.333333,0.5,0.541666,0.583333,0.625,0.666666,0.75,0.833333,1.0]],["TRAP_B8",11,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.625,0.75,0.8125,0.875,0.9375,1.0]]]],["TRAP-C",[["TRAP_C1",11,[0.0,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_C2",12,[0.0,0.0625,0.125,0.1875,0.25,0.375,0.5,0.625,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_C3",11,[0.0,0.0625,0.125,0.25,0.3125,0.375,0.5,0.625,0.75,0.8125,0.875,1.0]],["TRAP_C4",12,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.5,0.666666,0.833333,1.0]],["TRAP_C5",14,[0.0,0.166666,0.333333,0.5,0.53125,0.5625,0.59375,0.625,0.65625,0.6875,0.71875,0.75,0.8125,0.875,1.0]],["TRAP_C6",10,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_C7",11,[0.0,0.125,0.25,0.3125,0.375,0.4375,0.5,0.5625,0.625,0.75,0.875,1.0]],["TRAP_C8",13,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.375,0.5,0.75,0.875,1.0]]]],["TRAP-D",[["TRAP_D1",13,[0.0,0.125,0.25,0.28125,0.3125,0.34375,0.375,0.40625,0.4375,0.46875,0.5,0.625,0.75,1.0]],["TRAP_D2",13,[0.0,0.125,0.1875,0.25,0.375,0.40625,0.4375,0.46875,0.5,0.625,0.75,0.8125,0.875,1.0]],["TRAP_D3",15,[0.0,0.125,0.25,0.3125,0.375,0.5,0.625,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["TRAP_D4",16,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.875,1.0]],["TRAP_D5",15,[0.0,0.125,0.25,0.28125,0.3125,0.34375,0.375,0.5,0.53125,0.5625,0.59375,0.625,0.75,0.8125,0.875,1.0]],["TRAP_D6",15,[0.0,0.125,0.25,0.28125,0.3125,0.34375,0.375,0.40625,0.4375,0.46875,0.5,0.53125,0.625,0.75,0.875,1.0]],["TRAP_D7",16,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["TRAP_D8",15,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.375,0.5,0.5625,0.625,0.75,0.875,1.0]]]],["SWING",[["SWING_A",3,[0.0,0.5,0.875,1.0]],["SWING_B",4,[0.0,0.25,0.5,0.875,1.0]],["SWING_C",7,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.875,1.0]],["SWING_D",5,[0.0,0.166666,0.333333,0.5,0.875,1.0]],["SWING_E",6,[0.0,0.125,0.25,0.375,0.5,0.875,1.0]],["SWING_F",4,[0.0,0.375,0.5,0.875,1.0]],["SWING_G",4,[0.0,0.0625,0.125,0.875,1.0]],["SWING_H",5,[0.0,0.333333,0.666666,0.75,0.875,1.0]]]],["ROLL",[["ROLL_DBL",15,[0.0,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_TRIP",12,[0.0,0.25,0.375,0.5,0.583333,0.666667,0.75,0.791667,0.833333,0.875,0.916667,0.958333,1.0]],["ROLL_EVEN",15,[0.0,0.125,0.25,0.333333,0.416667,0.5,0.5625,0.625,0.6875,0.75,0.791667,0.833333,0.875,0.916667,0.958333,1.0]],["ROLL_LONG",15,[0.0,0.125,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.791667,0.833333,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_STEP",16,[0.0,0.125,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_LATE",13,[0.0,0.5,0.5625,0.625,0.6875,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_BRAKE",15,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,1.0]],["ROLL_32",16,[0.0,0.0625,0.125,0.1875,0.25,0.3125,0.375,0.4375,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]]]],["TECHNO",[["GALLOP",12,[0.0,0.125,0.1875,0.25,0.375,0.4375,0.5,0.625,0.6875,0.75,0.875,0.9375,1.0]],["GALLOP_R",12,[0.0,0.0625,0.1875,0.25,0.3125,0.4375,0.5,0.5625,0.6875,0.75,0.8125,0.9375,1.0]],["ROLLING",12,[0.0,0.0625,0.125,0.25,0.3125,0.375,0.5,0.5625,0.625,0.75,0.8125,0.875,1.0]],["TRESILLO",6,[0.0,0.1875,0.375,0.5,0.6875,0.875,1.0]],["DOTTED_8",6,[0.0,0.1875,0.375,0.5625,0.75,0.9375,1.0]],["EVERY_5",4,[0.0,0.3125,0.625,0.9375,1.0]],["RUMBLE",8,[0.0,0.25,0.375,0.4375,0.5,0.75,0.875,0.9375,1.0]],["PICKUP",6,[0.0,0.8125,0.875,0.90625,0.9375,0.96875,1.0]]]],["BREAKS",[["BREAK_A",7,[0.0,0.125,0.3125,0.375,0.625,0.8125,0.875,1.0]],["BREAK_B",5,[0.0,0.375,0.5625,0.8125,0.9375,1.0]],["SHUFFLE",10,[0.0,0.125,0.1875,0.3125,0.4375,0.5,0.625,0.6875,0.8125,0.9375,1.0]],["CHOP",10,[0.0,0.125,0.3125,0.4375,0.5,0.625,0.8125,0.875,0.9375,0.96875,1.0]],["JUNGLE",10,[0.0,0.375,0.40625,0.4375,0.46875,0.5,0.875,0.90625,0.9375,0.96875,1.0]],["STUTTER",9,[0.0,0.5,0.53125,0.5625,0.59375,0.625,0.65625,0.6875,0.71875,1.0]],["HALFTIME",4,[0.0,0.625,0.875,0.9375,1.0]],["EDIT_32",16,[0.0,0.03125,0.125,0.15625,0.3125,0.34375,0.4375,0.46875,0.5,0.53125,0.625,0.65625,0.875,0.90625,0.9375,0.96875,1.0]]]],["GARAGE",[["SHUF_58",16,[0.0,0.0725,0.125,0.1975,0.25,0.3225,0.375,0.4475,0.5,0.5725,0.625,0.6975,0.75,0.8225,0.875,0.9475,1.0]],["SHUF_66",16,[0.0,0.0825,0.125,0.2075,0.25,0.3325,0.375,0.4575,0.5,0.5825,0.625,0.7075,0.75,0.8325,0.875,0.9575,1.0]],["2STEP_A",4,[0.0,0.375,0.625,0.9525,1.0]],["2STEP_B",6,[0.0,0.2025,0.375,0.5,0.8275,0.875,1.0]],["SKIP",10,[0.0,0.125,0.2,0.325,0.375,0.5,0.625,0.7,0.825,0.875,1.0]],["SWING_8",8,[0.0,0.165,0.25,0.415,0.5,0.665,0.75,0.915,1.0]],["BOUNCE",12,[0.0,0.125,0.2,0.25,0.325,0.45,0.5,0.625,0.7,0.75,0.825,0.95,1.0]],["LAZY",6,[0.0,0.25,0.455,0.625,0.83,0.955,1.0]]]],["TRIPLET",[["TRIP_12",12,[0.0,0.083333,0.166667,0.25,0.333333,0.416667,0.5,0.583333,0.666667,0.75,0.833333,0.916667,1.0]],["TRIP_GAL",8,[0.0,0.083333,0.166667,0.25,0.5,0.583333,0.666667,0.75,1.0]],["TRIP_ROLL",10,[0.0,0.5,0.583333,0.666667,0.75,0.791667,0.833333,0.875,0.916667,0.958333,1.0]],["QUINT_5",5,[0.0,0.2,0.4,0.6,0.8,1.0]],["SEPT_7",7,[0.0,0.142857,0.285714,0.428571,0.571429,0.714286,0.857143,1.0]],["NONUP_9",9,[0.0,0.111111,0.222222,0.333333,0.444444,0.555556,0.666667,0.777778,0.888889,1.0]],["POLY_3V4",6,[0.0,0.25,0.333333,0.5,0.666667,0.75,1.0]],["POLY_3V8",10,[0.0,0.125,0.25,0.333333,0.375,0.5,0.625,0.666667,0.75,0.875,1.0]]]],["EUCLID",[["E3_16",3,[0.0,0.375,0.6875,1.0]],["E5_16",5,[0.0,0.25,0.4375,0.625,0.8125,1.0]],["E7_16",7,[0.0,0.1875,0.3125,0.4375,0.625,0.75,0.875,1.0]],["E9_16",9,[0.0,0.125,0.25,0.375,0.5,0.5625,0.6875,0.8125,0.9375,1.0]],["E11_16",11,[0.0,0.125,0.1875,0.3125,0.375,0.5,0.5625,0.6875,0.75,0.875,0.9375,1.0]],["E13_16",13,[0.0,0.125,0.1875,0.25,0.3125,0.4375,0.5,0.5625,0.625,0.75,0.8125,0.875,0.9375,1.0]],["E5_12",5,[0.0,0.25,0.416667,0.666667,0.833333,1.0]],["E7_12",7,[0.0,0.166667,0.333333,0.5,0.583333,0.75,0.916667,1.0]]]],["RATCHET",[["ACCEL_8",8,[0.0,0.192369,0.3689,0.52858,0.670123,0.791815,0.891181,0.964103,1.0]],["ACCEL_12",12,[0.0,0.122358,0.239274,0.350481,0.455669,0.554472,0.646447,0.731043,0.80755,0.875,0.931959,0.975944,1.0]],["ACCEL_16",16,[0.0,0.080477,0.159359,0.236568,0.312014,0.385595,0.457195,0.526675,0.593874,0.658594,0.720591,0.779553,0.835062,0.886525,0.933014,0.972795,1.0]],["DECEL_8",8,[0.0,0.035897,0.108819,0.208185,0.329877,0.47142,0.6311,0.807631,1.0]],["DECEL_12",12,[0.0,0.024056,0.068041,0.125,0.19245,0.268957,0.353553,0.445528,0.544331,0.649519,0.760726,0.877642,1.0]],["BOUNCE_BL",12,[0.0,0.174874,0.323518,0.449865,0.557259,0.648545,0.726138,0.792091,0.848152,0.895804,0.936308,0.970736,1.0]],["GOLDEN",8,[0.0,0.09017,0.236068,0.326238,0.472136,0.618034,0.708204,0.854102,1.0]],["CLUSTER",10,[0.0,0.170534,0.314127,0.414127,0.470534,0.5,0.529466,0.585873,0.685873,0.829466,1.0]]]],["FOOTWORK",[["JUKE_A",6,[0.0,0.125,0.25,0.375,0.5,0.75,1.0]],["JUKE_B",7,[0.0,0.166667,0.333333,0.5,0.666667,0.833333,0.916667,1.0]],["JUKE_C",9,[0.0,0.083333,0.25,0.416667,0.5,0.583333,0.75,0.875,0.916667,1.0]],["TRIP_KICK",11,[0.0,0.125,0.25,0.375,0.5,0.625,0.75,0.791667,0.875,0.916667,0.958333,1.0]],["STUT_2",14,[0.0,0.25,0.28125,0.3125,0.34375,0.5,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["HALF_JUKE",7,[0.0,0.25,0.375,0.75,0.875,0.916667,0.958333,1.0]],["BLAST",6,[0.0,0.041667,0.083333,0.125,0.166667,0.208333,1.0]],["CALL_RESP",9,[0.0,0.083333,0.166667,0.5,0.583333,0.666667,0.75,0.791667,0.833333,1.0]]]]];
+
+/* ---------- Tabs (hash routed) ---------- */
+const views = { signal: "view-signal", fills: "view-fills", euclid: "view-euclid", releases: "view-releases" };
+function route() {
+  const name = (location.hash || "#signal").slice(1);
+  const v = views[name] ? name : "signal";
+  for (const k in views) {
+    document.getElementById(views[k]).hidden = k !== v;
+    document.getElementById("tab-" + k).setAttribute("aria-selected", String(k === v));
+  }
+  if (v !== "fills") stop();
+  if (v !== "euclid") euStop();
+}
+window.addEventListener("hashchange", route);
+
+/* ---------- Signal path: routing patch (port of Routing.h) ---------- */
+const NODE_NAMES = ["EQ", "FILTER-1", "FILTER-2", "EFFECT-1", "EFFECT-2", "REVERB", "MASTER"];
+const SHORT = ["EQ", "F1", "F2", "FX1", "FX2", "REV", "OUT"];
+const MASTER = 6, REV = 5;
+const SRC_NAMES = ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10", "MT", "LI"];
+const SRC_LONG = ["Layer 1", "Layer 2", "Layer 3", "Layer 4", "Layer 5", "Layer 6", "Layer 7", "Layer 8", "Layer 9", "Layer 10", "Metronome", "Line-in"];
+
+const PRESETS = [
+  { name: "Default chain", note: "The old serial chain: everything enters at EQ and runs through every stage (metronome at the reverb).",
+    mod: [1, 2, 3, 4, 5, 6], src: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0] },
+  { name: "Parallel", note: "From the design: kick through Filter 1 only, snare through Filter 2, Effect 1 and the reverb, hats dry, clap through EQ and Effect 2.",
+    mod: [4, 6, 3, 5, 6, 6], src: [1, 2, 6, 0, 6, 6, 6, 6, 6, 6, 5, 6] },
+  { name: "Reverb bus", note: "Dry kit with a shared delay-into-reverb send: layers 3 and 4 go through Effect 1 into the reverb, everything else straight to the master.",
+    mod: [1, 2, 3, 5, 5, 6], src: [6, 6, 3, 3, 6, 6, 6, 6, 6, 6, 6, 6] },
+];
+const rt = { mod: PRESETS[0].mod.slice(), src: PRESETS[0].src.slice(), sel: 0, preset: 0, stage: -1 };
+const svgNS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent, text) {
+  const n = document.createElementNS(svgNS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (text != null) n.textContent = text;
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+
+function routePath(entry) {
+  const path = [];
+  let n = entry;
+  while (path.length < 7) {
+    path.push(n);
+    if (n === MASTER) break;
+    const next = n === REV ? MASTER : rt.mod[n];
+    if (next <= n) break;
+    n = next;
+  }
+  return path;
+}
+function fedModules() {
+  const fed = new Set(rt.src);
+  for (let m = 0; m < 6; m++) if (fed.has(m)) fed.add(m === REV ? MASTER : rt.mod[m]);
+  return fed;
+}
+function overviewLines() {
+  const lines = [];
+  for (let e = 0; e < 7; e++) {
+    const who = [];
+    for (let i = 0; i < 10; i++) {
+      if (rt.src[i] !== e) continue;
+      let j = i;
+      while (j + 1 < 10 && rt.src[j + 1] === e) j++;
+      if (j - i >= 2) { who.push(`L${i + 1}-${j + 1}`); i = j; } else who.push(`L${i + 1}`);
+    }
+    if (rt.src[10] === e) who.push("MT");
+    if (rt.src[11] === e) who.push("LI");
+    if (!who.length) continue;
+    // Same rule as the firmware: drop the spaces around ">" if the line doesn't fit, then cut.
+    let line = who.join(" ") + routePath(e).map(n => " > " + SHORT[n]).join("");
+    if (line.length > 36) line = who.join(" ") + routePath(e).map(n => ">" + SHORT[n]).join("");
+    if (line.length > 36) line = line.slice(0, 34) + "..";
+    lines.push(line);
+  }
+  // The device shows 5 lines; with more chains the last line says how many are not shown.
+  if (lines.length > 5) return lines.slice(0, 4).concat(["+" + (lines.length - 4) + " MORE"]);
+  return lines;
+}
+
+/* Diagram: sources on the left, modules in processing order, master on the right. */
+const NX = [230, 375, 520, 665, 810, 955, 1065], NY = 190, NW = 104, NH = 60;
+function drawDiagram() {
+  const svg = document.getElementById("diagram");
+  svg.textContent = "";
+  const fed = fedModules();
+  const lit = new Set(routePath(rt.src[rt.sel]));
+  const edges = el("g", {}, svg);
+
+  // source chips + their entry edges
+  SRC_NAMES.forEach((name, i) => {
+    const y = 22 + i * 33;
+    const on = i === rt.sel;
+    const e = rt.src[i];
+    const tx = NX[e] + (e === MASTER ? 40 : NW / 2), ty = NY;
+    // Straight to OUT: arc over the modules instead of through them.
+    const d = e === MASTER
+      ? `M120,${y + 12} C${330},${y + 12} ${NX[1]},${NY - 150} ${NX[3]},${NY - 150} S${tx},${NY - 120} ${tx},${ty}`
+      : `M120,${y + 12} C${175},${y + 12} ${tx - 60},${ty - 40} ${tx},${ty}`;
+    el("path", { d, class: on ? "edge on" : "edge" }, edges);
+    const g = el("g", { class: on ? "chip on" : "chip", tabindex: 0, role: "button", "aria-label": SRC_LONG[i] + ": trace" }, svg);
+    el("rect", { x: 20, y, width: 100, height: 24, rx: 6 }, g);
+    el("text", { x: 70, y: y + 16, "text-anchor": "middle" }, g, name);
+    const pick = () => { rt.sel = i; renderRouting(); };
+    g.addEventListener("click", pick);
+    g.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); } });
+  });
+
+  // module output edges
+  for (let m = 0; m < 6; m++) {
+    const d = m === REV ? MASTER : rt.mod[m];
+    const on = lit.has(m) && lit.has(d);
+    const x1 = NX[m] + NW, x2 = NX[d];
+    if (d === m + 1 || (m === REV)) {
+      el("line", { x1, y1: NY + NH / 2, x2, y2: NY + NH / 2, class: on ? "edge on" : "edge" }, edges);
+    } else {
+      const span = d - m, drop = 40 + span * 26;
+      el("path", { d: `M${NX[m] + NW / 2},${NY + NH} C${NX[m] + NW / 2},${NY + NH + drop} ${x2 + (d === MASTER ? 40 : NW / 2)},${NY + NH + drop} ${x2 + (d === MASTER ? 40 : NW / 2)},${NY + NH}`, class: on ? "edge on" : "edge" }, edges);
+    }
+  }
+
+  // nodes
+  for (let n = 0; n < 7; n++) {
+    const dim = n < MASTER && !fed.has(n);
+    const cls = ["node", lit.has(n) ? "on" : "", dim ? "dim" : "", rt.stage === n ? "sel" : ""].join(" ");
+    const g = el("g", { class: cls, tabindex: 0, role: "button", "aria-label": NODE_NAMES[n] + " details" }, svg);
+    const w = n === MASTER ? 80 : NW;
+    el("rect", { x: NX[n], y: NY, width: w, height: NH, rx: 8 }, g);
+    el("text", { x: NX[n] + w / 2, y: NY + 27, "text-anchor": "middle", class: "t" }, g, n === MASTER ? "OUT" : NODE_NAMES[n].replace("-", " "));
+    el("text", { x: NX[n] + w / 2, y: NY + 45, "text-anchor": "middle", class: "s" }, g, n === REV ? "→ stereo" : n === MASTER ? "master" : dim ? "no input" : "");
+    const pick = () => { rt.stage = n; renderRouting(); };
+    g.addEventListener("click", pick);
+    g.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); } });
+  }
+  el("text", { x: 20, y: 422, class: "ann" }, svg, "SOURCES");
+  el("text", { x: NX[0], y: 422, class: "ann" }, svg, "MODULES RUN LEFT TO RIGHT · AN OUTPUT MAY ONLY GO FURTHER RIGHT");
+}
+
+function buildControls() {
+  const sg = document.getElementById("sources");
+  sg.textContent = "";
+  SRC_NAMES.forEach((name, i) => {
+    const box = document.createElement("div");
+    box.className = "src" + (i === rt.sel ? " sel" : "");
+    const id = "src-" + i;
+    box.innerHTML = `<label for="${id}">${SRC_LONG[i]}</label>`;
+    const sel = document.createElement("select");
+    sel.id = id;
+    NODE_NAMES.forEach((nm, n) => { const o = document.createElement("option"); o.value = n; o.textContent = nm; sel.appendChild(o); });
+    sel.value = rt.src[i];
+    sel.addEventListener("change", () => { rt.src[i] = +sel.value; rt.sel = i; rt.preset = -1; renderRouting(); });
+    box.addEventListener("click", ev => { if (ev.target === box || ev.target.tagName === "LABEL") { rt.sel = i; renderRouting(); } });
+    box.appendChild(sel);
+    sg.appendChild(box);
+  });
+  const mg = document.getElementById("modules");
+  mg.textContent = "";
+  const fed = fedModules();
+  for (let m = 0; m < 6; m++) {
+    const box = document.createElement("div");
+    box.className = "modout" + (fed.has(m) ? "" : " dim");
+    const id = "mod-" + m;
+    box.innerHTML = `<label for="${id}">${NODE_NAMES[m]} OUT</label>`;
+    const sel = document.createElement("select");
+    sel.id = id;
+    if (m === REV) {
+      const o = document.createElement("option"); o.textContent = "MASTER (fixed)"; sel.appendChild(o); sel.disabled = true;
+    } else {
+      for (let n = m + 1; n < 7; n++) { const o = document.createElement("option"); o.value = n; o.textContent = NODE_NAMES[n]; sel.appendChild(o); }
+      sel.value = rt.mod[m];
+      sel.addEventListener("change", () => { rt.mod[m] = +sel.value; rt.preset = -1; renderRouting(); });
+    }
+    box.appendChild(sel);
+    mg.appendChild(box);
+  }
+}
+
+function drawDevice() {
+  const fed = fedModules();
+  const tab = (r) => {
+    const isMetro = r === 5;
+    const head = isMetro ? "METRONOME" : NODE_NAMES[r];
+    const val = isMetro ? NODE_NAMES[rt.src[10]] : NODE_NAMES[rt.mod[r]];
+    const dim = !isMetro && !fed.has(r);
+    return `<div class="tab${dim ? " dim" : ""}"><span class="h">${head}</span><span class="v">${val}</span><span class="g">OUT</span></div>`;
+  };
+  document.getElementById("device").innerHTML =
+    tab(0) + tab(1) + `<div class="ov">${overviewLines().join("\n")}</div>` + tab(2) + tab(3) + tab(4) + tab(5);
+}
+
+const STAGES = [
+  { n: 0, label: "EQ", p: "Six biquad filters in a row: low shelf, high shelf and four peaks. Bands set to 0 dB gain are skipped.",
+    li: ["Output goes to its OUT (default: Filter 1)", "Switched off: passes the signal through"] },
+  { n: 1, label: "FILTER 1", p: "Lowpass, highpass, bandpass or bandstop with 6 or 12 dB slope and an input drive.",
+    li: ["Output: Filter 2, the effects, the reverb or MASTER (default: Filter 2)", "Drive adds gain with soft saturation"] },
+  { n: 2, label: "FILTER 2", p: "Same engine as Filter 1, with its own input: whatever is routed to it.",
+    li: ["Output: the effects, the reverb or MASTER (default: Effect 1)"] },
+  { n: 3, label: "EFFECT 1", p: "Delay, chorus, flanger, phaser, compressor, expander, overdrive, distortion or bitcrusher, with its own dry and wet levels.",
+    li: ["Output: Effect 2, the reverb or MASTER (default: Effect 2)", "Each type has 4 parameters plus DRY and WET"] },
+  { n: 4, label: "EFFECT 2", p: "A second effect slot with the same nine types.",
+    li: ["Output: the reverb or MASTER (default: Reverb)"] },
+  { n: 5, label: "REVERB", p: "Pre-delay, 8 parallel comb filters and 4 all-passes. The right channel is a delayed copy, so this is where the signal becomes stereo.",
+    li: ["Always feeds MASTER", "Switched off: left is copied to right"] },
+  { n: 6, label: "MASTER", p: "Everything routed to MASTER plus the reverb pair, then master volume and pan, the output low-pass, the peak meter and the soft-knee clipper.",
+    li: ["Mono sources reach both channels", "Soft clip at the LIMITER ceiling (mixer, −10 to +0 dB, V1.10+); the knee starts at 2/3 of it"] },
+];
+function drawStages() {
+  const box = document.getElementById("stages");
+  box.textContent = "";
+  const fed = fedModules();
+  const cards = STAGES.map(st => {
+    const d = document.createElement("article");
+    const feeds = st.n === MASTER || fed.has(st.n);
+    d.className = "stage" + (rt.stage === st.n ? " sel" : "");
+    d.innerHTML = `<span class="label">${feeds ? "Gets signal" : "Nothing feeds this module"}</span><h3>${st.label}</h3><p>${st.p}</p><ul>${st.li.map(x => `<li>${x}</li>`).join("")}</ul>`;
+    d.addEventListener("click", () => { rt.stage = st.n; renderRouting(); });
+    return d;
+  });
+  const fade = document.createElement("article");
+  fade.className = "stage";
+  fade.innerHTML = `<span class="label">Changing routes</span><h3>No clicks</h3><p>Line-in, the metronome and module outputs crossfade to a new destination over 64 samples (about 1.5 ms). A layer switches at its next hit. Routing is saved with kits and songs; the metronome's and line-in's routes are global settings.</p>`;
+  cards.push(fade);
+  cards.forEach(c => box.appendChild(c));
+}
+
+function renderRouting() {
+  document.getElementById("presets").querySelectorAll("button").forEach((b, i) => b.setAttribute("aria-pressed", String(i === rt.preset)));
+  buildControls();
+  drawDiagram();
+  drawDevice();
+  drawStages();
+  const path = routePath(rt.src[rt.sel]).map(n => NODE_NAMES[n]).join(" → ");
+  const preset = rt.preset >= 0 ? PRESETS[rt.preset].note + " " : "";
+  document.getElementById("path-text").textContent = `${preset}${SRC_LONG[rt.sel]} travels: ${path}.`;
+}
+function buildPresets() {
+  const g = document.getElementById("presets");
+  PRESETS.forEach((p, i) => {
+    const b = document.createElement("button");
+    b.textContent = p.name; b.id = "preset-" + i;
+    b.addEventListener("click", () => { rt.mod = p.mod.slice(); rt.src = p.src.slice(); rt.preset = i; renderRouting(); });
+    g.appendChild(b);
+  });
+}
+
+/* ---------- Fill engine (port of BeatFill::set) ---------- */
+const TIMES = ["STD", "LEFT", "RIGHT"];
+const LEVELS = ["FLAT", "STEP", "DESCEND", "ASCEND", "RANDOM"];
+const SPANS = [[0.25, "1/16"], [0.5, "1/8"], [1, "1 beat"], [2, "2 beats"], [4, "1 bar"]];
+const TICKS_PER_BEAT = 800, HI = 100, LO = 40, STEPLVL = 75, DIFF = 60;
+const f = Math.fround;
+
+const st = { type: 7, pattern: 0, time: 0, level: 0, fill: true, span: 2, lvl: 75, mst: 75, pan: 20, lim: 10, bpm: 120, snd: "snare", seed: 1 };
+// LIMITER (mixer): output ceiling, kMixerLimiterDataLibrary (-10 .. +0 dB).
+const LIMS = [0.3162, 0.3548, 0.3981, 0.4467, 0.5012, 0.5623, 0.6310, 0.7079, 0.7943, 0.8913, 1.0];
+const limName = i => (i === 10 ? "+00" : "−" + String(10 - i).padStart(2, "0")) + " dB";
+const limited = x => { const c = LIMS[st.lim]; return c < 1 ? c * softKneeClip(x / c) : softKneeClip(x); };
+
+function rng(seed) { let s = seed >>> 0 || 1; return () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return (s >>> 0) / 4294967296; }; }
+const isBasic = () => st.type === 0 && st.pattern <= 2;
+
+function levelsFor(n, mode, right, rand) {
+  const L = new Array(n);
+  const tr = v => Math.min(HI, Math.max(LO, Math.trunc(v)));
+  if (!right) {
+    for (let i = 0; i < n; i++) {
+      if (mode === 0) L[i] = HI;
+      else if (mode === 1) L[i] = i % 2 ? STEPLVL : HI;
+      else if (mode === 2) L[i] = tr(f(HI - f(f(DIFF / (n - 1)) * i)));
+      else if (mode === 3) L[i] = tr(f(LO + f(f(DIFF / (n - 1)) * i)));
+      else L[i] = LO + Math.floor(rand() * DIFF);
+    }
+  } else {
+    L[0] = HI;
+    const m = n - 1;
+    for (let i = 0; i < m; i++) {
+      if (mode === 0) L[i + 1] = HI;
+      else if (mode === 1) L[i + 1] = i % 2 ? STEPLVL : HI;
+      else if (mode === 2) L[i + 1] = tr(f(HI - f(f(DIFF / (m - 1)) * i)));
+      else if (mode === 3) L[i + 1] = tr(f(LO + f(f(DIFF / (m - 1)) * i)));
+      else L[i + 1] = LO + Math.floor(rand() * DIFF);
+    }
+  }
+  return L;
+}
+
+function buildHits() {
+  const total = Math.round(SPANS[st.span][0] * TICKS_PER_BEAT);
+  if (isBasic()) {
+    const v = [100, 50, 0][st.pattern];
+    return { total, hits: [{ tick: 0, vel: v, plays: v > 0 }], ss: 1 };
+  }
+  const [, ss, tl] = FILLS[st.type][1][st.pattern];
+  const rand = rng(st.seed * 2654435761 + st.type * 97 + st.pattern);
+  let n, times;
+  if (st.time === 0) { n = ss; times = tl.slice(0, n); }
+  else if (st.time === 1) { n = ss + 1; times = tl.slice(0, n).map(t => t * 0.5); }
+  else { n = ss + 1; times = [0, ...tl.slice(0, ss).map(t => t * 0.5 + 0.5)]; }
+  const lv = levelsFor(n, st.level, st.time === 2, rand);
+  const hits = times.map((t, i) => ({ tick: Math.trunc(total * f(t)), vel: lv[i], plays: i === 0 || st.fill }));
+  return { total, hits, ss };
+}
+
+/* ---------- Volume math (layer_playBeat + processAudioSend) ---------- */
+const cube = x => Math.pow(x / 100, 3);
+const panLR = p => [p <= 20 ? 100 : 100 - 5 * (p - 20), p >= 20 ? 100 : 5 * p];
+const panName = p => p === 20 ? "C" : p < 20 ? "L" + String(20 - p).padStart(2, "0") : "R" + String(p - 20).padStart(2, "0");
+const dB = g => g <= 0 ? "−∞" : (20 * Math.log10(g)).toFixed(1).replace("-", "−");
+function hitGain(vel) { return 0.8 * cube(st.lvl) * cube(vel) * cube(st.mst); }
+function softKneeClip(x) {
+  const k = 0.6666666667, a = Math.abs(x);
+  if (a <= k) return x;
+  if (a > 1.25) return Math.sign(x);
+  const s = (a - k) / (1.25 - k);
+  return Math.sign(x) * (k + (1.25 - k) * (s - s * s * s / 3));
+}
+
+/* ---------- Fill UI ---------- */
+let cur = buildHits();
+function seg(id, items, key, onChange) {
+  const g = document.getElementById(id);
+  items.forEach((label, i) => {
+    const b = document.createElement("button");
+    b.textContent = label; b.id = id + "-" + i;
+    b.addEventListener("click", () => { st[key] = i; onChange(); });
+    g.appendChild(b);
+  });
+}
+function syncSeg(id, val, disabled) {
+  document.getElementById(id).querySelectorAll("button").forEach((b, i) => {
+    b.setAttribute("aria-pressed", String(i === val)); b.disabled = !!disabled;
+    b.style.opacity = disabled ? .45 : "";
+  });
+}
+function fillPatterns() {
+  const p = document.getElementById("pattern");
+  p.textContent = "";
+  FILLS[st.type][1].forEach(([name], i) => { const o = document.createElement("option"); o.value = i; o.textContent = name; p.appendChild(o); });
+  p.value = st.pattern;
+}
+
+function render() {
+  cur = buildHits();
+  const basic = isBasic();
+  syncSeg("time", st.time, basic); syncSeg("level", st.level, basic); syncSeg("span", st.span);
+  document.getElementById("fillsw").setAttribute("aria-checked", String(st.fill));
+  document.getElementById("reroll").disabled = basic || st.level !== 4;
+  document.getElementById("lvl-v").textContent = st.lvl;
+  document.getElementById("mst-v").textContent = st.mst;
+  document.getElementById("pan-v").textContent = panName(st.pan);
+  document.getElementById("lim-v").textContent = limName(st.lim);
+  document.getElementById("bpm-v").textContent = st.bpm + " BPM";
+
+  const [name] = FILLS[st.type][1][st.pattern];
+  const playing = cur.hits.filter(h => h.plays && h.vel > 0).length;
+  const lcd = [
+    ["Type", FILLS[st.type][0]], ["Pattern", name],
+    ["Time", basic ? "—" : TIMES[st.time]], ["Level", basic ? "—" : LEVELS[st.level]],
+  ];
+  document.getElementById("lcd").innerHTML = lcd.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
+  const msTick = 60000 / (st.bpm * TICKS_PER_BEAT);
+  document.getElementById("loopnote").textContent = `${playing} of ${cur.hits.length} hits play · loop ${Math.round(cur.total * msTick)} ms`;
+
+  drawTimeline(); drawTable(); drawChain(); drawCurve();
+}
+
+function drawTimeline(activeIdx) {
+  const svg = document.getElementById("tl"); svg.textContent = "";
+  const W = 760, L = 40, R = 12, T = 14, B = 34, H = 230;
+  const pw = W - L - R, ph = H - T - B;
+  const x = t => L + (t / cur.total) * pw;
+  const y = v => T + ph - (v / 100) * ph;
+  // velocity refs
+  [[100, "100"], [75, "75"], [40, "40"]].forEach(([v, lab]) => {
+    el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "ref" }, svg);
+    el("text", { x: L - 6, y: y(v) + 3, "text-anchor": "end" }, svg, lab);
+  });
+  el("line", { x1: L, x2: W - R, y1: y(0), y2: y(0), class: "grid-major" }, svg);
+  // beat grid: 1/16 = 200 ticks
+  const step = cur.total <= 200 ? 50 : cur.total <= 400 ? 100 : 200;
+  for (let t = 0; t <= cur.total; t += step) {
+    const major = t % TICKS_PER_BEAT === 0;
+    el("line", { x1: x(t), x2: x(t), y1: T, y2: y(0), class: major ? "grid-major" : "grid-minor" }, svg);
+    if (t % (step * (cur.total > 1600 ? 2 : 1)) === 0) el("text", { x: x(t), y: H - 16, "text-anchor": t === cur.total ? "end" : t === 0 ? "start" : "middle" }, svg, String(t));
+  }
+  el("text", { x: W - R, y: H - 2, "text-anchor": "end" }, svg, "ticks (800 per beat) · next beat at right edge");
+  el("text", { x: L, y: H - 2 }, svg, "velocity ↑");
+  const bw = Math.max(4, Math.min(16, pw / (cur.hits.length * 2.2)));
+  cur.hits.forEach((h, i) => {
+    const hh = Math.max(2, y(0) - y(h.vel));
+    const cls = "bar" + (!h.plays ? " skip" : "") + (i === activeIdx ? " flash" : "");
+    el("rect", { x: x(h.tick) - bw / 2, y: y(0) - hh, width: bw, height: hh, rx: 2, class: cls, "data-i": i }, svg);
+  });
+  playheadEl = el("line", { x1: L, x2: L, y1: T, y2: y(0), class: "playhead", visibility: "hidden" }, svg);
+}
+
+function drawTable() {
+  const msTick = 60000 / (st.bpm * TICKS_PER_BEAT);
+  const [pl, pr] = panLR(st.pan).map(cube);
+  let html = `<thead><tr><th>Hit</th><th>Tick</th><th>ms</th><th>Velocity</th><th>Gain L</th><th>Gain R</th></tr></thead><tbody>`;
+  cur.hits.forEach((h, i) => {
+    const g = h.plays ? hitGain(h.vel) : 0;
+    html += `<tr class="${h.plays ? "" : "skip"}" data-i="${i}"><td>${i + 1}</td><td>${h.tick}</td><td>${(h.tick * msTick).toFixed(1)}</td><td>${h.vel}</td><td>${dB(g * pl)} dB</td><td>${dB(g * pr)} dB</td></tr>`;
+  });
+  document.getElementById("hits").innerHTML = html + "</tbody>";
+}
+
+function drawChain() {
+  const loud = cur.hits.filter(h => h.plays).reduce((m, h) => Math.max(m, h.vel), 0);
+  const [pl, pr] = panLR(st.pan);
+  const pk = Math.max(cube(pl), cube(pr));
+  const g = hitGain(loud) * pk;
+  const ceil = LIMS[st.lim];
+  const knee = g > 0.6667 * ceil;
+  const terms = [
+    ["0.80", "layer coef"], ["×"], [`${st.lvl}³`, "level"], ["×"], [`${loud}³`, "loudest hit"], ["×"], [`${st.mst}³`, "master"],
+    ["×"], [`${Math.max(pl, pr)}³`, "pan, louder side"], ["="],
+  ];
+  document.getElementById("chain").innerHTML = terms.map(t => t.length === 1 ? `<span class="op">${t[0]}</span>` : `<div class="term"><b>${t[0]}</b><span>${t[1]}</span></div>`).join("")
+    + `<div class="term result"><b>${g.toFixed(3)} · ${dB(g)} dB</b><span>peak for a full-scale sample</span></div>`
+    + `<span class="op">→</span><div class="term"><b>${limited(Math.min(g, 1.5)).toFixed(3)}</b><span>out, ceiling ${limName(st.lim)}</span></div>`
+    + `<span class="op"></span><span class="pill ${knee ? "warn" : "ok"}" style="align-self:center">${knee ? "in soft-clip knee" : "below clip knee"}</span>`;
+}
+
+function drawCurve() {
+  const svg = document.getElementById("curve"); svg.textContent = "";
+  const L = 40, R = 10, T = 10, B = 30, W = 360, H = 200, pw = W - L - R, ph = H - T - B;
+  const x = v => L + v / 100 * pw;
+  const y = d => T + (-d / 60) * ph; // 0 dB top, -60 dB bottom
+  [0, -20, -40, -60].forEach(d => { el("line", { x1: L, x2: W - R, y1: y(d), y2: y(d), class: "ref" }, svg); el("text", { x: L - 6, y: y(d) + 3, "text-anchor": "end" }, svg, (d === 0 ? "0" : "−" + -d) + " dB"); });
+  [0, 25, 50, 75, 100].forEach(v => el("text", { x: x(v), y: H - 12, "text-anchor": v === 0 ? "start" : v === 100 ? "end" : "middle" }, svg, String(v)));
+  let d = "";
+  for (let v = 10; v <= 100; v++) { const db = 60 * Math.log10(v / 100); d += (d ? "L" : "M") + x(v).toFixed(1) + "," + y(db).toFixed(1); }
+  el("path", { d, class: "ln" }, svg);
+  const dot = (v, cls, lab, below) => {
+    if (v < 10) return;
+    const db = 60 * Math.log10(v / 100);
+    el("circle", { cx: x(v), cy: y(db), r: below ? 7 : 4.5, class: cls }, svg);
+    el("text", below ? { x: x(v) + 10, y: y(db) + 18, "text-anchor": v > 80 ? "end" : "start" } : { x: x(v) - 9, y: y(db) - 9, "text-anchor": "end" }, svg, `${lab} ${v}`);
+  };
+  dot(st.lvl, "dot-l", "LEVEL", true); dot(st.mst, "dot-m", "MASTER", false);
+  el("text", { x: L, y: H - 1 }, svg, "setting →");
+}
+
+/* ---------- Audio ---------- */
+let shaper = null;
+function shapeCurve() {
+  if (!shaper) return;
+  const c = new Float32Array(2049);
+  for (let i = 0; i < c.length; i++) c[i] = limited((i / 1024 - 1) * 1.5);
+  shaper.curve = c;
+}
+let ctx = null, out = null, noise = null, timer = null, playing = false, nextStart = 0, loopIdx = 0, playheadEl = null, raf = 0, scheduled = [];
+function initAudio() {
+  if (ctx) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  shaper = ctx.createWaveShaper();
+  shapeCurve();
+  // The curve covers ±1.5, so scale down going in; the curve itself returns the clipped value.
+  out = ctx.createGain(); out.gain.value = 1 / 1.5;
+  out.connect(shaper); shaper.connect(ctx.destination);
+  noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+  const d = noise.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+}
+function voice(time, gain, snd = st.snd, pan = st.pan) {
+  const [pl, pr] = panLR(pan).map(cube);
+  const merger = ctx.createChannelMerger(2);
+  const gl = ctx.createGain(), gr = ctx.createGain();
+  gl.gain.value = gain * pl; gr.gain.value = gain * pr;
+  gl.connect(merger, 0, 0); gr.connect(merger, 0, 1); merger.connect(out);
+  const bus = ctx.createGain(); bus.connect(gl); bus.connect(gr);
+  const env = (node, peak, dec) => { const g = ctx.createGain(); g.gain.setValueAtTime(peak, time); g.gain.exponentialRampToValueAtTime(0.0001, time + dec); node.connect(g); g.connect(bus); return g; };
+  if (snd === "kick") {
+    const o = ctx.createOscillator(); o.type = "sine";
+    o.frequency.setValueAtTime(150, time); o.frequency.exponentialRampToValueAtTime(45, time + 0.18);
+    env(o, 1, 0.38); o.start(time); o.stop(time + 0.4);
+  } else {
+    const n = ctx.createBufferSource(); n.buffer = noise;
+    const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = snd === "hat" ? 7000 : 1200;
+    n.connect(hp); env(hp, snd === "hat" ? 0.9 : 0.8, snd === "hat" ? 0.06 : 0.16);
+    n.start(time); n.stop(time + 0.2);
+    if (snd === "snare") { const o = ctx.createOscillator(); o.type = "triangle"; o.frequency.value = 190; env(o, 0.6, 0.09); o.start(time); o.stop(time + 0.12); }
+  }
+}
+function schedule() {
+  const sPerTick = 60 / (st.bpm * TICKS_PER_BEAT);
+  const loopLen = cur.total * sPerTick;
+  while (nextStart < ctx.currentTime + 0.25) {
+    cur.hits.forEach((h, i) => {
+      if (!h.plays || h.vel === 0) return;
+      const t = nextStart + h.tick * sPerTick;
+      if (t >= ctx.currentTime - 0.005) { voice(Math.max(t, ctx.currentTime), hitGain(h.vel)); scheduled.push([t, i]); }
+    });
+    nextStart += loopLen;
+  }
+}
+function animate() {
+  if (!playing) return;
+  const now = ctx.currentTime;
+  const due = scheduled.filter(s => s[0] <= now);
+  if (due.length) { flash(due[due.length - 1][1]); scheduled = scheduled.filter(s => s[0] > now); }
+  // Playhead position inside the current loop
+  const sPerTick = 60 / (st.bpm * TICKS_PER_BEAT);
+  const loopLen = cur.total * sPerTick;
+  const base = nextStart - loopLen * Math.ceil((nextStart - now) / loopLen);
+  const frac = Math.min(1, Math.max(0, (now - base) / loopLen));
+  if (playheadEl) {
+    const xx = 40 + frac * (760 - 40 - 12);
+    playheadEl.setAttribute("x1", xx); playheadEl.setAttribute("x2", xx); playheadEl.setAttribute("visibility", "visible");
+  }
+  raf = requestAnimationFrame(animate);
+}
+function flash(i) {
+  document.querySelectorAll("#tl .bar.flash").forEach(b => b.classList.remove("flash"));
+  document.querySelectorAll("#hits tr.now").forEach(r => r.classList.remove("now"));
+  const b = document.querySelector(`#tl .bar[data-i="${i}"]`); if (b) b.classList.add("flash");
+  const r = document.querySelector(`#hits tr[data-i="${i}"]`); if (r) r.classList.add("now");
+}
+function start() {
+  initAudio();
+  if (ctx.state === "suspended") ctx.resume();
+  playing = true; scheduled = [];
+  nextStart = ctx.currentTime + 0.06;
+  schedule();
+  timer = setInterval(schedule, 60);
+  raf = requestAnimationFrame(animate);
+  const b = document.getElementById("play"); b.textContent = "Stop"; b.setAttribute("aria-pressed", "true");
+}
+function stop() {
+  playing = false; clearInterval(timer); cancelAnimationFrame(raf); scheduled = [];
+  const b = document.getElementById("play"); if (!b) return;
+  b.textContent = "Play"; b.setAttribute("aria-pressed", "false");
+  if (playheadEl) playheadEl.setAttribute("visibility", "hidden");
+  document.querySelectorAll("#tl .bar.flash").forEach(x => x.classList.remove("flash"));
+  document.querySelectorAll("#hits tr.now").forEach(r => r.classList.remove("now"));
+}
+function changed() {
+  render();
+  if (playing) { // restart the loop right away with the new pattern
+    scheduled = [];
+    nextStart = ctx.currentTime + 0.05;
+  }
+}
+
+/* ---------- Euclid (port of Euclid.h) and beat editing (port of BeatList.h) ---------- */
+const QNAMES = ["1:64", "1:32", "1:16", "1:8", "1:4", "1:2", "1:1"], QINT = [50, 100, 200, 400, 800, 1600, 3200];
+const BAR = 3200, QUARTER = 800, MAXBEATS = 64;
+const eu = { steps: 8, hits: 3, rot: 0, grid: 2, merge: 0, bars: 2, snd: "hat", bpm: 120, q: 2, beats: [], sel: 0, shift: 0, dropped: 0, msg: "" };
+
+function euclidPattern(steps, hits, rotate) {
+  const out = new Array(steps).fill(false);
+  if (steps < 1 || steps > 32 || hits <= 0) return out;
+  hits = Math.min(hits, steps);
+  // Bjorklund's grouping: A = hits x [1], B = rests x [0]; append one B group to each A group,
+  // leftovers become the new B. Runs at least once (so E(3,4) = x.xx).
+  let A = Array.from({ length: hits }, () => [1]), B = Array.from({ length: steps - hits }, () => [0]);
+  for (let first = true; B.length > 1 || (first && B.length === 1); first = false) {
+    const m = Math.min(A.length, B.length);
+    const nA = [];
+    for (let i = 0; i < m; i++) nA.push(A[i].concat(B[i]));
+    const rest = A.length > m ? A.slice(m) : B.slice(m);
+    A = nA; B = rest;
+  }
+  const p = [].concat(...A, ...B);
+  p.forEach((h, i) => { if (h) out[(i + rotate) % steps] = true; });
+  return out;
+}
+const song = () => eu.bars * BAR;
+const baseBeats = () => { const b = []; for (let k = 0; k < eu.bars; k++) { b.push({ start: k * BAR, base: true, fill: k === 0 ? "WAVE_A" : null }); b.push({ start: k * BAR + 1600, base: true, fill: null }); } return b; };
+function euApply() {
+  const pat = euclidPattern(eu.steps, eu.hits, eu.rot), grid = QINT[eu.grid], S = song();
+  const beats = eu.merge ? baseBeats() : [];
+  let dropped = 0;
+  for (let start = 0; start < S; start += eu.steps * grid) {
+    for (let i = 0; i < eu.steps; i++) {
+      const at = start + i * grid;
+      if (at >= S) break;
+      if (!pat[i] || beats.some(b => b.start === at)) continue;
+      if (beats.length >= MAXBEATS) dropped++; else beats.push({ start: at, base: false, fill: null });
+    }
+  }
+  beats.sort((a, b) => a.start - b.start);
+  eu.beats = beats; eu.dropped = dropped; eu.sel = beats.length ? 0 : -1; eu.shift = 0; eu.msg = "";
+}
+const posText = t => { const r = (t % 200) / 50 | 0; return `${(t / BAR | 0) + 1}.${((t % BAR) / QUARTER | 0) + 1}.${((t % QUARTER) / 200 | 0) + 1}${r ? "+" + r : ""}`; };
+const lenText = d => { const parts = [], bars = d / BAR | 0, beats = (d % BAR) / QUARTER | 0, six = (d % QUARTER) / 200 | 0, r = (d % 200) / 50 | 0;
+  const add = (n, one, many) => { if (n) parts.push(n + " " + (n === 1 ? one : many)); };
+  add(bars, "bar", "bars"); add(beats, "beat", "beats"); add(six, "16th", "16ths"); add(r, "64th", "64ths");
+  return parts.join(" ") || "0"; };
+const offText = d => { const a = Math.abs(d), r = (a % 200) / 50 | 0; return `${d > 0 ? "+" : d < 0 ? "−" : ""}${a / BAR | 0}.${(a % BAR) / QUARTER | 0}.${(a % QUARTER) / 200 | 0}${r ? "+" + r : ""}`; };
+function stepOne(t, fwd, step, S) {
+  if (fwd) { const n = (Math.floor(t / step) + 1) * step; return n < S ? n : 0; }
+  if (t === 0) return Math.floor((S - 1) / step) * step;
+  return t % step ? Math.floor(t / step) * step : t - step;
+}
+function euMove(fwd) {
+  const b = eu.beats[eu.sel]; if (!b) return;
+  const step = QINT[eu.q], S = song();
+  let t = b.start;
+  for (let k = 0; k <= S / step + 1; k++) {
+    t = stepOne(t, fwd, step, S);
+    if (t === b.start) break;
+    if (!eu.beats.some(x => x.start === t)) { b.start = t; eu.beats.sort((x, y) => x.start - y.start); eu.sel = eu.beats.indexOf(b); eu.msg = ""; return; }
+  }
+  eu.msg = "No free position: every grid step is taken.";
+}
+function euShift(fwd) {
+  if (!eu.beats.length) return;
+  const S = song(), d = fwd ? QINT[eu.q] : -QINT[eu.q], b = eu.beats[eu.sel];
+  eu.beats.forEach(x => { x.start = ((x.start + d) % S + S) % S; });
+  eu.beats.sort((x, y) => x.start - y.start);
+  eu.sel = eu.beats.indexOf(b);
+  let s = ((eu.shift + d) % S + S) % S; if (s > S / 2) s -= S; eu.shift = s; eu.msg = "";
+}
+function euInsert() {
+  const S = song(), step = QINT[eu.q];
+  if (eu.beats.length >= MAXBEATS) { eu.msg = "FULL: a bank holds 64 beats."; return; }
+  let target = 0;
+  if (eu.beats.length) {
+    const s = eu.beats[eu.sel].start;
+    const e = eu.sel < eu.beats.length - 1 ? eu.beats[eu.sel + 1].start : eu.beats[0].start + S;
+    let mid = Math.floor((s + Math.floor((e - s) / 2)) / step) * step;
+    if (mid <= s) mid = (Math.floor(s / step) + 1) * step;
+    if (mid >= e) { eu.msg = "No room: the gap after this beat has no free grid step."; return; }
+    target = mid % S;
+  }
+  const nb = { start: target, base: false, fill: null };
+  eu.beats.push(nb); eu.beats.sort((x, y) => x.start - y.start); eu.sel = eu.beats.indexOf(nb); eu.msg = "";
+}
+
+function euRender() {
+  const S = song(), pat = euclidPattern(eu.steps, eu.hits, eu.rot);
+  document.getElementById("eu-steps-v").textContent = eu.steps;
+  document.getElementById("eu-hits-v").textContent = eu.hits;
+  document.getElementById("eu-rot-v").textContent = eu.rot;
+  document.getElementById("eu-bpm-v").textContent = eu.bpm + " BPM";
+  const hits = document.getElementById("eu-hits"); hits.max = eu.steps; hits.value = eu.hits;
+  const rot = document.getElementById("eu-rot"); rot.max = Math.max(0, eu.steps - 1); rot.value = eu.rot;
+  syncSeg("eu-grid", eu.grid); syncSeg("eu-mode", eu.merge); syncSeg("eu-q", eu.q);
+  document.getElementById("eu-cells").innerHTML = pat.map(h => `<span class="${h ? "on" : ""}"></span>`).join("");
+  const cyc = eu.steps * QINT[eu.grid];
+  document.getElementById("eu-note").textContent = `E(${eu.hits},${eu.steps}) · one cycle = ${lenText(cyc)} · ${eu.beats.length} beats in ${eu.bars} bar${eu.bars > 1 ? "s" : ""}`;
+
+  // Device: the EUCLID page (lcd_drawEuclidMenu / lcd_drawEuclidOverview)
+  const t = (h, v) => `<div class="tab"><span class="h">${h}</span><span class="v">${v}</span><span class="g">&nbsp;</span></div>`;
+  const line5 = eu.dropped ? `FULL: ${eu.dropped} HITS NOT ADDED` : `${eu.beats.length} BEATS  CLEAR: UNDO`;
+  const ov = `E(${eu.hits},${eu.steps}) ROT ${eu.rot}  ${eu.merge ? "MERGE" : "REPLACE"}\n\n${pat.map(h => h ? "x" : ".").join("")}\n\n${line5}`;
+  document.getElementById("eu-device").innerHTML = t("STEPS", eu.steps) + t("HITS", eu.hits) + `<div class="ov">${ov}</div>` +
+    t("ROTATE", eu.rot) + t("GRID", QNAMES[eu.grid]) + t("MODE", eu.merge ? "MERGE" : "REPLACE") + `<div class="tab empty"></div>`;
+
+  // Song page bottom row: TIMING, VELOCITY, MOVE, SHIFT ALL
+  const b = eu.beats[eu.sel];
+  const cells = [["Timing", "—"], ["Velocity", "—"], ["Move", b ? posText(b.start) : "—"], ["Shift all", eu.beats.length ? offText(eu.shift) : "—"]];
+  document.getElementById("eu-lcd").innerHTML = cells.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
+  document.getElementById("eu-msg").textContent = eu.msg;
+  ["eu-mv-l", "eu-mv-r", "eu-sh-l", "eu-sh-r"].forEach(id => { document.getElementById(id).disabled = !b; });
+  euLane();
+}
+let euPlayhead = null;
+function euLane(flashIdx) {
+  const svg = document.getElementById("eu-lane"); svg.textContent = "";
+  const S = song(), W = 760, L = 10, R = 10, T = 18, H = 120, laneH = 56, pw = W - L - R;
+  const x = v => L + v / S * pw;
+  for (let v = 0; v <= S; v += 200) {
+    const major = v % BAR === 0, beat = v % QUARTER === 0;
+    el("line", { x1: x(v), x2: x(v), y1: T, y2: T + laneH, class: major ? "grid-major" : beat ? "ref" : "grid-minor" }, svg);
+    if (major && v < S) el("text", { x: x(v) + 3, y: T - 6 }, svg, "bar " + (v / BAR + 1));
+  }
+  eu.beats.forEach((b, i) => {
+    const end = i < eu.beats.length - 1 ? eu.beats[i + 1].start : S;
+    if (b.fill) el("rect", { x: x(b.start), y: T + 8, width: Math.max(2, x(end) - x(b.start) - 2), height: laneH - 16, rx: 2, class: "span" + (b.base ? " base" : "") }, svg);
+    const r = el("rect", { x: x(b.start) - 1, y: T + 4, width: 5, height: laneH - 8, rx: 1.5, class: "beat" + (b.base ? " base" : "") + (i === eu.sel ? " sel" : "") + (i === flashIdx ? " flash" : ""), tabindex: 0, role: "button", "aria-label": "Beat at " + posText(b.start) }, svg);
+    const pick = () => { eu.sel = i; eu.msg = ""; euRender(); };
+    r.addEventListener("click", pick);
+    r.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); } });
+  });
+  el("text", { x: L, y: H - 26 }, svg, "orange = Euclid hits · grey = beats from before · blue = selected · shaded = beat with a fill");
+  el("text", { x: L, y: H - 10 }, svg, "800 ticks per beat, 3200 per bar");
+  euPlayhead = el("line", { x1: L, x2: L, y1: T, y2: T + laneH, class: "playhead", visibility: "hidden" }, svg);
+}
+
+let euTimer = null, euRaf = 0, euPlaying = false, euNext = 0, euSched = [];
+function euSchedule() {
+  const sPerTick = 60 / (eu.bpm * QUARTER), loopLen = song() * sPerTick;
+  while (euNext < ctx.currentTime + 0.25) {
+    eu.beats.forEach((b, i) => {
+      const t = euNext + b.start * sPerTick;
+      if (t >= ctx.currentTime - 0.005) { voice(Math.max(t, ctx.currentTime), b.base ? 0.35 : 0.5, b.base ? "kick" : eu.snd, 20); euSched.push([t, i]); }
+    });
+    euNext += loopLen;
+  }
+}
+function euAnimate() {
+  if (!euPlaying) return;
+  const now = ctx.currentTime;
+  const due = euSched.filter(s => s[0] <= now);
+  if (due.length) { euSched = euSched.filter(s => s[0] > now); euLane(due[due.length - 1][1]); }
+  const loopLen = song() * 60 / (eu.bpm * QUARTER);
+  const base = euNext - loopLen * Math.ceil((euNext - now) / loopLen);
+  const frac = Math.min(1, Math.max(0, (now - base) / loopLen));
+  if (euPlayhead) { const xx = 10 + frac * 740; euPlayhead.setAttribute("x1", xx); euPlayhead.setAttribute("x2", xx); euPlayhead.setAttribute("visibility", "visible"); }
+  euRaf = requestAnimationFrame(euAnimate);
+}
+function euStart() {
+  initAudio(); if (ctx.state === "suspended") ctx.resume();
+  euPlaying = true; euSched = []; euNext = ctx.currentTime + 0.06;
+  euSchedule(); euTimer = setInterval(euSchedule, 60); euRaf = requestAnimationFrame(euAnimate);
+  const b = document.getElementById("eu-play"); b.textContent = "Stop"; b.setAttribute("aria-pressed", "true");
+}
+function euStop() {
+  euPlaying = false; clearInterval(euTimer); cancelAnimationFrame(euRaf); euSched = [];
+  const b = document.getElementById("eu-play"); if (!b) return;
+  b.textContent = "Play"; b.setAttribute("aria-pressed", "false");
+  if (euPlayhead) euPlayhead.setAttribute("visibility", "hidden");
+}
+function euChanged(regen) {
+  if (regen) euApply();
+  euRender();
+  if (euPlaying) { euSched = []; euNext = ctx.currentTime + 0.05; }
+}
+function euSetup() {
+  const segBtns = (id, labels, onPick) => {
+    const g = document.getElementById(id);
+    labels.forEach((lab, i) => { const b = document.createElement("button"); b.textContent = lab; b.id = id + "-" + i; b.addEventListener("click", () => onPick(i)); g.appendChild(b); });
+  };
+  segBtns("eu-grid", QNAMES, i => { eu.grid = i; euChanged(true); });
+  segBtns("eu-mode", ["Replace", "Merge"], i => { eu.merge = i; euChanged(true); });
+  segBtns("eu-q", QNAMES, i => { eu.q = i; euChanged(false); });
+  document.getElementById("eu-steps").addEventListener("input", e => { eu.steps = +e.target.value; eu.hits = Math.min(eu.hits, eu.steps); if (eu.rot >= eu.steps) eu.rot = 0; euChanged(true); });
+  document.getElementById("eu-hits").addEventListener("input", e => { eu.hits = +e.target.value; euChanged(true); });
+  document.getElementById("eu-rot").addEventListener("input", e => { eu.rot = +e.target.value; euChanged(true); });
+  document.getElementById("eu-bars").addEventListener("change", e => { eu.bars = +e.target.value; euChanged(true); });
+  document.getElementById("eu-snd").addEventListener("change", e => { eu.snd = e.target.value; });
+  document.getElementById("eu-bpm").addEventListener("input", e => { eu.bpm = +e.target.value; euRender(); });
+  document.getElementById("eu-play").addEventListener("click", () => euPlaying ? euStop() : euStart());
+  document.getElementById("eu-mv-l").addEventListener("click", () => { euMove(false); euChanged(false); });
+  document.getElementById("eu-mv-r").addEventListener("click", () => { euMove(true); euChanged(false); });
+  document.getElementById("eu-sh-l").addEventListener("click", () => { euShift(false); euChanged(false); });
+  document.getElementById("eu-sh-r").addEventListener("click", () => { euShift(true); euChanged(false); });
+  document.getElementById("eu-ins").addEventListener("click", () => { euInsert(); euChanged(false); });
+  euApply(); euRender();
+}
+
+/* ---------- Releases (kept in step with the firmware, newest first) ---------- */
+const RELEASES = [
+  { v: "V1.10", date: "2026-11-01", status: "GitHub release v1.10 · tested", pub: true,
+    nw: ["EUCLID page: STEPS, HITS, ROTATE, GRID, MODE (REPLACE/MERGE), applied live; CLEAR restores the layer",
+         "Song page beat editing: MOVE past neighbours keeping the fill (position as bar.beat.16th), SHIFT ALL, short ADD inserts a beat",
+         "Layer page keys: tap I or S on its own to step through the current layer's pages (instrument 1 → 2 → 3, song ↔ EUCLID)",
+         "Instrument pages: while playing, a value with an active LFO shows what the last hit used, in yellow",
+         "LIMITER (mixer) now sets the output ceiling, −10 to +0 dB"],
+    fix: ["Recording into a full bank (64 beats) wrote past the beat list; now refused with FULL",
+          "Beat sort skipped the last beat and its fill",
+          "Leaving EUCLID left the layer selected",
+          "Release builds are byte-identical to local builds (sorted link order)"] },
+  { v: "V1.09", date: "2026-11-01", status: "GitHub release v1.09 · tested", pub: true,
+    nw: ["ROUTING page overview in a larger 7x9 font"], fix: [] },
+  { v: "V1.08", date: "2026-11-01", status: "Tested, not published",
+    nw: ["ROUTING overview: long lines are compacted instead of cut"], fix: [] },
+  { v: "V1.07", date: "2026-11-01", status: "Tested, not published",
+    nw: ["ROUTING page laid out like the layer pages, with a chain overview (one line per entry point)", "Modules that nothing feeds have a grey header"], fix: [] },
+  { v: "V1.06", date: "2026-10-31", status: "Tested, not published",
+    nw: ["ROUTING page (press MIXER twice): where EQ, Filter 1/2, Effect 1/2 and the metronome send their output",
+         "Route changes crossfade over 64 samples, no clicks", "Routing saved with kits and songs; files still load on older firmware"], fix: [] },
+  { v: "V1.05", date: "2026-10-31", status: "Tested, not published",
+    nw: ["New routing engine: every source picks where it enters, every module where its output goes (default = the old chain, same sound)",
+         "Layer OUT field on the third instrument page replaces EQ / FILTER / EFFECT / REVERB",
+         "DSP load measurement build (_dsp) for performance work"], fix: [] },
+  { v: "V1.04", date: "2026-10-31", status: "In the repo (Firmware folder) · tested", pub: true,
+    nw: ["One version number in the source; tag-triggered release builds; tests in CI"],
+    fix: ["Buffer overflows in on-screen text and long instrument names", "Dangling text pointers (tempo, MIDI channel)", "Paste with an empty clipboard", "Encoder table read past its end on empty slots"] },
+  { v: "V1.03", date: "2026-10-31", status: "In the repo (Firmware folder)", pub: true,
+    nw: ["First build from this repo's source (command-line build and CI)"], fix: ["Unknown fill types in a song file load as plain beats"] },
+  { v: "V1.02", date: "2026-10-31", status: "In the repo (Firmware folder)", pub: true,
+    nw: ["8 more fill types: ROLL, TECHNO, BREAKS, GARAGE, TRIPLET, EUCLID, RATCHET, FOOTWORK (15 in total)"], fix: [] },
+  { v: "V1.01", date: "Original", status: "In the repo (Firmware folder)", pub: true,
+    nw: ["Randomwaves' original release: 10 layers, 7 fill types, EQ → 2 filters → 2 effects → reverb"], fix: [] },
+];
+function drawReleases() {
+  const li = a => a.length ? `<ul>${a.map(x => `<li>${x}</li>`).join("")}</ul>` : `<span class="muted">—</span>`;
+  document.getElementById("rel").innerHTML = `<thead><tr><th>Version</th><th>Date</th><th>Status</th><th>New</th><th>Fixed</th></tr></thead><tbody>` +
+    RELEASES.map(r => `<tr><td>${r.v}</td><td class="mono">${r.date}</td><td><span class="tag${r.pub ? " pub" : ""}">${r.status}</span></td><td class="new" data-l="New">${li(r.nw)}</td><td data-l="Fixed">${li(r.fix)}</td></tr>`).join("") + `</tbody>`;
+}
+
+/* ---------- Wire up ---------- */
+function setup() {
+  buildPresets(); renderRouting();
+
+  const ty = document.getElementById("type");
+  FILLS.forEach(([name], i) => { const o = document.createElement("option"); o.value = i; o.textContent = (i >= 7 ? "★ " : "") + name; ty.appendChild(o); });
+  ty.value = st.type; fillPatterns();
+  ty.addEventListener("change", () => { st.type = +ty.value; st.pattern = 0; fillPatterns(); changed(); });
+  document.getElementById("pattern").addEventListener("change", e => { st.pattern = +e.target.value; changed(); });
+  seg("time", TIMES, "time", changed);
+  seg("level", LEVELS, "level", changed);
+  seg("span", SPANS.map(s => s[1]), "span", changed);
+  document.getElementById("fillsw").addEventListener("click", () => { st.fill = !st.fill; changed(); });
+  document.getElementById("reroll").addEventListener("click", () => { st.seed++; changed(); });
+  [["lvl", "lvl"], ["mst", "mst"], ["pan", "pan"], ["lim", "lim"], ["bpm", "bpm"]].forEach(([id, key]) => {
+    document.getElementById(id).addEventListener("input", e => { st[key] = +e.target.value; if (key === "lim") shapeCurve(); render(); });
+  });
+  document.getElementById("snd").addEventListener("change", e => { st.snd = e.target.value; });
+  document.getElementById("play").addEventListener("click", () => playing ? stop() : start());
+  euSetup(); drawReleases();
+  route(); render();
+}
+setup();
+</script>

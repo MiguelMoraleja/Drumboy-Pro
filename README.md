@@ -95,6 +95,7 @@ The version lives in one place, `Core/Library/Global/Version.h`. To release:
 1. Bump `FW_VERSION_MINOR` (or `MAJOR`) in `Version.h` and merge it to `main`.
 2. Tag that commit with the same version and push the tag: `git tag v1.04 && git push origin v1.04`. Without a computer, use github.com instead: **Releases → Draft a new release**, type `v1.04` as a new tag on `main`, and publish.
 3. The **Release** workflow checks the tag matches `Version.h`, runs the tests, builds, and publishes `Drumboy_Pro_Fw_01_04.bin` on the repo's Releases page.
+4. Update the app ([`docs/app/drumboy-pro-inside.html`](docs/app/drumboy-pro-inside.html)): add the version to the **Releases** tab (`RELEASES` in the script), update the version in the header and any tab the release changes, and republish it. The app explains how the firmware works (signal path, fills and volume, Euclid and beat editing) and is kept current with every release.
 
 - Bootloader owns flash sector 0 (`0x08000000`–`0x0801FFFF`)
 - Application owns sectors 1–7 (`0x08020000`–`0x080FFFFF`), with the vector table relocated at startup

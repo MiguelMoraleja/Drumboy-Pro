@@ -6655,6 +6655,18 @@ struct LayerPlayData {
     bool tempBeatTimingFlag;
     uint16_t tempBeatTimingCounter;
     uint16_t tempBeatTimingCounterMax;
+
+    // What the last hit actually used (after LFO modulation), for the instrument page. Written
+    // by layer_playBeat(), indexed by LayerShown; shownValid has a bit per value set since play
+    // started.
+    volatile int16_t shownValue[8]                  = {};
+    volatile uint8_t shownValid                     = 0;
+    volatile bool shownChanged                      = false;
+};
+
+// Instrument page values that LFOs modulate (LayerPlayData::shownValue index).
+enum LayerShown : uint8_t {
+    SHOWN_LEVEL, SHOWN_PITCH, SHOWN_DIRECTION, SHOWN_RESOLUTION, SHOWN_START, SHOWN_END, SHOWN_TIMING, SHOWN_PROBABILITY
 };
 
 const uint8_t wavIntro[44]                          = {0x52, 0x49, 0x46, 0x46, 0xAC, 0x58, 0x01, 0x00, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6D, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x44, 0xAC, 0x00, 0x00, 0x88, 0x58, 0x01, 0x00, 0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0x10, 0xB1, 0x02, 0x00};

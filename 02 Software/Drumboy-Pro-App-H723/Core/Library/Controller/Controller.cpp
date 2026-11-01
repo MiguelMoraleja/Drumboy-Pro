@@ -7538,6 +7538,9 @@ void Controller::lcd_update() {
     // Refresh transient copy/paste text feedback.
     lcd_drawCopyPaste();
 
+    // LFO-modulated values on the instrument page.
+    lcd_drawLayerInstLfoValues();
+
     // 4. LIMIT ALERT UPDATE
     // Refresh on-screen limit warning state.
     lcd_drawLimitAlert();
@@ -11655,6 +11658,55 @@ void Controller::lcd_drawLayerInst_GraphData(uint8_t layerNum_) {
     gLayerInstGraphCacheInit[layerNum_] = true;
 }
 
+bool Controller::layerInst_lfoShown(uint8_t layerNum_, LayerShown value_, int16_t& shown_) {
+    /// @brief True while the sequencer plays, the layer's STYLE is on and an active LFO
+    /// modulates this value: shown_ is then set to what the last hit used.
+
+    static const uint8_t Layer::*const kLfoOf[8] = {&Layer::lfoLevel, &Layer::lfoPitch, &Layer::lfoDirection, &Layer::lfoResolution, &Layer::lfoStart, &Layer::lfoEnd, &Layer::lfoTiming, &Layer::lfoProbability};
+    const Layer& layer = layerLibrary[layerNum_];
+    const LayerPlayData& lD = layerPlayData[layerNum_];
+    const uint8_t lfo = layer.*kLfoOf[value_];
+    if (!playActive || !layer.style || (lfo == 0) || !lfoLibrary[lfo - 1].active || !(lD.shownValid & (1u << value_))) return false;
+    shown_ = lD.shownValue[value_];
+    return true;
+}
+
+void Controller::lcd_drawLayerInstLfoValues() {
+    /// @brief Main-loop refresh (at most 20 Hz) of the instrument page values that follow an
+    /// LFO: redraws a field when the last hit used a new value, or when it stops or starts
+    /// following one (e.g. on stop it shows the set value again).
+
+    if ((HAL_GetTick() - lfoValuesDrawTick) < 50) return;
+    lfoValuesDrawTick = HAL_GetTick();
+    if ((selectedLayerNum == -1) || ((menu != LAYER_INST_0_MENU) && (menu != LAYER_INST_1_MENU))) {
+        lfoValuesLive = 0;
+        return;
+    }
+    LayerPlayData& lD = layerPlayData[selectedLayerNum];
+    if (!playActive) lD.shownValid = 0;  // next play starts from the set values
+    const bool changed = lD.shownChanged;
+    lD.shownChanged = false;
+
+    // Page 0 shows level, pitch, direction, resolution; page 1 start, end, timing, probability.
+    const uint8_t first = (menu == LAYER_INST_0_MENU) ? SHOWN_LEVEL : SHOWN_START;
+    uint8_t live = 0;
+    for (uint8_t v = first; v < first + 4; v++) {
+        int16_t value;
+        if (layerInst_lfoShown(selectedLayerNum, static_cast<LayerShown>(v), value)) live |= (1u << v);
+    }
+    const uint8_t redraw = changed ? (live | lfoValuesLive) : (live ^ lfoValuesLive);
+    lfoValuesLive = live;
+    if (!redraw) return;
+    if (redraw & (1u << SHOWN_LEVEL)) lcd_drawLayerInst_LevelData(selectedLayerNum);
+    if (redraw & (1u << SHOWN_PITCH)) lcd_drawLayerInst_PitchData(selectedLayerNum);
+    if (redraw & (1u << SHOWN_DIRECTION)) lcd_drawLayerInst_DirectionData(selectedLayerNum);
+    if (redraw & (1u << SHOWN_RESOLUTION)) lcd_drawLayerInst_ResolutionData(selectedLayerNum);
+    if (redraw & (1u << SHOWN_START)) lcd_drawLayerInst_StartData(selectedLayerNum);
+    if (redraw & (1u << SHOWN_END)) lcd_drawLayerInst_EndData(selectedLayerNum);
+    if (redraw & (1u << SHOWN_TIMING)) lcd_drawLayerInst_TimingData(selectedLayerNum);
+    if (redraw & (1u << SHOWN_PROBABILITY)) lcd_drawLayerInst_ProbabilityData(selectedLayerNum);
+}
+
 void Controller::lcd_drawLayerInst_LevelData(uint8_t layerNum_) {
     /// @brief Draws layer level value and assigned LFO label.
 
@@ -11664,8 +11716,10 @@ void Controller::lcd_drawLayerInst_LevelData(uint8_t layerNum_) {
 
     // 2. LEVEL VALUE DRAW
     // Draw level value text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kNumberDataLibrary[layer.level].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
+    // While playing with an LFO on it, show what the last hit used, in yellow.
+    int16_t value = layer.level;
+    lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_LEVEL, value) ? YELLOW : WHITE);
+    lcd.drawText(kNumberDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
 
     // 3. LFO LABEL DRAW
     // Draw assigned LFO short label.
@@ -11682,8 +11736,10 @@ void Controller::lcd_drawLayerInst_PitchData(uint8_t layerNum_) {
 
     // 2. PITCH VALUE DRAW
     // Draw pitch value text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kLayerPitchDataLibrary[layerLibrary[layerNum_].pitch].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
+    // While playing with an LFO on it, show what the last hit used, in yellow.
+    int16_t value = layerLibrary[layerNum_].pitch;
+    lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_PITCH, value) ? YELLOW : WHITE);
+    lcd.drawText(kLayerPitchDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
 
     // 3. LFO LABEL DRAW
     // Draw assigned LFO short label.
@@ -11700,8 +11756,10 @@ void Controller::lcd_drawLayerInst_DirectionData(uint8_t layerNum_) {
 
     // 2. DIRECTION VALUE DRAW
     // Draw direction value text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kLayerDirectionDataLibrary[layerLibrary[layerNum_].direction].nameLongR, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
+    // While playing with an LFO on it, show what the last hit used, in yellow.
+    int16_t value = layerLibrary[layerNum_].direction;
+    lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_DIRECTION, value) ? YELLOW : WHITE);
+    lcd.drawText(kLayerDirectionDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
 
     // 3. LFO LABEL DRAW
     // Draw assigned LFO short label.
@@ -11718,8 +11776,10 @@ void Controller::lcd_drawLayerInst_ResolutionData(uint8_t layerNum_) {
 
     // 2. RESOLUTION VALUE DRAW
     // Draw resolution value text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kLayerResolutionDataLibrary[layerLibrary[layerNum_].resolution].nameLongR, kMenuDataTextSize, kMenuDataX[7], kMenuDataY[7]);
+    // While playing with an LFO on it, show what the last hit used, in yellow.
+    int16_t value = layerLibrary[layerNum_].resolution;
+    lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_RESOLUTION, value) ? YELLOW : WHITE);
+    lcd.drawText(kLayerResolutionDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[7], kMenuDataY[7]);
 
     // 3. LFO LABEL DRAW
     // Draw assigned LFO short label.
@@ -11736,8 +11796,10 @@ void Controller::lcd_drawLayerInst_StartData(uint8_t layerNum_) {
 
     // 2. START VALUE DRAW
     // Draw start-position value text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kNumberDataLibrary[layer.start].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
+    // While playing with an LFO on it, show what the last hit used, in yellow.
+    int16_t value = layer.start;
+    lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_START, value) ? YELLOW : WHITE);
+    lcd.drawText(kNumberDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
 
     // 3. LFO LABEL DRAW
     // Draw assigned LFO short label.
@@ -11754,8 +11816,10 @@ void Controller::lcd_drawLayerInst_EndData(uint8_t layerNum_) {
 
     // 2. END VALUE DRAW
     // Draw end-position value text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kNumberDataLibrary[layer.end].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
+    // While playing with an LFO on it, show what the last hit used, in yellow.
+    int16_t value = layer.end;
+    lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_END, value) ? YELLOW : WHITE);
+    lcd.drawText(kNumberDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
 
     // 3. LFO LABEL DRAW
     // Draw assigned LFO short label.
@@ -11772,8 +11836,10 @@ void Controller::lcd_drawLayerInst_TimingData(uint8_t layerNum_) {
 
     // 2. TIMING VALUE DRAW
     // Draw timing-offset value text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kNumberDataLibrary[layer.timing].nameLongR, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
+    // While playing with an LFO on it, show what the last hit used, in yellow.
+    int16_t value = layer.timing;
+    lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_TIMING, value) ? YELLOW : WHITE);
+    lcd.drawText(kNumberDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
 
     // 3. LFO LABEL DRAW
     // Draw assigned LFO short label.
@@ -11790,8 +11856,10 @@ void Controller::lcd_drawLayerInst_ProbabilityData(uint8_t layerNum_) {
 
     // 2. PROBABILITY VALUE DRAW
     // Draw probability value text.
-    lcd_setMenuDataState(WHITE);
-    lcd.drawText(kNumberDataLibrary[layer.probability].nameLongR, kMenuDataTextSize, kMenuDataX[7], kMenuDataY[7]);
+    // While playing with an LFO on it, show what the last hit used, in yellow.
+    int16_t value = layer.probability;
+    lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_PROBABILITY, value) ? YELLOW : WHITE);
+    lcd.drawText(kNumberDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[7], kMenuDataY[7]);
 
     // 3. LFO LABEL DRAW
     // Draw assigned LFO short label.
@@ -14077,7 +14145,8 @@ void Controller::mixer_setPan(uint8_t pan_) {
 }
 
 void Controller::mixer_setLimiter(uint8_t limiter_) {
-    /// @brief Sets limiter threshold/index and refreshes dependent UI/global state.
+    /// @brief Sets the output ceiling (-10 to +0 dB, applied in processAudioSend) and refreshes
+    /// dependent UI/global state.
 
     // 1. INPUT VALIDATION
     // Accept only values inside configured limiter range.
@@ -18789,6 +18858,16 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     } else {
                         nTiming = layer.timing;
                     }
+                    // Remember what this hit used, for the instrument page (lcd_drawLayerInstLfoValues).
+                    const int16_t shown[8] = {nLevel, nPitch, nDirection, nResolution, nStart, nEnd, nTiming, nProbability};
+                    for (uint8_t v = 0; v < 8; v++) {
+                        if ((lD.shownValue[v] != shown[v]) || !(lD.shownValid & (1u << v))) {
+                            lD.shownValue[v] = shown[v];
+                            lD.shownChanged = true;
+                        }
+                    }
+                    lD.shownValid = 0xFF;
+
                     if (nTiming == 0) {
                         lD.tempBeatTimingFlag = false;
                         lD.tempBeatTimingCounter = 0;
@@ -22858,6 +22937,12 @@ void Controller::processAudioSend(uint32_t* outputBuffer) {
 
     // 2. FINAL OUTPUT FORMATTING
     // Apply gain/LPF/peak/clipping and write interleaved I2S samples.
+    // LIMITER (mixer, -10 to +0 dB) is the output ceiling: the soft-knee clip is scaled to it.
+    // At +0 dB (the default) the output is exactly what it was before LIMITER did anything.
+    const uint8_t limiter = (mixer.limiter <= kMaxMixerLimiter) ? mixer.limiter : kMaxMixerLimiter;
+    const float ceiling = kMixerLimiterDataLibrary[limiter].data;
+    const float invCeiling = 1.0f / ceiling;
+    const bool limit = (ceiling < 1.0f);
     for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
         float outL = audioSend_L[i];
         float outR = audioSend_R[i];
@@ -22876,9 +22961,14 @@ void Controller::processAudioSend(uint32_t* outputBuffer) {
         if (absAudioMax_L > audioPeak_L) audioPeak_L = absAudioMax_L;
         if (absAudioMax_R > audioPeak_R) audioPeak_R = absAudioMax_R;
 
-        // Apply soft knee clipping to prevent digital distortion
-        outL = softKneeClip(outL);
-        outR = softKneeClip(outR);
+        // Apply soft knee clipping to prevent digital distortion, at the LIMITER ceiling
+        if (limit) {
+            outL = ceiling * softKneeClip(outL * invCeiling);
+            outR = ceiling * softKneeClip(outR * invCeiling);
+        } else {
+            outL = softKneeClip(outL);
+            outR = softKneeClip(outR);
+        }
 
         // Convert float samples to 32-bit integers
         int32_t sampleL = static_cast<int32_t>(outL * INT32_MAX_FLOAT);

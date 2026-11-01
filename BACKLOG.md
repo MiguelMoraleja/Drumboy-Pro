@@ -26,13 +26,13 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 ## Plan
 
-**Sprint 1, V1.10 "Sequencer"** (in progress), one hardware test session after step 5:
-1. Beat-list editing in a hardware-free header with host tests (`BeatList.h`, `test_beatlist`): rebuild, move, rotate, insert. Items 11 and 12 both use it.
-2. [12](#12-free-beat-placement-on-layer-song) Free beat placement.
-3. [11](#11-euclidean-rhythm-page-euclid) EUCLID page.
-4. [1](#1-lfo-modulated-values-dont-move-on-the-display) LFO values on the display.
-5. [8](#8-limiter-setting-does-nothing) LIMITER.
-6. Reproducible release builds (from [10](#10-housekeeping)), before tagging V1.10.
+**Sprint 1, V1.10 "Sequencer"** (built, waiting for the hardware test), one hardware test session after step 5:
+1. ✅ Beat-list editing in a hardware-free header with host tests (`BeatList.h`, `test_beatlist`): rebuild, move, rotate, insert. Items 11 and 12 both use it.
+2. ✅ [12](#12-free-beat-placement-on-layer-song) Free beat placement.
+3. ✅ [11](#11-euclidean-rhythm-page-euclid) EUCLID page.
+4. ✅ [1](#1-lfo-modulated-values-dont-move-on-the-display) LFO values on the display.
+5. ✅ [8](#8-limiter-setting-does-nothing) LIMITER.
+6. ✅ Reproducible release builds (from [10](#10-housekeeping)), before tagging V1.10.
 
 **Sprint 2, "Formats and sound":** [9](#9-songkit-file-format-version) file format version first, then [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones and [13](#13-sample-preview-while-browsing) sample preview (largest risk: SD streaming while playing, larger system preset).
 
@@ -45,6 +45,8 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 ## LFO and instrument
 
 ### 1. LFO-modulated values don't move on the display
+
+**Status: done in V1.10.** While playing, a field with an active LFO (and the layer's STYLE on) shows what the last hit used, in yellow; when stopped it shows the set value again. `layer_playBeat()` stores the values in `LayerPlayData::shownValue`, and `lcd_drawLayerInstLfoValues()` redraws at most 20 times a second. The LFO page playhead is not done.
 
 **What happens.** With an LFO assigned to a layer parameter (level, pitch, start, …), the sound changes, but the field on the instrument page keeps showing the base value.
 
@@ -125,6 +127,8 @@ Carried over from the design document; decide before building:
 
 ### 8. LIMITER setting does nothing
 
+**Status: done in V1.10.** LIMITER is now the output ceiling: the soft-knee clip in `processAudioSend()` is scaled to it. At +0 dB (the default) the output is unchanged.
+
 The mixer's LIMITER (0–10) is saved in the system preset (byte 6), shown and editable, but no audio code reads `mixer.limiter`. The output only has the fixed soft-knee clip (`softKneeClip`, threshold 0.667) in `processAudioSend()`. Either make LIMITER set the clip threshold or a real limiter, or remove the field.
 
 ### 9. Song/kit file format version
@@ -136,7 +140,7 @@ Kit and song files have a signature but no format version. Several items above c
 - **Fill types:** 15 of 16 possible. The type is stored in 4 bits; a 17th type needs item 9.
 - **`ENC_ROUTE_LINEIN_OUT`:** still has encoder handlers but is no longer on the ROUTING page (line-in is set with the mixer's MIXER IN). Remove it or put it back on the page.
 - **Releases:** the Release workflow only runs for tags starting with lowercase `v` (`v1.10`). The `V1.04` release has no build attached for that reason.
-- **Reproducible release builds:** the release file is built by GitHub's runner, whose toolchain libraries differ slightly from a local build (v1.09: 587,980 vs 587,976 bytes; `.data` 124 vs 120 bytes). Pin the toolchain (e.g. a fixed Arm GNU Toolchain download or container image used both locally and in CI) so the file tested on hardware is byte-identical to the published one.
+- ~~**Reproducible release builds**~~ (done in V1.10): the v1.09 release file differed from the local build by 4 bytes of `.data`. Same toolchain packages; the cause was link order, because the Makefile listed sources with `find`, whose order depends on the file system. The lists are now sorted. Rebuilding the v1.09 commit locally gives exactly the file tested on hardware.
 - **Vendor warnings:** two GCC warnings remain in FatFs (`ff.c`), both known false positives. Our code is held at zero (`make WERROR=1` in CI).
 - **Bootloader:** it ignores update files whose name is 32+ characters (FatFs `_MAX_LFN`). `package_firmware.py` enforces ≤ 31.
 - **Upstream:** offer the fixes and the routing work to Randomwaves/Drumboy-Pro as a pull request from the fork.
@@ -146,6 +150,8 @@ Kit and song files have a signature but no format version. Several items above c
 ## Sequencer and samples
 
 ### 11. Euclidean rhythm page (EUCLID)
+
+**Status: done in V1.10** (`Euclid.h`, `test_euclid`, `euclid_*` in `Controller.cpp`). Tap LAYER SONG on its own on the Layer Song page. Fields STEPS, HITS, ROTATE, GRID, MODE; CLEAR restores the layer.
 
 **Today.** The only beat generator is a long ADD press on the Layer Song page, and only when the layer's bank is empty (`layerBeatKeyFlag` is set only when `lastActiveBeatNum == -1`). Each step of the hold runs a fixed preset from `layerSong_generateBeat()`: one beat per bar, two off-beat layouts, then BASIC_4 and BASIC_8 fills on every beat. Nothing is adjustable, and an existing pattern can't be extended. (The EUCLID *fill type* in `Fill.h` is different: it places hits inside one beat, not beats across the bar.)
 
@@ -161,6 +167,8 @@ Kit and song files have a signature but no format version. Several items above c
 **Done when.** E(3,8) and E(5,16) sound right on the device while playing; MERGE keeps the beats and fills already there; CLEAR restores exactly what was there; songs save and load unchanged (the result is ordinary beats, so no file format change).
 
 ### 12. Free beat placement on Layer Song
+
+**Status: done in V1.10** (`BeatList.h`, `test_beatlist`). MOVE on tab 6 (or ADD + LEFT/RIGHT), SHIFT ALL on tab 7, short ADD press inserts. Also fixed: recording into a full bank wrote past the beat list, and the old sort skipped the last beat.
 
 **Today.** SHIFT + LEFT/RIGHT (`layerSong_shiftSelectedBeat()`) moves the selected beat one quantize step, but it stops at the neighbouring beat and resets the fill of the moved beat and of the one before it (`setBeatFill(…, 0, 0, 0, 0)`). There is no way to shift a whole layer, and the only way to add a single beat is live recording (`record()`).
 

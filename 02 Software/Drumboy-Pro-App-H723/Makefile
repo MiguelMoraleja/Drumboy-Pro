@@ -46,9 +46,12 @@ LDFLAGS  = $(ARCH) -TSTM32H723ZGTX_FLASH.ld --specs=nosys.specs --specs=nano.spe
 LDLIBS   = -Wl,--start-group -lc -lm -lstdc++ -lsupc++ -Wl,--end-group
 
 SRC_DIRS = Core FATFS Middlewares Drivers
-C_SRCS   = $(shell find $(SRC_DIRS) -name '*.c' -not -path '*/Templates/*')
-CXX_SRCS = $(shell find $(SRC_DIRS) -name '*.cpp')
-ASM_SRCS = $(shell find $(SRC_DIRS) -name '*.s')
+# Sorted: find lists files in filesystem order, which differs between machines and changes the
+# link order (and with it the binary). Sorting makes the same source give the same file
+# everywhere, so the release built on GitHub is byte-identical to a local build.
+C_SRCS   = $(sort $(shell find $(SRC_DIRS) -name '*.c' -not -path '*/Templates/*'))
+CXX_SRCS = $(sort $(shell find $(SRC_DIRS) -name '*.cpp'))
+ASM_SRCS = $(sort $(shell find $(SRC_DIRS) -name '*.s'))
 OBJS     = $(addprefix $(BUILD)/,$(C_SRCS:.c=.o) $(CXX_SRCS:.cpp=.o) $(ASM_SRCS:.s=.o))
 
 VERSION_FILE = Core/Library/Global/Version.h

@@ -276,6 +276,9 @@ class Controller {
     uint16_t euclidDropped = 0;  // hits that did not fit in the bank
     uint8_t euclidBank = 0;      // song bank euclidSnapshot was taken from
 
+    uint32_t lfoValuesDrawTick = 0;  // last refresh of LFO-modulated values on the instrument page
+    uint8_t lfoValuesLive = 0;       // instrument fields currently showing a modulated value (bit per LayerShown)
+
     /* Input Engine Status --------------------------------------- */
 
     bool keyboardActive;                                                // Gate for processing button presses
@@ -661,6 +664,8 @@ class Controller {
     void lcd_drawLayerInst_SampleData(uint8_t layerNum_);
     void lcd_drawLayerInst_GraphData(uint8_t layerNum_);
     void lcd_drawLayerInst_LevelData(uint8_t layerNum_);
+    bool layerInst_lfoShown(uint8_t layerNum_, LayerShown value_, int16_t& shown_);
+    void lcd_drawLayerInstLfoValues();
     void lcd_drawLayerInst_PitchData(uint8_t layerNum_);
     void lcd_drawLayerInst_DirectionData(uint8_t layerNum_);
     void lcd_drawLayerInst_ResolutionData(uint8_t layerNum_);

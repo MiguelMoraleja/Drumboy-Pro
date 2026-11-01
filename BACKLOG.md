@@ -22,6 +22,7 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 12 | [Free beat placement on Layer Song](#12-free-beat-placement-on-layer-song) | Feature | M |
 | 13 | [Sample preview while browsing](#13-sample-preview-while-browsing) | Feature | L |
 | 14 | [EUCLID: velocity and variance](#14-euclid-velocity-and-variance) | Feature | S–M |
+| 15 | [Song mode: chain the banks](#15-song-mode-chain-the-banks) | Feature | M–L |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -38,6 +39,8 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 **Sprint 2, "Formats and sound":** [14](#14-euclid-velocity-and-variance) part A (accents, no format change) as a quick start, then [9](#9-songkit-file-format-version) file format version, then [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones and [13](#13-sample-preview-while-browsing) sample preview (largest risk: SD streaming while playing, larger system preset).
 
 **Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
+
+**To schedule after sprint 2:** [15](#15-song-mode-chain-the-banks) song mode (needs 9, which sprint 2 delivers).
 
 **Later:** [3](#3-lfos-cant-modulate-filters-or-effects) (needs 9), [6](#6-routing-extra-effect-slots) (needs CPU measurement), the rest of [10](#10-housekeeping) alongside other work.
 
@@ -206,3 +209,17 @@ Kit and song files have a signature but no format version. Several items above c
 - The app's Euclid tab gets the same fields, so the result can be heard before building.
 
 **Done when.** On the device, E(5,8) with 2 accents plays two loud and three ghost hits on every loop; with VELOCITY RANDOM the levels vary per hit but repeat identically each loop and survive save/load; older kits and songs sound the same.
+
+### 15. Song mode: chain the banks
+
+**Today.** Each layer has 5 song banks (`kBankLibrarySize`), and the active bank (`activeSongBank`) is the same for all layers. Holding the SONG key and pressing a pair of layer pads picks a bank (pads 1–2 = bank 1 … 9–10 = bank 5). While playing, `layerSong_triggerBank()` arms the change (`bankShiftFlag`, `targetSongBank`) and the sequencer switches at the next loop end; when stopped it switches at once (`layerSong_selectBank()`). Nothing plays the banks in sequence: every change is by hand.
+
+**Proposal.**
+- **Chain:** a list of up to 16 steps, each a bank and a repeat count (1–16 loops), for example `1×4, 2×2, 1×4, 3×1`. Optionally an END step that stops, or the chain loops.
+- **Playback:** with chain play on, count loops at the loop end (where `bankShiftFlag` is handled today) and, when a step's repeats are done, switch to the next step's bank exactly like a manual trigger. A manual bank press while the chain plays either jumps the chain to that bank's first step or pauses the chain (decide on the device).
+- **Page:** a SONG page (e.g. tap the SONG key, the same tap pattern as I and S) with the chain as a list: STEP, BANK, REPEATS, plus INSERT/DELETE step and CHAIN ON/OFF. The top-right area shows the chain with the current step and the repeats left; the bank tabs keep showing the active bank.
+- **Transport and sync:** RESET goes back to step 1; STOP keeps the position (or resets, decide). With external sync, follow the incoming clock; loop ends are already counted by the sequencer, so nothing new is needed for sync.
+- **Files:** the chain is saved with the song (about 33 bytes: count + 16 × bank/repeats). Needs [9](#9-songkit-file-format-version) so older firmware ignores it and older songs load with chain play off.
+- Put the chain stepping (count, advance, END, jump) in a hardware-free header with host tests.
+
+**Done when.** A chain such as `1×4, 2×2, 3×1` plays back by itself with bank changes exactly on loop ends, survives save/load, RESET restarts it, manual bank presses behave as decided, and songs without a chain play as before.

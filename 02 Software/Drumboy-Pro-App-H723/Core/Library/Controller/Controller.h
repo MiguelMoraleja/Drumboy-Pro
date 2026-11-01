@@ -4,6 +4,8 @@
 #include <cctype>
 
 #include "Dac.h"
+#include "BeatList.h"
+#include "Euclid.h"
 #include "Global.h"
 #include "Lcd.h"
 #include "fatfs.h"
@@ -239,7 +241,7 @@ class Controller {
 
     /* Ui & Notification Flags ----------------------------------- */
 
-    bool textCopyFlag, textPasteFlag, textClearFlag, textArmedFlag;
+    bool textCopyFlag, textPasteFlag, textClearFlag, textArmedFlag, textFullFlag;
     bool limitAlertShowFlag, limitAlertClearFlag, limitAlertActive;
     bool limitLayerFlag[kLayerLibrarySize];
 
@@ -259,6 +261,23 @@ class Controller {
     bool transitionShowEncoder[kEncoderSize], transitionClearEncoder[kEncoderSize];
 
     uint8_t layerBeatKeyStage;                                        
+    bool layerSongAddArmed;  // ADD pressed on Layer Song: a short press inserts a beat
+    bool layerSongAddUsed;   // another key or encoder was used while ADD was held
+    int32_t layerSongShift;  // net SHIFT ALL since the page was opened, in intervals
+    bool layerModKeyUsed;    // a layer pad was pressed while L, I or S was held (so its release is not a tap)
+
+    // EUCLID page (settings kept while powered; the layer's beats from before are in euclidSnapshot)
+    uint8_t euclidSteps = 16;
+    uint8_t euclidHits = 4;
+    uint8_t euclidRotate = 0;
+    uint8_t euclidGrid = kInitialQuantize;  // index into kQuantizeInterval
+    bool euclidMerge = false;
+    bool euclidApplied = false;  // the layer holds a pattern; CLEAR restores euclidSnapshot
+    uint16_t euclidDropped = 0;  // hits that did not fit in the bank
+    uint8_t euclidBank = 0;      // song bank euclidSnapshot was taken from
+
+    uint32_t lfoValuesDrawTick = 0;  // last refresh of LFO-modulated values on the instrument page
+    uint8_t lfoValuesLive = 0;       // instrument fields currently showing a modulated value (bit per LayerShown)
 
     /* Input Engine Status --------------------------------------- */
 
@@ -645,6 +664,8 @@ class Controller {
     void lcd_drawLayerInst_SampleData(uint8_t layerNum_);
     void lcd_drawLayerInst_GraphData(uint8_t layerNum_);
     void lcd_drawLayerInst_LevelData(uint8_t layerNum_);
+    bool layerInst_lfoShown(uint8_t layerNum_, LayerShown value_, int16_t& shown_);
+    void lcd_drawLayerInstLfoValues();
     void lcd_drawLayerInst_PitchData(uint8_t layerNum_);
     void lcd_drawLayerInst_DirectionData(uint8_t layerNum_);
     void lcd_drawLayerInst_ResolutionData(uint8_t layerNum_);
@@ -660,6 +681,8 @@ class Controller {
     void lcd_drawLayerSong_BeatFillTimeData(uint8_t layerNum_);
     void lcd_drawLayerSong_BeatFillLevelData(uint8_t layerNum_);
     void lcd_drawLayerSong_BeatFillGraphData(uint8_t layerNum_);
+    void lcd_drawLayerSong_PositionData(uint8_t layerNum_);
+    void lcd_drawLayerSong_ShiftData(uint8_t layerNum_);
     // Layer tab functions
     void lcd_drawLayerTab(uint8_t layerNum_);
     void lcd_drawLayerBox(uint8_t layerNum_);
@@ -982,6 +1005,14 @@ class Controller {
     void layerInst_setOut(uint8_t layerNum_, uint8_t out_);
 
     void routing_select();
+    void euclid_select();
+    bool layerPageMenu() const;
+    void euclid_apply();
+    void euclid_clear();
+    void euclid_step(EncoderFunc function_, bool up_);
+    void lcd_drawEuclidMenu();
+    void lcd_drawEuclid_Data();
+    void lcd_drawEuclidOverview();
     void lcd_drawRoutingMenu();
     void lcd_drawRouting_Data(uint8_t route_);
     void lcd_drawRoutingState();
@@ -1018,11 +1049,14 @@ class Controller {
     void layerSong_setSelectedBeatFillLevel(uint8_t fillLevel_);
     void layerSong_generateBeat(uint8_t type);
     void layerSong_shiftSelectedBeat(bool direction_);
+    void layerSong_shiftAll(bool forward_);
+    void layerSong_insertBeat();
+    void layerSong_commitBank(int16_t selectedBeatNum_);
     void layerSong_resetSelectedBeat();
     void layerSong_resetBeats(uint8_t layerNum_, uint8_t bankNum_, uint16_t startInterval_);
     void layerSong_resetAllBeats(uint8_t layerNum_, uint8_t bankNum_);
     void layerSong_quantizeActiveBeats(uint8_t layerNum_, uint8_t bankNum_);
-    void layerSong_arrangeActiveBeats(uint8_t layerNum_, uint8_t bankNum_, bool duplicate_, bool collect_, bool sort_, bool lastFill_);
+    void layerSong_arrangeActiveBeats(uint8_t layerNum_, uint8_t bankNum_);
     void layerSong_calculateLastActiveBeatNum(uint8_t layerNum_, uint8_t bankNum_);
     void layerSong_calculatePlayBeatNum(uint8_t layerNum_, uint8_t bankNum_, uint16_t playInterval_);
     void layerSong_calculateBeatFill(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatNum_, uint8_t fillType_, uint8_t fillPattern, uint8_t fillTime_, uint8_t fillLevel_);

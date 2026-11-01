@@ -898,6 +898,8 @@ const char kHeaderTemp[]                            = "TEMP      ";
 const char kHeaderTempo[]                           = "TEMPO     ";
 const char kHeaderTime[]                            = "TIME      ";
 const char kHeaderType[]                            = "TYPE      ";
+const char kHeaderMove[]                            = "MOVE      ";
+const char kHeaderShiftAll[]                        = "SHIFT ALL ";
 const char kHeaderVelocity[]                        = "VELOCITY  ";
 const char kHeaderVolume[]                          = "VOLUME    ";
 const char kHeaderWet[]                             = "WET       ";
@@ -1205,6 +1207,15 @@ typedef enum {
     ENC_ROUTE_METRO_OUT                             = 0x67,
     ENC_ROUTE_LINEIN_OUT                            = 0x68,
 
+    ENC_SONG_MOVE                                   = 0x69,  // move the selected beat (Layer Song tab 6)
+    ENC_SONG_SHIFT                                  = 0x6A,  // shift the whole layer (Layer Song tab 7)
+
+    ENC_EUC_STEPS                                   = 0x6B,
+    ENC_EUC_HITS                                    = 0x6C,
+    ENC_EUC_ROTATE                                  = 0x6D,
+    ENC_EUC_GRID                                    = 0x6E,
+    ENC_EUC_MODE                                    = 0x6F,
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1246,12 +1257,16 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // LAYER_INST_2_MENU = 0x11
     {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // LAYER_SONG_MENU = 0x12
-    {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_FNC_NONE, ENC_FNC_NONE},
+    // Tabs 2-3 hold the fill graph.
+    {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_SONG_MOVE, ENC_SONG_SHIFT},
     // TEST_MENU = 0x13
     {ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // ROUTING_MENU = 0x14
     // Tabs 2-3 show the chain overview; line-in is set on the mixer page (MIXER IN).
-    {ENC_ROUTE_EQ_OUT, ENC_ROUTE_F1_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_ROUTE_F2_OUT, ENC_ROUTE_FX1_OUT, ENC_ROUTE_FX2_OUT, ENC_ROUTE_METRO_OUT}};
+    {ENC_ROUTE_EQ_OUT, ENC_ROUTE_F1_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_ROUTE_F2_OUT, ENC_ROUTE_FX1_OUT, ENC_ROUTE_FX2_OUT, ENC_ROUTE_METRO_OUT},
+    // EUCLID_MENU = 0x15
+    // Tabs 2-3 show the pattern.
+    {ENC_EUC_STEPS, ENC_EUC_HITS, ENC_FNC_NONE, ENC_FNC_NONE, ENC_EUC_ROTATE, ENC_EUC_GRID, ENC_EUC_MODE, ENC_FNC_NONE}};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1385,7 +1400,16 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_ROUTE_FX1_OUT,       ENC_RES_S, "EFFECT-1  ", "ROUTE ", "OUT", false},
     {ENC_ROUTE_FX2_OUT,       ENC_RES_S, "EFFECT-2  ", "ROUTE ", "OUT", false},
     {ENC_ROUTE_METRO_OUT,     ENC_RES_S, "METRONOME ", "ROUTE ", "OUT", false},
-    {ENC_ROUTE_LINEIN_OUT,    ENC_RES_S, "LINE-IN   ", "ROUTE ", "OUT", false}
+    {ENC_ROUTE_LINEIN_OUT,    ENC_RES_S, "LINE-IN   ", "ROUTE ", "OUT", false},
+
+    {ENC_SONG_MOVE,           ENC_RES_M, "MOVE      ", "SONG  ", "   ", false},
+    {ENC_SONG_SHIFT,          ENC_RES_M, "SHIFT ALL ", "SONG  ", "   ", false},
+
+    {ENC_EUC_STEPS,           ENC_RES_M, "STEPS     ", "EUCLID", "   ", false},
+    {ENC_EUC_HITS,            ENC_RES_M, "HITS      ", "EUCLID", "   ", false},
+    {ENC_EUC_ROTATE,          ENC_RES_M, "ROTATE    ", "EUCLID", "   ", false},
+    {ENC_EUC_GRID,            ENC_RES_M, "GRID      ", "EUCLID", "   ", false},
+    {ENC_EUC_MODE,            ENC_RES_M, "MODE      ", "EUCLID", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -1510,7 +1534,8 @@ typedef enum {
     LAYER_INST_2_MENU                               = 0x11,
     LAYER_SONG_MENU                                 = 0x12,
     TEST_MENU                                       = 0x13,
-    ROUTING_MENU                                    = 0x14   // MIXER pressed again
+    ROUTING_MENU                                    = 0x14,  // MIXER pressed again
+    EUCLID_MENU                                     = 0x15   // LAYER SONG tapped on the Layer Song page
 } Menu;
 
 typedef enum {
@@ -6630,6 +6655,18 @@ struct LayerPlayData {
     bool tempBeatTimingFlag;
     uint16_t tempBeatTimingCounter;
     uint16_t tempBeatTimingCounterMax;
+
+    // What the last hit actually used (after LFO modulation), for the instrument page. Written
+    // by layer_playBeat(), indexed by LayerShown; shownValid has a bit per value set since play
+    // started.
+    volatile int16_t shownValue[8]                  = {};
+    volatile uint8_t shownValid                     = 0;
+    volatile bool shownChanged                      = false;
+};
+
+// Instrument page values that LFOs modulate (LayerPlayData::shownValue index).
+enum LayerShown : uint8_t {
+    SHOWN_LEVEL, SHOWN_PITCH, SHOWN_DIRECTION, SHOWN_RESOLUTION, SHOWN_START, SHOWN_END, SHOWN_TIMING, SHOWN_PROBABILITY
 };
 
 const uint8_t wavIntro[44]                          = {0x52, 0x49, 0x46, 0x46, 0xAC, 0x58, 0x01, 0x00, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6D, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x44, 0xAC, 0x00, 0x00, 0x88, 0x58, 0x01, 0x00, 0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0x10, 0xB1, 0x02, 0x00};

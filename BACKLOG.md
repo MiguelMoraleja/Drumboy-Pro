@@ -21,6 +21,7 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 11 | [Euclidean rhythm page (EUCLID)](#11-euclidean-rhythm-page-euclid) | Feature | M |
 | 12 | [Free beat placement on Layer Song](#12-free-beat-placement-on-layer-song) | Feature | M |
 | 13 | [Sample preview while browsing](#13-sample-preview-while-browsing) | Feature | L |
+| 14 | [EUCLID: velocity and variance](#14-euclid-velocity-and-variance) | Feature | S–M |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -34,7 +35,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 5. ✅ [8](#8-limiter-setting-does-nothing) LIMITER.
 6. ✅ Reproducible release builds (from [10](#10-housekeeping)), before tagging V1.10.
 
-**Sprint 2, "Formats and sound":** [9](#9-songkit-file-format-version) file format version first, then [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones and [13](#13-sample-preview-while-browsing) sample preview (largest risk: SD streaming while playing, larger system preset).
+**Sprint 2, "Formats and sound":** [14](#14-euclid-velocity-and-variance) part A (accents, no format change) as a quick start, then [9](#9-songkit-file-format-version) file format version, then [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones and [13](#13-sample-preview-while-browsing) sample preview (largest risk: SD streaming while playing, larger system preset).
 
 **Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
 
@@ -192,3 +193,16 @@ Kit and song files have a signature but no format version. Several items above c
 - Measure with `make PROFILE=1`: one more voice plus SD reads while the sequencer plays. UDR/OVR must stay 0.
 
 **Done when.** Turning through samples plays each one after a short pause, including files longer than 5 s; the keyboard never locks while browsing; the loaded sample is untouched until ADD; the preview setting survives a restart; no I2S errors in the profile build.
+
+### 14. EUCLID: velocity and variance
+
+**Today.** Every hit the EUCLID page makes is a plain beat at full velocity (BASIC / FLAT), so the pattern sounds mechanical. Plain beats have only three velocities: FLAT (100), GHOST (50) and MUTED (0), set by the beat's fill PATTERN; the VELOCITY field (FLAT, STEP, DESCEND, ASCEND, RANDOM) only shapes the micro-hits of a complex fill, not single beats. Variance is possible today only indirectly: an LFO on the layer's LEVEL (RANDOM type for humanising) with STYLE on changes each hit, and since V1.10 the instrument page shows the value used.
+
+**Proposal**, in two parts:
+
+- **A. ACCENTS field (S, no file change).** A second Euclidean pattern over the hits: ACCENTS 0–HITS spreads that many accents evenly over the pattern's hits (and follows ROTATE). Accented hits stay FLAT (100); the others become GHOST (50). Uses the beat states that already exist, so songs load on any firmware. Tab 7 on the EUCLID page is free for it. Example: E(5,8) with 2 accents gives `X.xx.Xx.` (X loud, x ghost).
+- **B. VELOCITY field (M).** Apply the fill VELOCITY modes across the Euclidean hits: FLAT, STEP (100/75 alternating), DESCEND and ASCEND over the cycle, and RANDOM (40–100) for variance; optionally a SPREAD amount (± random per hit, drawn once and stored, so the pattern stays the same on every loop). This needs a velocity per plain beat. The beat's 4-bit level field is unused on plain beats and is already saved and loaded, but the loader resets any level above 4 (`setBeatFill` range check), and older firmware plays all plain beats at FLAT/GHOST anyway. Decide the encoding together with [9](#9-songkit-file-format-version) (file format version), then play plain beats at their stored velocity in the sequencer (`kNumberDataLibrary[...]` multiplier instead of the fixed 100/50/0).
+- Put the accent and velocity distribution in `Euclid.h` with host tests (accent spacing, rotation, RANDOM stored per hit, values stay within 0–100).
+- The app's Euclid tab gets the same fields, so the result can be heard before building.
+
+**Done when.** On the device, E(5,8) with 2 accents plays two loud and three ghost hits on every loop; with VELOCITY RANDOM the levels vary per hit but repeat identically each loop and survive save/load; older kits and songs sound the same.

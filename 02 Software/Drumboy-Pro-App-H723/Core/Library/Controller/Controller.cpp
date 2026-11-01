@@ -20370,8 +20370,9 @@ void Controller::lcd_drawRoutingOverview() {
     /// @brief Draws one line per entry point in the top-right area: the sources entering there and the
     ///        chain they travel, e.g. "L1-3 MT > F1 > F2 > FX1 > FX2 > REV > OUT".
 
-    const uint16_t kX = 497, kY = 32, kLineStep = 8, kAreaX = 493, kAreaY = 30, kAreaW = 325, kAreaH = 60;
-    const uint8_t kChars = 46;  // 325 px / 7 px per character
+    // 7x9 font: 9 px per character and 11 px per line give 36 characters x 5 lines in 325 x 60 px.
+    const uint16_t kX = 494, kY = 32, kLineStep = 11, kAreaX = 493, kAreaY = 30, kAreaW = 325, kAreaH = 60;
+    const uint8_t kChars = 36, kRows = 5;
 
     // 1. SOURCES PER ENTRY POINT
     uint16_t sources[kRouteNodeCount] = {0};
@@ -20381,20 +20382,31 @@ void Controller::lcd_drawRoutingOverview() {
     }
     if (metroOut < kRouteNodeCount) sources[metroOut] |= (1u << kRouteSourceMetro);
     if (mixer.liMixerIn < kRouteNodeCount) sources[mixer.liMixerIn] |= (1u << kRouteSourceLineIn);
+    uint8_t chains = 0;
+    for (uint8_t e = 0; e < kRouteNodeCount; e++)
+        if (sources[e]) chains++;
 
     // 2. DRAW
+    // With more chains than rows, the last row says how many are not shown.
     lcd.setBackColor(BLACK);
     lcd.clearRect(kAreaX, kAreaY, kAreaW, kAreaH);
-    lcd.setFont(FONT_05x07);
+    lcd.setFont(FONT_07x09);
     lcd.setAlignment(LEFT);
     lcd.setForeColor(WHITE);
+    const uint8_t shown = (chains > kRows) ? kRows - 1 : chains;
     uint8_t row = 0;
-    for (uint8_t e = 0; (e < kRouteNodeCount) && (row < 7); e++) {
+    for (uint8_t e = 0; (e < kRouteNodeCount) && (row < shown); e++) {
         if (!sources[e]) continue;
         char line[kChars + 1];
         const uint8_t len = routeOverviewLine(line, sizeof(line), sources[e], e, routePatch);
         lcd.drawText(line, len, kX, kY + row * kLineStep);
         row++;
+    }
+    if (chains > shown) {
+        char more[12];
+        const int len = snprintf(more, sizeof(more), "+%u MORE", (unsigned)(chains - shown));
+        lcd.setForeColor(GRAY_75);
+        if (len > 0) lcd.drawText(more, (uint16_t)len, kX, kY + row * kLineStep);
     }
 }
 

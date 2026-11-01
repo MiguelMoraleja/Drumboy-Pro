@@ -370,6 +370,14 @@ static void testOverview() {
     // screen it drops the spaces around '>' instead of being cut.
     routeOverviewLine(line, 47, 0x3FF | (1u << kRouteSourceLineIn), NODE_EQ, kDefaultRoutePatch);
     CHECK(strcmp(line, "L1-10 LI>EQ>F1>F2>FX1>FX2>REV>OUT") == 0, "default kit line: '%s'", line);
+    // The ROUTING page shows 36 characters (7x9 font): the default line and the worst case,
+    // every source at EQ, both fit once compacted.
+    routeOverviewLine(line, 37, 0x3FF | (1u << kRouteSourceLineIn), NODE_EQ, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L1-10 LI>EQ>F1>F2>FX1>FX2>REV>OUT") == 0, "default kit line at 36: '%s'", line);
+    routeOverviewLine(line, 37, 0x3FF | (1u << kRouteSourceMetro) | (1u << kRouteSourceLineIn), NODE_EQ, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L1-10 MT LI>EQ>F1>F2>FX1>FX2>REV>OUT") == 0, "all sources at EQ: '%s'", line);
+    routeOverviewLine(line, 37, 0x2, NODE_F2, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L2 > F2 > FX1 > FX2 > REV > OUT") == 0, "short line keeps spaces at 36: '%s'", line);
     routeOverviewLine(line, 47, 0x3, NODE_EQ, kDefaultRoutePatch);
     CHECK(strcmp(line, "L1 L2 > EQ > F1 > F2 > FX1 > FX2 > REV > OUT") == 0, "short lines keep spaces: '%s'", line);
     // Truncation keeps the buffer bounded and marks the cut.

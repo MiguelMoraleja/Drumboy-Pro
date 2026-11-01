@@ -898,6 +898,8 @@ const char kHeaderTemp[]                            = "TEMP      ";
 const char kHeaderTempo[]                           = "TEMPO     ";
 const char kHeaderTime[]                            = "TIME      ";
 const char kHeaderType[]                            = "TYPE      ";
+const char kHeaderMove[]                            = "MOVE      ";
+const char kHeaderShiftAll[]                        = "SHIFT ALL ";
 const char kHeaderVelocity[]                        = "VELOCITY  ";
 const char kHeaderVolume[]                          = "VOLUME    ";
 const char kHeaderWet[]                             = "WET       ";
@@ -1205,6 +1207,9 @@ typedef enum {
     ENC_ROUTE_METRO_OUT                             = 0x67,
     ENC_ROUTE_LINEIN_OUT                            = 0x68,
 
+    ENC_SONG_MOVE                                   = 0x69,  // move the selected beat (Layer Song tab 2)
+    ENC_SONG_SHIFT                                  = 0x6A,  // shift the whole layer (Layer Song tab 3)
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1246,7 +1251,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // LAYER_INST_2_MENU = 0x11
     {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // LAYER_SONG_MENU = 0x12
-    {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_FNC_NONE, ENC_FNC_NONE},
+    {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_SONG_MOVE, ENC_SONG_SHIFT, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_FNC_NONE, ENC_FNC_NONE},
     // TEST_MENU = 0x13
     {ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // ROUTING_MENU = 0x14
@@ -1385,7 +1390,10 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_ROUTE_FX1_OUT,       ENC_RES_S, "EFFECT-1  ", "ROUTE ", "OUT", false},
     {ENC_ROUTE_FX2_OUT,       ENC_RES_S, "EFFECT-2  ", "ROUTE ", "OUT", false},
     {ENC_ROUTE_METRO_OUT,     ENC_RES_S, "METRONOME ", "ROUTE ", "OUT", false},
-    {ENC_ROUTE_LINEIN_OUT,    ENC_RES_S, "LINE-IN   ", "ROUTE ", "OUT", false}
+    {ENC_ROUTE_LINEIN_OUT,    ENC_RES_S, "LINE-IN   ", "ROUTE ", "OUT", false},
+
+    {ENC_SONG_MOVE,           ENC_RES_M, "MOVE      ", "SONG  ", "   ", false},
+    {ENC_SONG_SHIFT,          ENC_RES_M, "SHIFT ALL ", "SONG  ", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");

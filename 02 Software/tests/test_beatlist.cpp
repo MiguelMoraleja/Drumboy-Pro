@@ -317,6 +317,21 @@ static void testPosition() {
     CHECK(!strcmp(s, "2.3.4+1"), "%s", s);
     beatListPosition(2400 + 800, 2400, kQuarter, s, sizeof s);  // 3/4
     CHECK(!strcmp(s, "2.2.1"), "%s", s);
+
+    beatListOffset(0, 3200, kQuarter, s, sizeof s);
+    CHECK(!strcmp(s, "0.0.0"), "%s", s);
+    beatListOffset(800 + 400, 3200, kQuarter, s, sizeof s);
+    CHECK(!strcmp(s, "+0.1.2"), "%s", s);
+    beatListOffset(-(3200 + 50), 3200, kQuarter, s, sizeof s);
+    CHECK(!strcmp(s, "-1.0.0+1"), "%s", s);
+    beatListOffset(-51200, 3200, kQuarter, s, sizeof s);
+    CHECK(!strcmp(s, "-16.0.0") && strlen(s) <= 10, "%s fits a 10-char field", s);
+
+    CHECK(beatListWrapShift(200, 3200) == 200, "small shift");
+    CHECK(beatListWrapShift(3000, 3200) == -200, "short way round");
+    CHECK(beatListWrapShift(-3000, 3200) == 200, "short way round, negative");
+    CHECK(beatListWrapShift(3200, 3200) == 0, "full turn");
+    CHECK(beatListWrapShift(1600, 3200) == 1600 && beatListWrapShift(-1600, 3200) == 1600, "half turn is positive");
 }
 
 int main() {

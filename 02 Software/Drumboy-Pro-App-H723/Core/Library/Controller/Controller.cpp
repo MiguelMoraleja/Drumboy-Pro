@@ -132,6 +132,7 @@ Controller::Controller()
       textPasteFlag(false),
       textClearFlag(false),
       textArmedFlag(false),
+      textFullFlag(false),
       limitAlertShowFlag(false),
       limitAlertClearFlag(false),
       limitAlertActive(false),
@@ -149,6 +150,9 @@ Controller::Controller()
       transitionShowEncoder{false},
       transitionClearEncoder{false},
       layerBeatKeyStage(0),
+      layerSongAddArmed(false),
+      layerSongAddUsed(false),
+      layerSongShift(0),
 
       /* --- SECTION 8: INPUT & LED ENGINE STATE ---------------------------- */
 
@@ -1546,6 +1550,7 @@ void Controller::keyboard_action() {
             for (uint8_t layerNum = 0; layerNum < kLayerLibrarySize; layerNum++) {
                 switch (keyboard.keyLayer.changeState[layerNum]) {
                     case KEYSTATE_PRESS:
+                        layerSongAddUsed = true;
                         if (keyboard.muteKeyPress) {
                             layerInst_setMute(layerNum, !layerLibrary[layerNum].mute);
                         } else if (keyboard.fillKeyPress) {
@@ -1598,6 +1603,7 @@ void Controller::keyboard_action() {
             for (uint8_t i = 0; i < 16; i++) {
                 switch (keyboard.keyLeft.changeState[i]) {
                     case KEYSTATE_PRESS:
+                        if (i != KEY_ADD) layerSongAddUsed = true;
                         switch (i) {
                             case KEY_RESET:
                                 if (!alertFlag) {
@@ -2133,6 +2139,11 @@ void Controller::keyboard_action() {
                                             break;
 
                                         case LAYER_SONG_MENU:
+                                            // Released without using another key or encoder, and before the long-press
+                                            // patterns start, ADD inserts a beat (see KEY_ADD release).
+                                            layerSongAddArmed = true;
+                                            layerSongAddUsed = false;
+                                            layerBeatKeyStage = 0;
                                             if (layerLibrary[selectedLayerNum].bankLibrary[activeSongBank].lastActiveBeatNum == -1) {
                                                 layerBeatKeyFlag = true;
                                                 layerBeatKeyStage = 0;
@@ -2330,6 +2341,9 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_ADD:
+                                // Short ADD press on Layer Song: insert one beat after the selected one.
+                                if (layerSongAddArmed && !layerSongAddUsed && (layerBeatKeyStage == 0) && (menu == LAYER_SONG_MENU) && (!alertFlag)) layerSong_insertBeat();
+                                layerSongAddArmed = false;
                                 stopLongKeyTimer();
                                 keyboard.shiftKeyPress = false;
                                 masterUnmuteKeyFlag = false;
@@ -2486,6 +2500,7 @@ void Controller::keyboard_action() {
             for (uint8_t i = 0; i < 16; i++) {
                 switch (keyboard.keyRight.changeState[i]) {
                     case KEYSTATE_PRESS:
+                        layerSongAddUsed = true;
                         switch (i) {
                             case KEY_FILE:
                                 if (!alertFlag) file_select();
@@ -3074,6 +3089,7 @@ void Controller::encoder_action() {
             // 2. ACTION DISPATCH
             // Process only events promoted by encoder_read().
             if (enc.read) {
+                layerSongAddUsed = true;
                 switch (enc.mode) {
                         // --- LOCAL MODE ---
                         // Use menu-bound function mapping.
@@ -3907,6 +3923,14 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             layerSong_menuUp(5);
             break;
 
+        case ENC_SONG_MOVE:
+            layerSong_shiftSelectedBeat(true);
+            break;
+
+        case ENC_SONG_SHIFT:
+            layerSong_shiftAll(true);
+            break;
+
         default:
             break;
     }
@@ -4449,6 +4473,14 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
 
         case ENC_SONG_VELOCITY:
             layerSong_menuDown(5);
+            break;
+
+        case ENC_SONG_MOVE:
+            layerSong_shiftSelectedBeat(false);
+            break;
+
+        case ENC_SONG_SHIFT:
+            layerSong_shiftAll(false);
             break;
 
         default:
@@ -5815,7 +5847,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                         }
 
                         // Normalize/arrange active beat ordering for runtime playback
-                        layerSong_arrangeActiveBeats(i, j, true, true, true, true);
+                        layerSong_arrangeActiveBeats(i, j);
                     }
                 }
                 if (errorCount == 0) phaseCheck[1] = true;
@@ -11744,22 +11776,28 @@ void Controller::lcd_drawLayerSongMenu(uint8_t layerNum_) {
     lcd_setMenuHeaderState(CYAN);
     lcd.drawText(kHeaderType, kMenuHeaderTextSize, kMenuHeaderX[0], kMenuHeaderY[0]);
     lcd.drawText(kHeaderPattern, kMenuHeaderTextSize, kMenuHeaderX[1], kMenuHeaderY[1]);
+    lcd.drawText(kHeaderMove, kMenuHeaderTextSize, kMenuHeaderX[2], kMenuHeaderY[2]);
+    lcd.drawText(kHeaderShiftAll, kMenuHeaderTextSize, kMenuHeaderX[3], kMenuHeaderY[3]);
     lcd.drawText(kHeaderTiming, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
     lcd.drawText(kHeaderVelocity, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
 
     // 4. DATA DRAW
     // Draw beat-fill values and graph.
     lcd_drawLayerSong_BeatFillTypeData(layerNum_);
+    lcd_drawLayerSong_PositionData(layerNum_);
     lcd_drawLayerSong_BeatFillPatternData(layerNum_);
     lcd_drawLayerSong_BeatFillTimeData(layerNum_);
     lcd_drawLayerSong_BeatFillLevelData(layerNum_);
     lcd_drawLayerSong_BeatFillGraphData(layerNum_);
+    lcd_drawLayerSong_ShiftData(layerNum_);
 
     // 5. SIGN DRAW
     // Draw sign placeholders for visible fields.
     lcd_setMenuSignState(CYAN);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[0], kMenuSignBoxY[0]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[1], kMenuSignBoxY[1]);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[2], kMenuSignBoxY[2]);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
 
@@ -11776,6 +11814,37 @@ void Controller::lcd_drawLayerSongMenu(uint8_t layerNum_) {
     // Draw active beat cursor if a beat exists.
     if (layerLibrary[layerNum_].bankLibrary[activeSongBank].lastActiveBeatNum != -1)
         lcd_drawBeat(layerNum_, activeSongBank, 0, true);
+}
+
+void Controller::lcd_drawLayerSong_PositionData(uint8_t layerNum_) {
+    /// @brief Draws the selected beat's position as bar.beat.16th (MOVE field, tab 2).
+
+    const Bank& bank = layerLibrary[layerNum_].bankLibrary[activeSongBank];
+    char text[kMenuDataTextSize + 1];
+    if ((selectedBeatNum != -1) && (selectedBeatNum <= bank.lastActiveBeatNum)) {
+        char position[32];  // room for any interval; trimmed to the field below
+        beatListPosition(bank.beatLibrary[selectedBeatNum].getStartInterval(), barInterval, measureInterval, position, sizeof(position));
+        snprintf(text, sizeof(text), "%10.10s", position);
+    } else {
+        memcpy(text, kDataDashR, sizeof(text));
+    }
+    lcd_setMenuDataState(WHITE);
+    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[2], kMenuDataY[2]);
+}
+
+void Controller::lcd_drawLayerSong_ShiftData(uint8_t layerNum_) {
+    /// @brief Draws the net SHIFT ALL since the page was opened as bars.beats.16ths (tab 3).
+
+    char offset[32];  // room for any shift; trimmed to the field below
+    char text[kMenuDataTextSize + 1];
+    if (layerLibrary[layerNum_].bankLibrary[activeSongBank].lastActiveBeatNum != -1) {
+        beatListOffset(layerSongShift, barInterval, measureInterval, offset, sizeof(offset));
+        snprintf(text, sizeof(text), "%10.10s", offset);
+    } else {
+        memcpy(text, kDataDashR, sizeof(text));
+    }
+    lcd_setMenuDataState(WHITE);
+    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[3], kMenuDataY[3]);
 }
 
 void Controller::lcd_drawLayerSong_BeatFillTypeData(uint8_t layerNum_) {
@@ -12359,6 +12428,14 @@ void Controller::lcd_drawCopyPaste() {
         startTextTimer();
         lcd.setForeColor(CYAN);
         lcd.drawText("PASTE", 5, 170, 112);
+
+        // Bank full: a beat could not be added.
+    } else if (textFullFlag) {
+        textFullFlag = false;
+        textShow = true;
+        startTextTimer();
+        lcd.setForeColor(RED);
+        lcd.drawText("FULL", 4, 170, 112);
 
         // 5. CLEAR NOTIFICATION
         // Clear status text, or restore ARMED if slave arming is still active.
@@ -20591,6 +20668,7 @@ void Controller::layerSong_select(uint8_t layerNum_, uint8_t bankNum_) {
         // Clear previous selection and set current layer/beat defaults.
         preMenuLayerClear();
         selectedLayerNum = layerNum_;
+        layerSongShift = 0;
 
         // Default to first beat when bank has content; otherwise keep no selection.
         (layerLibrary[selectedLayerNum].bankLibrary[bankNum_].lastActiveBeatNum != -1) ? selectedBeatNum = 0 : selectedBeatNum = -1;
@@ -20625,10 +20703,7 @@ void Controller::layerSong_menuRight() {
     // 1. TAB STATE UPDATE
     // Save previous tab and advance with hidden-tab skip.
     preMenuTab = menuTab;
-    if (menuTab < 5)
-        (menuTab == 1) ? menuTab = 4 : menuTab += 1;
-    else
-        menuTab = kMinMenu8Tab;
+    (menuTab < 5) ? menuTab += 1 : menuTab = kMinMenu8Tab;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation.
@@ -20641,10 +20716,7 @@ void Controller::layerSong_menuLeft() {
     // 1. TAB STATE UPDATE
     // Save previous tab and decrement with hidden-tab skip.
     preMenuTab = menuTab;
-    if (menuTab > kMinMenu8Tab)
-        (menuTab == 4) ? menuTab = 1 : menuTab -= 1;
-    else
-        menuTab = 5;
+    (menuTab > kMinMenu8Tab) ? menuTab -= 1 : menuTab = 5;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation.
@@ -20760,6 +20832,7 @@ void Controller::layerSong_beatRight() {
         // 3. UI DATA REFRESH
         // Redraw beat fill parameter widgets for selected beat.
         lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+        lcd_drawLayerSong_PositionData(selectedLayerNum);
         lcd_drawLayerSong_BeatFillPatternData(selectedLayerNum);
         lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
         lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
@@ -20797,6 +20870,7 @@ void Controller::layerSong_beatLeft() {
         // 3. UI DATA REFRESH
         // Redraw beat fill parameter widgets for selected beat.
         lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+        lcd_drawLayerSong_PositionData(selectedLayerNum);
         lcd_drawLayerSong_BeatFillPatternData(selectedLayerNum);
         lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
         lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
@@ -20824,8 +20898,11 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
     Bank& bank = layer.bankLibrary[bankTab_];
 
     // 1. CAPACITY & QUANTIZE PREPARATION
-    // Validate beat capacity and quantize incoming interval.
-    if (bank.lastActiveBeatNum < kBeatLibrarySize) {
+    // Validate beat capacity and quantize incoming interval. A full bank (64 beats) refuses
+    // the beat: inserting used to shift the list one entry past the end of beatLibrary.
+    if (bank.lastActiveBeatNum >= static_cast<int16_t>(kBeatLibrarySize) - 1) {
+        textFullFlag = true;
+    } else {
         uint16_t quantizeInterval = kQuantizeInterval[rhythm.quantize];
 
         // Quantize incoming interval using nearest-grid rounding.
@@ -20908,6 +20985,7 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
                 selectedBeatNum = beatNum;
                 lcd_drawBeat(layerNum_, bankTab_, selectedBeatNum, true);
                 lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+                lcd_drawLayerSong_PositionData(selectedLayerNum);
                 lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
                 lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
                 lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
@@ -20945,6 +21023,7 @@ void Controller::layerSong_setSelectedBeatFill(uint8_t fillType_, uint8_t fillPa
     // 3. UI REFRESH
     // Redraw beat fill widgets and selected beat marker.
     lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+    lcd_drawLayerSong_PositionData(selectedLayerNum);
     lcd_drawLayerSong_BeatFillPatternData(selectedLayerNum);
     lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
     lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
@@ -21061,6 +21140,7 @@ void Controller::layerSong_generateBeat(uint8_t type) {
     // Redraw fill widgets when Layer Song menu is visible.
     if (menu == LAYER_SONG_MENU) {
         lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+        lcd_drawLayerSong_PositionData(selectedLayerNum);
         lcd_drawLayerSong_BeatFillPatternData(selectedLayerNum);
         lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
         lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
@@ -21072,49 +21152,87 @@ void Controller::layerSong_generateBeat(uint8_t type) {
     layerSong_calculatePlayBeatNum(selectedLayerNum, activeSongBank, playInterval);
 }
 
+// Edited copy of the selected layer's bank. Beat-list edits (BeatList.h) are made here and
+// swapped in by layerSong_commitBank() with the sequencer interrupt held off, so playback
+// never sees a half-edited bank.
+static Bank layerSongScratch;
+
 void Controller::layerSong_shiftSelectedBeat(bool direction_) {
-    /// @brief Shifts selected beat start position by one quantize step.
+    /// @brief Moves the selected beat one quantize step, jumping over neighbouring beats and
+    /// wrapping at the song end. The beat keeps its fill (recomputed for its new length).
 
-    uint16_t quantizeInterval = kQuantizeInterval[rhythm.quantize];
-    Layer& layer = layerLibrary[selectedLayerNum];
-    Bank& bank = layer.bankLibrary[activeSongBank];
-    Beat& beat = bank.beatLibrary[selectedBeatNum];
-    uint16_t interval = beat.getStartInterval();
+    if ((selectedLayerNum == -1) || (selectedBeatNum == -1)) return;
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    if (selectedBeatNum > bank.lastActiveBeatNum) return;
+    layerSongScratch = bank;
+    const int16_t beatNum = beatListMove(layerSongScratch, static_cast<uint8_t>(selectedBeatNum), direction_, static_cast<uint16_t>(kQuantizeInterval[rhythm.quantize]), songInterval);
+    if (beatNum != -1) layerSong_commitBank(beatNum);
+}
 
-    // 1. DIRECTIONAL SHIFT APPLY
-    // Shift forward/backward when neighbor and boundary constraints allow.
-    if (direction_) {
-        uint16_t newInterval = interval + quantizeInterval;
-        if (((selectedBeatNum == bank.lastActiveBeatNum) && (newInterval < songInterval)) || ((selectedBeatNum < bank.lastActiveBeatNum) && (newInterval < bank.beatLibrary[selectedBeatNum + 1].getStartInterval()))) {
-            // Extend previous beat
-            if (selectedBeatNum > 0) {
-                bank.beatLibrary[selectedBeatNum - 1].setEndInterval(newInterval);
-                bank.setBeatFill(selectedBeatNum - 1, 0, 0, 0, 0);
-                lcd_drawBeat(selectedLayerNum, activeSongBank, (selectedBeatNum - 1), false);
-            }
+void Controller::layerSong_shiftAll(bool forward_) {
+    /// @brief Shifts every beat of the selected layer one quantize step, wrapping at the song
+    /// end. Fills move with their beats; shifting back restores the layer exactly.
 
-            // Update beat position
-            lcd_clearBeat(selectedLayerNum, activeSongBank, selectedBeatNum);
-            beat.setStartInterval(newInterval);
-            bank.setBeatFill(selectedBeatNum, 0, 0, 0, 0);
-            layerSong_setSelectedBeatFill(0, 0, 0, 0);
-        }
-    } else if (interval >= quantizeInterval) {
-        uint16_t newInterval = interval - quantizeInterval;
-        if (((selectedBeatNum == 0) && (newInterval >= 0)) || ((selectedBeatNum > 0) && (newInterval > bank.beatLibrary[selectedBeatNum - 1].getStartInterval()))) {
-            // Shrink previous beat
-            if (selectedBeatNum > 0) {
-                bank.beatLibrary[selectedBeatNum - 1].setEndInterval(newInterval);
-                bank.setBeatFill(selectedBeatNum - 1, 0, 0, 0, 0);
-                lcd_drawBeat(selectedLayerNum, activeSongBank, (selectedBeatNum - 1), false);
-            }
+    if (selectedLayerNum == -1) return;
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    if (bank.lastActiveBeatNum == -1) return;
+    const int32_t step = static_cast<int32_t>(kQuantizeInterval[rhythm.quantize]);
+    const int32_t delta = forward_ ? step : -step;
+    const int32_t selectedStart = ((selectedBeatNum != -1) && (selectedBeatNum <= bank.lastActiveBeatNum)) ? bank.beatLibrary[selectedBeatNum].getStartInterval() : -1;
+    layerSongScratch = bank;
+    beatListRotate(layerSongScratch, delta, songInterval);
+    layerSongShift = beatListWrapShift(layerSongShift + delta, songInterval);
+    int16_t beatNum = 0;
+    if (selectedStart != -1) {
+        const int32_t moved = ((selectedStart + delta) % songInterval + songInterval) % songInterval;
+        beatNum = beatListFind(layerSongScratch, static_cast<uint16_t>(moved));
+    }
+    layerSong_commitBank(beatNum);
+}
 
-            // Update beat position
-            lcd_clearBeat(selectedLayerNum, activeSongBank, selectedBeatNum);
-            beat.setStartInterval(newInterval);
-            bank.setBeatFill(selectedBeatNum, 0, 0, 0, 0);
-            layerSong_setSelectedBeatFill(0, 0, 0, 0);
-        }
+void Controller::layerSong_insertBeat() {
+    /// @brief Inserts a plain beat on the quantize grid in the middle of the gap after the
+    /// selected beat (at the song start in an empty bank) and selects it.
+
+    if (selectedLayerNum == -1) return;
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    const int16_t after = (bank.lastActiveBeatNum == -1) ? -1 : selectedBeatNum;
+    layerSongScratch = bank;
+    const int16_t beatNum = beatListInsertAfter(layerSongScratch, after, static_cast<uint16_t>(kQuantizeInterval[rhythm.quantize]), songInterval);
+    if (beatNum == -1) {
+        if (bank.lastActiveBeatNum >= static_cast<int16_t>(kBeatLibrarySize) - 1) textFullFlag = true;
+        return;
+    }
+    layerSong_commitBank(beatNum);
+}
+
+void Controller::layerSong_commitBank(int16_t selectedBeatNum_) {
+    /// @brief Swaps layerSongScratch into the selected layer's active bank, recomputes the play
+    /// position, selects selectedBeatNum_ and redraws the lane and the Layer Song fields.
+
+    Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    __disable_irq();
+    bank = layerSongScratch;
+    layerSong_calculatePlayBeatNum(selectedLayerNum, activeSongBank, playInterval);
+    __enable_irq();
+
+    if (bank.lastActiveBeatNum == -1) {
+        selectedBeatNum = -1;
+    } else if ((selectedBeatNum_ < 0) || (selectedBeatNum_ > bank.lastActiveBeatNum)) {
+        selectedBeatNum = 0;
+    } else {
+        selectedBeatNum = static_cast<int8_t>(selectedBeatNum_);
+    }
+
+    lcd_drawSong(selectedLayerNum, activeSongBank);
+    if (menu == LAYER_SONG_MENU) {
+        lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+        lcd_drawLayerSong_PositionData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillPatternData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
+        lcd_drawLayerSong_ShiftData(selectedLayerNum);
     }
 }
 
@@ -21143,7 +21261,7 @@ void Controller::layerSong_resetSelectedBeat() {
             // Clear target beat, reset slot, and compact active list.
             lcd_clearBeat(selectedLayerNum, activeSongBank, selectedBeatNum);
             bank.resetBeat(selectedBeatNum);
-            layerSong_arrangeActiveBeats(selectedLayerNum, activeSongBank, false, true, true, true);
+            layerSong_arrangeActiveBeats(selectedLayerNum, activeSongBank);
 
             // 4. SELECTION RECALCULATION
             // Select previous valid beat or set selection to none.
@@ -21161,6 +21279,7 @@ void Controller::layerSong_resetSelectedBeat() {
             // 5. UI REFRESH
             // Redraw fill widgets for updated beat state.
             lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+            lcd_drawLayerSong_PositionData(selectedLayerNum);
             lcd_drawLayerSong_BeatFillPatternData(selectedLayerNum);
             lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
             lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
@@ -21195,7 +21314,7 @@ void Controller::layerSong_resetBeats(uint8_t layerNum_, uint8_t bankTab_, uint1
 
         // 3. ACTIVE LIST ARRANGEMENT
         // Rebuild active beat list and playback state after resets.
-        layerSong_arrangeActiveBeats(layerNum_, bankTab_, reorder, reorder, reorder, true);
+        if (reorder) layerSong_arrangeActiveBeats(layerNum_, bankTab_);
     }
 }
 
@@ -21222,6 +21341,7 @@ void Controller::layerSong_resetAllBeats(uint8_t layerNum_, uint8_t bankTab_) {
         if ((selectedLayerNum == layerNum_) && (activeSongBank == bankTab_) && (menu = LAYER_SONG_MENU)) {
             selectedBeatNum = -1;
             lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+            lcd_drawLayerSong_PositionData(selectedLayerNum);
             lcd_drawLayerSong_BeatFillPatternData(selectedLayerNum);
             lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
             lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
@@ -21267,106 +21387,27 @@ void Controller::layerSong_quantizeActiveBeats(uint8_t layerNum_, uint8_t bankTa
 
             // 2. ACTIVE LIST ARRANGEMENT
             // Reorder and normalize beat list after quantization pass.
-            layerSong_arrangeActiveBeats(layerNum_, bankTab_, true, true, true, true);
+            layerSong_arrangeActiveBeats(layerNum_, bankTab_);
         }
     }
 }
 
-void Controller::layerSong_arrangeActiveBeats(uint8_t layerNum_, uint8_t bankTab_, bool duplicate_, bool collect_, bool sort_, bool lastFill_) {
-    /// @brief Normalizes active beat list via duplicate removal, collect, sort, and fill rules.
+void Controller::layerSong_arrangeActiveBeats(uint8_t layerNum_, uint8_t bankTab_) {
+    /// @brief Restores a bank after beats were added, removed or moved: compacts and sorts the
+    /// beats, merges duplicates, sets end intervals and recomputes every fill (BeatList.h),
+    /// then recomputes the play position. The edit is made on a copy and swapped in with the
+    /// sequencer interrupt held off.
+    ///
+    /// Replaces a version whose sort skipped the last beat and whose fill pass skipped the
+    /// last beat's fill.
 
-    Layer& layer = layerLibrary[layerNum_];
-    Bank& bank = layer.bankLibrary[bankTab_];
-
-    // 1. ACTIVE BANK VALIDATION
-    // Continue only when target bank contains active beats.
-    if (bank.lastActiveBeatNum != -1) {
-        // 2. DUPLICATE REMOVAL PHASE
-        // Remove beats that share the same start interval.
-        if (duplicate_) {
-            for (uint8_t i = 0; i < kBeatLibrarySize; i++) {
-                Beat& beat = bank.beatLibrary[i];
-                if (beat.getActive()) {
-                    uint16_t beatStartInterval = beat.getStartInterval();
-                    for (uint8_t j = i + 1; j < kBeatLibrarySize; j++) {
-                        Beat& nextBeat = bank.beatLibrary[j];
-                        if (nextBeat.getActive()) {
-                            uint16_t nextStartInterval = bank.beatLibrary[j].getStartInterval();
-                            if (nextStartInterval == beatStartInterval) {
-                                bank.resetBeat(j);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. COMPACT PHASE
-        // Collect active beats contiguously and update last-active index.
-        if (collect_) {
-            Beat tempLibrary[kBeatLibrarySize];
-            int8_t tempCounter = -1;
-            for (uint8_t i = 0; i < kBeatLibrarySize; i++) {
-                if (bank.beatLibrary[i].getActive()) {
-                    tempCounter += 1;
-                    tempLibrary[tempCounter] = bank.beatLibrary[i];
-                }
-            }
-            for (uint8_t j = 0; j < kBeatLibrarySize; j++) {
-                bank.beatLibrary[j] = tempLibrary[j];
-            }
-            bank.lastActiveBeatNum = tempCounter;
-        }
-
-        // 4. SORT PHASE
-        // Sort active beats by start interval and rebuild end intervals.
-        if ((sort_) && (bank.lastActiveBeatNum > 0)) {
-            // Sort beats.
-            uint8_t min;
-            Beat temp;
-            for (uint8_t i = 0; i < (bank.lastActiveBeatNum - 1); i++) {
-                min = i;
-                for (uint8_t j = i + 1; j < bank.lastActiveBeatNum; j++) {
-                    if (bank.beatLibrary[j].getStartInterval() < bank.beatLibrary[min].getStartInterval()) {
-                        min = j;
-                    }
-                }
-                temp = bank.beatLibrary[i];
-                bank.beatLibrary[i] = bank.beatLibrary[min];
-                bank.beatLibrary[min] = temp;
-            }
-
-            // Update end intervals.
-            for (uint8_t k = 0; k < bank.lastActiveBeatNum; k++) {
-                bank.beatLibrary[k].setEndInterval(bank.beatLibrary[k + 1].getStartInterval());
-            }
-            bank.beatLibrary[bank.lastActiveBeatNum].setEndInterval(songInterval);
-
-            // Update fill parameters.
-            for (uint8_t l = 0; l < bank.lastActiveBeatNum; l++) {
-                uint8_t fillType = bank.beatLibrary[l].getFillType();
-                uint8_t fillPattern = bank.beatLibrary[l].getFillPattern();
-                uint8_t fillTime = bank.beatLibrary[l].getFillTime();
-                uint8_t fillLevel = bank.beatLibrary[l].getFillLevel();
-                bank.setBeatFill(l, fillType, fillPattern, fillTime, fillLevel);
-            }
-        }
-
-        // 5. LAST-BEAT FILL RULE
-        // Clear invalid fill on last beat when end interval is not song end.
-        if (lastFill_) {
-            if (bank.lastActiveBeatNum != -1) {
-                Beat& beat = bank.beatLibrary[bank.lastActiveBeatNum];
-                if ((beat.getFillType() != 0) && (beat.getEndInterval() != songInterval)) {
-                    bank.setBeatFill(bank.lastActiveBeatNum, 0, 0, 0, 0);
-                }
-            }
-        }
-
-        // 6. PLAYBACK POINTER UPDATE
-        // Recalculate play beat pointer after arrangement.
-        layerSong_calculatePlayBeatNum(layerNum_, bankTab_, playInterval);
-    }
+    Bank& bank = layerLibrary[layerNum_].bankLibrary[bankTab_];
+    layerSongScratch = bank;
+    beatListRebuild(layerSongScratch, songInterval);
+    __disable_irq();
+    bank = layerSongScratch;
+    layerSong_calculatePlayBeatNum(layerNum_, bankTab_, playInterval);
+    __enable_irq();
 }
 
 void Controller::layerSong_calculateLastActiveBeatNum(uint8_t layerNum_, uint8_t bankTab_) {
@@ -21561,6 +21602,7 @@ void Controller::layerSong_paste() {
                 layerSong_calculateLastActiveBeatNum(selectedLayerNum, activeSongBank);
                 layerSong_calculatePlayBeatNum(selectedLayerNum, activeSongBank, playInterval);
                 lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+                lcd_drawLayerSong_PositionData(selectedLayerNum);
                 lcd_drawLayerSong_BeatFillPatternData(selectedLayerNum);
                 lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
                 lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
@@ -21589,6 +21631,7 @@ void Controller::layerSong_selectBank(uint8_t bankNum_) {
             if (menu == LAYER_SONG_MENU) {
                 (layerLibrary[selectedLayerNum].bankLibrary[activeSongBank].lastActiveBeatNum != -1) ? selectedBeatNum = 0 : selectedBeatNum = -1;
                 lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+                lcd_drawLayerSong_PositionData(selectedLayerNum);
                 lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
                 lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
                 lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);

@@ -195,4 +195,31 @@ inline void beatListPosition(uint16_t interval_, uint16_t barInterval_, uint16_t
     }
 }
 
+// Writes a signed distance as bars.beats.16ths, 0-based ("+0.1.2" = one beat and two 16ths
+// later, "0.0.0" = none). Distances between 16ths add the remaining 64ths ("-0.0.1+2").
+inline void beatListOffset(int32_t delta_, uint16_t barInterval_, uint16_t quarter_, char* out_, size_t size_) {
+    const uint32_t d = static_cast<uint32_t>((delta_ < 0) ? -delta_ : delta_);
+    const uint16_t sixteenth = quarter_ / 4;
+    const uint16_t sixtyFourth = quarter_ / 16;
+    const char* sign = (delta_ > 0) ? "+" : ((delta_ < 0) ? "-" : "");
+    const unsigned bars = d / barInterval_;
+    const unsigned beats = (d % barInterval_) / quarter_;
+    const unsigned steps = (d % quarter_) / sixteenth;
+    const unsigned rest = (d % sixteenth) / sixtyFourth;
+    if (rest) {
+        snprintf(out_, size_, "%s%u.%u.%u+%u", sign, bars, beats, steps, rest);
+    } else {
+        snprintf(out_, size_, "%s%u.%u.%u", sign, bars, beats, steps);
+    }
+}
+
+// Wraps a shift around the song into the range -song/2 < shift <= song/2, so the shown
+// distance is the short way round.
+inline int32_t beatListWrapShift(int32_t shift_, uint16_t songInterval_) {
+    int32_t s = shift_ % songInterval_;
+    if (s < 0) s += songInterval_;
+    if (s > songInterval_ / 2) s -= songInterval_;
+    return s;
+}
+
 #endif

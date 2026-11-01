@@ -26,7 +26,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 ## Plan
 
-**Sprint 1, V1.10 "Sequencer"** (built, waiting for the hardware test), one hardware test session after step 5:
+**Sprint 1, V1.10 "Sequencer"** (done, tested on hardware):
 1. ✅ Beat-list editing in a hardware-free header with host tests (`BeatList.h`, `test_beatlist`): rebuild, move, rotate, insert. Items 11 and 12 both use it.
 2. ✅ [12](#12-free-beat-placement-on-layer-song) Free beat placement.
 3. ✅ [11](#11-euclidean-rhythm-page-euclid) EUCLID page.

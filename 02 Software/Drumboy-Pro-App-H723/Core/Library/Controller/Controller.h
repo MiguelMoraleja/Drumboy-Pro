@@ -983,7 +983,9 @@ class Controller {
 
     void routing_select();
     void lcd_drawRoutingMenu();
-    void lcd_drawRouting_Data(uint8_t tab_);
+    void lcd_drawRouting_Data(uint8_t route_);
+    void lcd_drawRoutingState();
+    void lcd_drawRoutingOverview();
     void routing_stepModuleOut(uint8_t module_, bool up_);
     void routing_setModuleOut(uint8_t module_, uint8_t out_);
     void routing_setMetroOut(uint8_t out_);

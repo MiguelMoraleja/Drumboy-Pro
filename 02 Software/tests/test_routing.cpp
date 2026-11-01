@@ -350,7 +350,56 @@ static void testModuleOutStepping() {
     CHECK(routeFirstNode(0) == NODE_MASTER && routeFirstNode(routeBit(NODE_FX1) | routeBit(NODE_MASTER)) == NODE_FX1, "routeFirstNode");
 }
 
+static void testOverview() {
+    char line[64];
+    // Default chain from EQ.
+    routeOverviewLine(line, sizeof(line), 0x3 | (1u << kRouteSourceMetro), NODE_EQ, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L1 L2 MT > EQ > F1 > F2 > FX1 > FX2 > REV > OUT") == 0, "got '%s'", line);
+    // Runs of three or more are shortened; line-in last.
+    routeOverviewLine(line, sizeof(line), 0x1 | 0x4 | 0x8 | 0x10 | 0x200 | (1u << kRouteSourceLineIn), NODE_F2, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L1 L3-5 L10 LI > F2 > FX1 > FX2 > REV > OUT") == 0, "got '%s'", line);
+    // Parallel patch from the design.
+    RoutePatch p = {{routeBit(NODE_FX2), routeBit(NODE_MASTER), routeBit(NODE_FX1), routeBit(NODE_REV), routeBit(NODE_MASTER), routeBit(NODE_MASTER)}};
+    routeOverviewLine(line, sizeof(line), 0x1, NODE_F1, p);
+    CHECK(strcmp(line, "L1 > F1 > OUT") == 0, "got '%s'", line);
+    routeOverviewLine(line, sizeof(line), 0x2, NODE_F2, p);
+    CHECK(strcmp(line, "L2 > F2 > FX1 > REV > OUT") == 0, "got '%s'", line);
+    routeOverviewLine(line, sizeof(line), 0x4, NODE_MASTER, p);
+    CHECK(strcmp(line, "L3 > OUT") == 0, "got '%s'", line);
+    // The default kit's line (all layers and line-in at EQ) is 47 characters: on the 46-character
+    // screen it drops the spaces around '>' instead of being cut.
+    routeOverviewLine(line, 47, 0x3FF | (1u << kRouteSourceLineIn), NODE_EQ, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L1-10 LI>EQ>F1>F2>FX1>FX2>REV>OUT") == 0, "default kit line: '%s'", line);
+    // The ROUTING page shows 36 characters (7x9 font): the default line and the worst case,
+    // every source at EQ, both fit once compacted.
+    routeOverviewLine(line, 37, 0x3FF | (1u << kRouteSourceLineIn), NODE_EQ, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L1-10 LI>EQ>F1>F2>FX1>FX2>REV>OUT") == 0, "default kit line at 36: '%s'", line);
+    routeOverviewLine(line, 37, 0x3FF | (1u << kRouteSourceMetro) | (1u << kRouteSourceLineIn), NODE_EQ, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L1-10 MT LI>EQ>F1>F2>FX1>FX2>REV>OUT") == 0, "all sources at EQ: '%s'", line);
+    routeOverviewLine(line, 37, 0x2, NODE_F2, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L2 > F2 > FX1 > FX2 > REV > OUT") == 0, "short line keeps spaces at 36: '%s'", line);
+    routeOverviewLine(line, 47, 0x3, NODE_EQ, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L1 L2 > EQ > F1 > F2 > FX1 > FX2 > REV > OUT") == 0, "short lines keep spaces: '%s'", line);
+    // Truncation keeps the buffer bounded and marks the cut.
+    uint8_t len = routeOverviewLine(line, 20, 0x3FF, NODE_EQ, kDefaultRoutePatch);
+    CHECK(len == 19 && strlen(line) == 19 && line[17] == '.' && line[18] == '.', "truncated: '%s' (%u)", line, len);
+    // A muted module ends the chain.
+    RoutePatch muted = kDefaultRoutePatch;
+    muted.moduleDest[NODE_F1] = 0;
+    routeOverviewLine(line, sizeof(line), 0x1, NODE_EQ, muted);
+    CHECK(strcmp(line, "L1 > EQ > F1") == 0, "got '%s'", line);
+    // Fed modules: only F1 path and FX1 chain are fed in the parallel patch with L1->F1, L2->F2.
+    const uint8_t masks[2] = {routeBit(NODE_F1), routeBit(NODE_F2)};
+    uint8_t fed = routeFedModules(p, masks, 2);
+    CHECK(fed == (routeBit(NODE_F1) | routeBit(NODE_F2) | routeBit(NODE_FX1) | routeBit(NODE_REV)), "fed 0x%02x", fed);
+    const uint8_t one[1] = {routeBit(NODE_EQ)};
+    CHECK(routeFedModules(kDefaultRoutePatch, one, 1) == 0x3F, "default chain from EQ feeds everything");
+    const uint8_t none[1] = {routeBit(NODE_MASTER)};
+    CHECK(routeFedModules(kDefaultRoutePatch, none, 1) == 0, "dry sources feed no module");
+}
+
 int main() {
+    testOverview();
     testModuleOutStepping();
     testFileStorage();
     testLegacyConversion();

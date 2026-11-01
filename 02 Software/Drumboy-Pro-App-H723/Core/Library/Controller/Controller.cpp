@@ -8366,6 +8366,14 @@ void Controller::lcd_transitionMenu() {
             preBeatFillLevel = -1;
             break;
 
+        case ROUTING_MENU:
+            // Remove the chain overview and restore the tab divider it covered.
+            lcd.setBackColor(BLACK);
+            lcd.setForeColor(GRAY_50);
+            lcd.clearRect(493, 30, 325, 60);
+            lcd.drawVLine(kMenuLineX[3], kMenuLineY[3], kMenuLineHeight);
+            break;
+
         case LAYER_INST_0_MENU:
 
         case LAYER_INST_1_MENU:
@@ -8429,8 +8437,9 @@ void Controller::lcd_transitionMenu() {
             break;
 
         case ROUTING_MENU:
-            // Tabs 0-6 are redrawn; tab 7 is unused.
-            lcd_clearMenuTab(kMaxMenu8Tab);
+            // Tabs 2-3 hold the chain overview.
+            lcd.setBackColor(BLACK);
+            lcd.clearRect(493, 29, 325, 60);
             break;
 
         case LAYER_SONG_MENU:
@@ -13900,7 +13909,7 @@ void Controller::mixer_setLiIn(uint8_t mode_) {
         // 4. UI & GLOBAL REFRESH
         // Refresh Mixer tab data (if visible) and global summary field.
         if (menu == MIXER_MENU) lcd_drawMixer_LiInData();
-        if (menu == ROUTING_MENU) lcd_drawRouting_Data(6);
+        if (menu == ROUTING_MENU) lcd_drawRoutingState();
         lcd_updateGlobalMenuData(ENC_MIXER_LIMIXERIN);
 
         // 5. DEFERRED PRESET PERSISTENCE
@@ -20259,7 +20268,7 @@ void Controller::routing_setModuleOut(uint8_t module_, uint8_t out_) {
 
     if ((module_ < NODE_REV) && (out_ < kRouteNodeCount) && routeModuleDestValid(module_, routeBit(out_))) {
         routePatch.moduleDest[module_] = routeBit(out_);
-        if (menu == ROUTING_MENU) lcd_drawRouting_Data(module_);
+        if (menu == ROUTING_MENU) lcd_drawRoutingState();
     }
 }
 
@@ -20292,44 +20301,113 @@ void Controller::routing_select() {
     }
 }
 
+// ROUTING page fields (route index -> tab): EQ, Filter 1 | overview | Filter 2, Effect 1, Effect 2, Metronome.
+static const uint8_t kRoutingTab[6] = {0, 1, 4, 5, 6, 7};
+
 void Controller::lcd_drawRoutingMenu() {
-    /// @brief Draws the ROUTING page: where EQ, Filter 1/2, Effect 1/2, the metronome and line-in send
-    ///        their signal. The reverb always feeds the master.
+    /// @brief Draws the ROUTING page: where EQ, Filter 1/2, Effect 1/2 and the metronome send their
+    ///        signal, plus an overview of the active chains. The reverb always feeds the master.
 
     // 1. MENU ICON AND NUMBER
     lcd_drawMenuIcon(ROUTING_MENU);
     lcd_setMenuHeaderState(CYAN);
     lcd.clearRect(kMenuNumX, kMenuNumY, 7, 9);
 
-    // 2. HEADERS AND SIGNS
-    for (uint8_t i = 0; i < 7; i++) {
-        const EncoderFuncData& fd = kEncoderFuncDataLibrary[ENC_ROUTE_EQ_OUT + i];
-        lcd_setMenuHeaderState(CYAN);
-        lcd.drawText(fd.funcHeader, kMenuHeaderTextSize, kMenuHeaderX[i], kMenuHeaderY[i]);
+    // 2. SIGNS (headers depend on the routing and are drawn with the data)
+    for (uint8_t r = 0; r < 6; r++) {
+        const uint8_t tab = kRoutingTab[r];
         lcd_setMenuSignState(GRAY_75);
-        lcd.drawText(fd.sign, kMenuSignTextSize, kMenuSignBoxX[i], kMenuSignBoxY[i]);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_ROUTE_EQ_OUT + r].sign, kMenuSignTextSize, kMenuSignBoxX[tab], kMenuSignBoxY[tab]);
     }
 
-    // 3. DATA
-    for (uint8_t i = 0; i < 7; i++) lcd_drawRouting_Data(i);
+    // 3. HEADERS, DATA AND OVERVIEW
+    lcd_drawRoutingState();
 }
 
-void Controller::lcd_drawRouting_Data(uint8_t tab_) {
-    /// @brief Draws one ROUTING field's destination name.
+void Controller::lcd_drawRoutingState() {
+    /// @brief Redraws everything on the ROUTING page that depends on the routing: field values,
+    ///        header colours (a module nothing feeds is dimmed) and the chain overview.
+
+    // 1. WHAT FEEDS WHAT
+    // Current settings (not per-note latches): layers' OUT, metronome, line-in.
+    uint8_t masks[kLayerLibrarySize + 2];
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) masks[i] = routeMaskFromEntry(layerLibrary[i].mixerInMode);
+    masks[kLayerLibrarySize] = routeMaskFromEntry(metroOut);
+    masks[kLayerLibrarySize + 1] = routeMaskFromEntry(mixer.liMixerIn);
+    const uint8_t fed = routeFedModules(routePatch, masks, kLayerLibrarySize + 2);
+
+    // 2. HEADERS AND VALUES
+    for (uint8_t r = 0; r < 6; r++) {
+        const uint8_t tab = kRoutingTab[r];
+        const bool lit = (r >= NODE_REV) || (fed & routeBit(r));  // metronome header always lit
+        lcd_setMenuHeaderState(lit ? CYAN : GRAY_50);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_ROUTE_EQ_OUT + r].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[tab], kMenuHeaderY[tab]);
+        lcd_drawRouting_Data(r);
+    }
+
+    // 3. OVERVIEW
+    lcd_drawRoutingOverview();
+}
+
+void Controller::lcd_drawRouting_Data(uint8_t route_) {
+    /// @brief Draws one ROUTING field's destination name (route 0-4: EQ ... Effect 2, 5: metronome).
 
     uint8_t dest;
-    if (tab_ < NODE_REV) {
-        dest = routeFirstNode(routePatch.moduleDest[tab_]);
-    } else if (tab_ == 5) {
+    if (route_ < NODE_REV) {
+        dest = routeFirstNode(routePatch.moduleDest[route_]);
+    } else if (route_ == 5) {
         dest = metroOut;
-    } else if (tab_ == 6) {
-        dest = mixer.liMixerIn;
     } else {
         return;
     }
     if (dest >= kRouteNodeCount) dest = NODE_MASTER;
+    const uint8_t tab = kRoutingTab[route_];
     lcd_setMenuDataState(WHITE);
-    lcd.drawText(kRouteDestDataLibrary[dest].nameLongR, kMenuDataTextSize, kMenuDataX[tab_], kMenuDataY[tab_]);
+    lcd.drawText(kRouteDestDataLibrary[dest].nameLongR, kMenuDataTextSize, kMenuDataX[tab], kMenuDataY[tab]);
+}
+
+void Controller::lcd_drawRoutingOverview() {
+    /// @brief Draws one line per entry point in the top-right area: the sources entering there and the
+    ///        chain they travel, e.g. "L1-3 MT > F1 > F2 > FX1 > FX2 > REV > OUT".
+
+    // 7x9 font: 9 px per character and 11 px per line give 36 characters x 5 lines in 325 x 60 px.
+    const uint16_t kX = 494, kY = 32, kLineStep = 11, kAreaX = 493, kAreaY = 30, kAreaW = 325, kAreaH = 60;
+    const uint8_t kChars = 36, kRows = 5;
+
+    // 1. SOURCES PER ENTRY POINT
+    uint16_t sources[kRouteNodeCount] = {0};
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const uint8_t e = layerLibrary[i].mixerInMode;
+        if (e < kRouteNodeCount) sources[e] |= (1u << i);
+    }
+    if (metroOut < kRouteNodeCount) sources[metroOut] |= (1u << kRouteSourceMetro);
+    if (mixer.liMixerIn < kRouteNodeCount) sources[mixer.liMixerIn] |= (1u << kRouteSourceLineIn);
+    uint8_t chains = 0;
+    for (uint8_t e = 0; e < kRouteNodeCount; e++)
+        if (sources[e]) chains++;
+
+    // 2. DRAW
+    // With more chains than rows, the last row says how many are not shown.
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(kAreaX, kAreaY, kAreaW, kAreaH);
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(LEFT);
+    lcd.setForeColor(WHITE);
+    const uint8_t shown = (chains > kRows) ? kRows - 1 : chains;
+    uint8_t row = 0;
+    for (uint8_t e = 0; (e < kRouteNodeCount) && (row < shown); e++) {
+        if (!sources[e]) continue;
+        char line[kChars + 1];
+        const uint8_t len = routeOverviewLine(line, sizeof(line), sources[e], e, routePatch);
+        lcd.drawText(line, len, kX, kY + row * kLineStep);
+        row++;
+    }
+    if (chains > shown) {
+        char more[12];
+        const int len = snprintf(more, sizeof(more), "+%u MORE", (unsigned)(chains - shown));
+        lcd.setForeColor(GRAY_75);
+        if (len > 0) lcd.drawText(more, (uint16_t)len, kX, kY + row * kLineStep);
+    }
 }
 
 void Controller::routing_setMetroOut(uint8_t out_) {
@@ -20337,7 +20415,7 @@ void Controller::routing_setMetroOut(uint8_t out_) {
 
     if (out_ < kRouteNodeCount) {
         metroOut = out_;
-        if (menu == ROUTING_MENU) lcd_drawRouting_Data(5);
+        if (menu == ROUTING_MENU) lcd_drawRoutingState();
         if (systemPresetSaveActive) {
             stopSystemPresetTimer();
             startSystemPresetTimer();

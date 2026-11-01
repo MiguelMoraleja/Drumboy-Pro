@@ -140,6 +140,103 @@ inline uint8_t routeNextModuleOut(uint8_t module_, uint8_t current_, bool up_) {
     return (current_ > first) ? current_ - 1 : last;
 }
 
+// ROUTING page overview. Sources are a 16-bit set: bits 0-9 the instrument layers,
+// kRouteSourceMetro and kRouteSourceLineIn the metronome and line-in.
+const uint8_t kRouteSourceMetro = 10;
+const uint8_t kRouteSourceLineIn = 11;
+
+inline const char* routeNodeShortName(uint8_t node_) {
+    static const char* const kNames[kRouteNodeCount] = {"EQ", "F1", "F2", "FX1", "FX2", "REV", "OUT"};
+    return (node_ < kRouteNodeCount) ? kNames[node_] : "?";
+}
+
+// The chain a signal entering at entry_ travels: each module's first destination, up to the
+// master. Stops early at a muted module (empty mask). Returns the number of nodes in path_.
+inline uint8_t routePath(const RoutePatch& patch_, uint8_t entry_, uint8_t path_[kRouteNodeCount]) {
+    uint8_t count = 0, node = entry_;
+    while (count < kRouteNodeCount && node < kRouteNodeCount) {
+        path_[count++] = node;
+        if (node == NODE_MASTER) break;
+        const uint8_t mask = (node == NODE_REV) ? routeBit(NODE_MASTER) : patch_.moduleDest[node];
+        if (mask == 0) break;
+        const uint8_t next = routeFirstNode(mask);
+        if (next <= node) break;  // invalid backwards route: stop rather than loop
+        node = next;
+    }
+    return count;
+}
+
+// Modules that receive any signal: directly from a source or from a module that is fed.
+inline uint8_t routeFedModules(const RoutePatch& patch_, const uint8_t* sourceMasks_, uint8_t sourceCount_) {
+    uint8_t fed = 0;
+    for (uint8_t s = 0; s < sourceCount_; s++) fed |= sourceMasks_[s];
+    for (uint8_t m = 0; m < kRouteModuleCount; m++) {
+        if (!(fed & routeBit(m))) continue;
+        const uint8_t dest = (m == NODE_REV) ? routeBit(NODE_MASTER) : patch_.moduleDest[m];
+        fed |= dest & static_cast<uint8_t>(~((routeBit(m) << 1) - 1));
+    }
+    return fed & static_cast<uint8_t>(routeBit(NODE_MASTER) - 1);
+}
+
+// One overview line: the sources entering at entry_, then their chain, e.g.
+// "L1-3 L7 MT > F1 > F2 > FX1 > FX2 > REV > OUT". Layers are numbered from 1 and runs of three
+// or more are shortened. A line that does not fit in size_ - 1 characters drops the spaces around
+// ">" ("L1-10 LI>EQ>F1>...>OUT"); one that still does not fit ends in "..". Returns the length.
+inline uint8_t routeOverviewLineSep(char* out_, uint8_t size_, uint16_t sources_, uint8_t entry_, const RoutePatch& patch_, const char* sep_) {
+    char buf[96];
+    uint8_t len = 0;
+    auto put = [&](const char* t) {
+        while (*t && len < sizeof(buf) - 1) buf[len++] = *t++;
+    };
+    auto putNum = [&](uint8_t v) {
+        char d[4];
+        uint8_t n = 0;
+        do { d[n++] = static_cast<char>('0' + v % 10); v /= 10; } while (v && n < 3);
+        while (n) { char c[2] = {d[--n], 0}; put(c); }
+    };
+    // Layers, with runs of 3+ as "Lx-y".
+    for (uint8_t i = 0; i < 10; i++) {
+        if (!(sources_ & (1u << i))) continue;
+        uint8_t j = i;
+        while (j + 1 < 10 && (sources_ & (1u << (j + 1)))) j++;
+        if (len) put(" ");
+        put("L");
+        putNum(i + 1);
+        if (j - i >= 2) {
+            put("-");
+            putNum(j + 1);
+            i = j;
+        }
+    }
+    if (sources_ & (1u << kRouteSourceMetro)) { if (len) put(" "); put("MT"); }
+    if (sources_ & (1u << kRouteSourceLineIn)) { if (len) put(" "); put("LI"); }
+    uint8_t path[kRouteNodeCount];
+    const uint8_t n = routePath(patch_, entry_, path);
+    for (uint8_t k = 0; k < n; k++) {
+        put(sep_);
+        put(routeNodeShortName(path[k]));
+    }
+    buf[len] = 0;
+    if (size_ == 0) return 0;
+    if (len >= size_) {
+        len = size_ - 1;
+        if (len >= 2) buf[len - 2] = buf[len - 1] = '.';
+    }
+    memcpy(out_, buf, len);
+    out_[len] = 0;
+    return len;
+}
+
+inline uint8_t routeOverviewLine(char* out_, uint8_t size_, uint16_t sources_, uint8_t entry_, const RoutePatch& patch_) {
+    char wide[96];
+    const uint8_t len = routeOverviewLineSep(wide, sizeof(wide), sources_, entry_, patch_, " > ");
+    if (len < size_) {
+        memcpy(out_, wide, len + 1);
+        return len;
+    }
+    return routeOverviewLineSep(out_, size_, sources_, entry_, patch_, ">");
+}
+
 // Buffers for one block. node[m] is module m's input, processed in place to become its output.
 // The Reverb writes its left output in place and its right output to reverbRight.
 struct RouteBuffers {

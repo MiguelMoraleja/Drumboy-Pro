@@ -24,6 +24,22 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
+## Plan
+
+**Sprint 1, V1.10 "Sequencer"** (in progress), one hardware test session after step 5:
+1. Beat-list editing in a hardware-free header with host tests (`BeatList.h`, `test_beatlist`): rebuild, move, rotate, insert. Items 11 and 12 both use it.
+2. [12](#12-free-beat-placement-on-layer-song) Free beat placement.
+3. [11](#11-euclidean-rhythm-page-euclid) EUCLID page.
+4. [1](#1-lfo-modulated-values-dont-move-on-the-display) LFO values on the display.
+5. [8](#8-limiter-setting-does-nothing) LIMITER.
+6. Reproducible release builds (from [10](#10-housekeeping)), before tagging V1.10.
+
+**Sprint 2, "Formats and sound":** [9](#9-songkit-file-format-version) file format version first, then [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones and [13](#13-sample-preview-while-browsing) sample preview (largest risk: SD streaming while playing, larger system preset).
+
+**Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
+
+**Later:** [3](#3-lfos-cant-modulate-filters-or-effects) (needs 9), [6](#6-routing-extra-effect-slots) (needs CPU measurement), the rest of [10](#10-housekeeping) alongside other work.
+
 ---
 
 ## LFO and instrument

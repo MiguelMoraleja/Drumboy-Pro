@@ -32,8 +32,9 @@ The MCU sits at the center of six subsystems: an NT35510 display driven over a 1
 - **9 effect types** per send slot: Delay, Chorus, Flanger, Phaser, Compressor, Expander, Overdrive, Distortion, Bitcrusher
 - **Freeverb/Schroeder-Moorer style reverb** with pre-delay and stereo surround derivation
 - **Sequencer** with 5 song banks per layer, 64 beats per bank, and algorithmic complex-fill generation (timing alignment × level curve templates)
+- **Layer pages** (V1.10): hold I or S (right side, L I S row) and press a layer pad to open that layer's instrument or song page; tap I or S on its own to step through the current layer's pages (instrument 1 → 2 → 3, song ↔ EUCLID) or to switch between its instrument and song pages
 - **Beat editing** on the Layer Song page (V1.10): MOVE a beat past its neighbours while keeping its fill (position shown as bar.beat.16th), SHIFT ALL to rotate a whole layer, and a short ADD press to insert a beat
-- **EUCLID page** (V1.10, tap LAYER SONG on the Layer Song page): Euclidean rhythms with steps, hits, rotation and grid, applied live, REPLACE or MERGE with the layer's beats, CLEAR to undo
+- **EUCLID page** (V1.10, the song page's second page): Euclidean rhythms with steps, hits, rotation and grid, applied live, REPLACE or MERGE with the layer's beats, CLEAR to undo
 - **MIDI In/Out** (opto-isolated input) and **Sync In/Out** for external clock/gate sync
 - **SD-card firmware updates** via a dedicated bootloader with CRC-32 verified staged writes
 - Fully open hardware (KiCad) and firmware (C/C++ against the STM32 HAL) — no CMSIS-DSP or external DSP library, all hand-rolled biquad/delay-line DSP on the Cortex-M7 FPU

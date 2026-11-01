@@ -264,7 +264,7 @@ class Controller {
     bool layerSongAddArmed;  // ADD pressed on Layer Song: a short press inserts a beat
     bool layerSongAddUsed;   // another key or encoder was used while ADD was held
     int32_t layerSongShift;  // net SHIFT ALL since the page was opened, in intervals
-    bool layerSongKeyUsed;   // a layer key was pressed while LAYER SONG was held
+    bool layerModKeyUsed;    // a layer pad was pressed while L, I or S was held (so its release is not a tap)
 
     // EUCLID page (settings kept while powered; the layer's beats from before are in euclidSnapshot)
     uint8_t euclidSteps = 16;
@@ -1006,6 +1006,7 @@ class Controller {
 
     void routing_select();
     void euclid_select();
+    bool layerPageMenu() const;
     void euclid_apply();
     void euclid_clear();
     void euclid_step(EncoderFunc function_, bool up_);

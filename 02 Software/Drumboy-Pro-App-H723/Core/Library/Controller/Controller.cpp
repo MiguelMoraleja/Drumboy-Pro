@@ -161,7 +161,7 @@ Controller::Controller()
       layerSongAddArmed(false),
       layerSongAddUsed(false),
       layerSongShift(0),
-      layerSongKeyUsed(false),
+      layerModKeyUsed(false),
 
       /* --- SECTION 8: INPUT & LED ENGINE STATE ---------------------------- */
 
@@ -1560,7 +1560,7 @@ void Controller::keyboard_action() {
                 switch (keyboard.keyLayer.changeState[layerNum]) {
                     case KEYSTATE_PRESS:
                         layerSongAddUsed = true;
-                        layerSongKeyUsed = true;
+                        layerModKeyUsed = true;
                         if (keyboard.muteKeyPress) {
                             layerInst_setMute(layerNum, !layerLibrary[layerNum].mute);
                         } else if (keyboard.fillKeyPress) {
@@ -2567,15 +2567,17 @@ void Controller::keyboard_action() {
 
                             case KEY_LFO:
                                 keyboard.lfoKeyPress = true;
+                                layerModKeyUsed = false;
                                 break;
 
                             case KEY_LAYER_INST:
                                 keyboard.layerInstKeyPress = true;
+                                layerModKeyUsed = false;
                                 break;
 
                             case KEY_LAYER_SONG:
                                 keyboard.layerSongKeyPress = true;
-                                layerSongKeyUsed = false;
+                                layerModKeyUsed = false;
                                 break;
 
                             case KEY_SONG:
@@ -2593,19 +2595,21 @@ void Controller::keyboard_action() {
                                 keyboard.lfoKeyPress = false;
                                 break;
 
+                            // I and S tapped on their own (no layer pad pressed while held) step through
+                            // the current layer's pages; holding them and pressing a pad picks the layer.
                             case KEY_LAYER_INST:
                                 keyboard.layerInstKeyPress = false;
+                                // Instrument pages 1 -> 2 -> 3 -> 1, or page 1 from the song/EUCLID page.
+                                if (!layerModKeyUsed && !alertFlag && (selectedLayerNum != -1) && layerPageMenu()) {
+                                    layerInst_select(selectedLayerNum);
+                                }
                                 break;
 
                             case KEY_LAYER_SONG:
                                 keyboard.layerSongKeyPress = false;
-                                // Tapped on its own: switch between the Layer Song and EUCLID pages.
-                                if (!layerSongKeyUsed && !alertFlag && (selectedLayerNum != -1)) {
-                                    if (menu == LAYER_SONG_MENU) {
-                                        euclid_select();
-                                    } else if (menu == EUCLID_MENU) {
-                                        layerSong_select(selectedLayerNum, activeSongBank);
-                                    }
+                                // Song <-> EUCLID, or the song page from an instrument page.
+                                if (!layerModKeyUsed && !alertFlag && (selectedLayerNum != -1) && layerPageMenu()) {
+                                    (menu == LAYER_SONG_MENU) ? euclid_select() : layerSong_select(selectedLayerNum, activeSongBank);
                                 }
                                 break;
 
@@ -12894,9 +12898,9 @@ void Controller::preMenuLayerClear() {
         ledLayerSelectData = 0x00;
     }
 
-    // 3. LAYER SONG MENU CLEANUP
-    // Clear selected beat/layer and redraw layer tab when leaving layer song menu.
-    if (preMenu == LAYER_SONG_MENU) {
+    // 3. LAYER SONG / EUCLID MENU CLEANUP
+    // Clear selected beat/layer and redraw layer tab when leaving the layer song or EUCLID page.
+    if ((preMenu == LAYER_SONG_MENU) || (preMenu == EUCLID_MENU)) {
         if ((layerLibrary[selectedLayerNum].bankLibrary[activeSongBank].lastActiveBeatNum != -1) && (selectedBeatNum != -1)) lcd_drawBeat(selectedLayerNum, activeSongBank, selectedBeatNum, false);
         uint8_t layerNum = selectedLayerNum;
         selectedLayerNum = -1;
@@ -20508,6 +20512,11 @@ void Controller::routing_select() {
     }
 }
 
+bool Controller::layerPageMenu() const {
+    /// @brief True on a page of one layer: instrument pages 1-3, song, EUCLID.
+    return (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU) || (menu == LAYER_SONG_MENU) || (menu == EUCLID_MENU);
+}
+
 void Controller::euclid_select() {
     /// @brief Opens the EUCLID page for the selected layer (LAYER SONG tapped on the Layer Song
     /// page). Nothing changes until a field is turned.
@@ -20931,6 +20940,12 @@ void Controller::layerInst_paste() {
 
 void Controller::layerSong_select(uint8_t layerNum_, uint8_t bankNum_) {
     /// @brief Enters Layer Song menu and focuses requested layer/bank context.
+
+    // Same layer again on the song page: next page (EUCLID), as I does for the instrument pages.
+    if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_)) {
+        euclid_select();
+        return;
+    }
 
     // 1. MENU ENTRY VALIDATION
     // Continue when menu context changes or selected layer differs.

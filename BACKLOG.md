@@ -151,7 +151,7 @@ Kit and song files have a signature but no format version. Several items above c
 
 ### 11. Euclidean rhythm page (EUCLID)
 
-**Status: done in V1.10** (`Euclid.h`, `test_euclid`, `euclid_*` in `Controller.cpp`). Tap LAYER SONG on its own on the Layer Song page. Fields STEPS, HITS, ROTATE, GRID, MODE; CLEAR restores the layer.
+**Status: done in V1.10** (`Euclid.h`, `test_euclid`, `euclid_*` in `Controller.cpp`). On the song page, tap S (right side, L I S row) on its own, or hold S and press the same layer pad again. Fields STEPS, HITS, ROTATE, GRID, MODE; CLEAR restores the layer.
 
 **Today.** The only beat generator is a long ADD press on the Layer Song page, and only when the layer's bank is empty (`layerBeatKeyFlag` is set only when `lastActiveBeatNum == -1`). Each step of the hold runs a fixed preset from `layerSong_generateBeat()`: one beat per bar, two off-beat layouts, then BASIC_4 and BASIC_8 fills on every beat. Nothing is adjustable, and an existing pattern can't be extended. (The EUCLID *fill type* in `Fill.h` is different: it places hits inside one beat, not beats across the bar.)
 

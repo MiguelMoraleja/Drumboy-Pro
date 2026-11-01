@@ -812,6 +812,7 @@ void Controller::loadSystemPreset() {
                         metro_setPrecount((bool)dataSystemPreset[13]);
                         metro_setSample(dataSystemPreset[14]);
                         metro_setVolume(dataSystemPreset[15]);
+                        routing_setMetroOut(routeUnpackMetro((uint8_t)dataSystemPreset[11]));
 
                         // 6. I/O & SYNC PARAMETER APPLY
                         // Apply persisted sync and MIDI routing parameters.
@@ -863,7 +864,7 @@ void Controller::saveSystemPreset() {
             dataSystemPreset[8] = (uint8_t)mixer.masterMute;
             dataSystemPreset[9] = (uint8_t)mixer.hpMute;
             dataSystemPreset[10] = (uint8_t)mixer.loMute;
-            dataSystemPreset[11] = (uint8_t)mixer.liMute;
+            dataSystemPreset[11] = routePackMetro((uint8_t)mixer.liMute, metroOut);  // + metronome destination (Routing.h)
 
             // Metronome Configurations
             dataSystemPreset[12] = (uint8_t)metronome.active;
@@ -968,7 +969,8 @@ void Controller::saveEncoderPreset() {
 
             // 4. LOCAL MAPPING PACKAGING
             // Flatten local menu-specific encoder mappings into payload array.
-            const uint8_t localMenuCount = sizeof(encoderLocalFunction) / sizeof(encoderLocalFunction[0]);
+            // The preset file layout predates ROUTING_MENU (4 slots for each of the first 20 menus); keep it.
+            const uint8_t localMenuCount = TEST_MENU + 1;
             const uint8_t localStoredEncoderCount = kEncoderLocalPresetDataSize / localMenuCount;
             for (uint8_t i = 0; i < localMenuCount; i++) {
                 // Local preset binary layout stores a compact encoder subset per menu.
@@ -2506,7 +2508,8 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_MIXER:
-                                if (!alertFlag) mixer_select();
+                                // A second press opens the ROUTING page; the next press returns to the mixer.
+                                if (!alertFlag) (menu == MIXER_MENU) ? routing_select() : mixer_select();
                                 break;
 
                             case KEY_FILTER_0:
@@ -3172,7 +3175,7 @@ void Controller::encoder_update() {
 
     if (activeEncoderBank >= kEncoderBankSize) activeEncoderBank = kMinEncoderGlobalTab;
     const uint8_t encoderFuncCount = sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]);
-    const Menu menuSafe = ((menu >= INIT_MENU) && (menu <= TEST_MENU)) ? menu : INIT_MENU;
+    const Menu menuSafe = ((menu >= INIT_MENU) && (menu <= ROUTING_MENU)) ? menu : INIT_MENU;
 
     // 1. MODE/FUNCTION BINDING
     // Bind each encoder to global or local function map based on active menu.
@@ -3870,6 +3873,22 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             (layerLibrary[selectedLayerNum].mixerInMode < kMaxLayerOut) ? layerInst_setOut(selectedLayerNum, layerLibrary[selectedLayerNum].mixerInMode + 1) : layerInst_setOut(selectedLayerNum, kMinLayerOut);
             break;
 
+        case ENC_ROUTE_EQ_OUT:
+        case ENC_ROUTE_F1_OUT:
+        case ENC_ROUTE_F2_OUT:
+        case ENC_ROUTE_FX1_OUT:
+        case ENC_ROUTE_FX2_OUT:
+            routing_stepModuleOut(static_cast<uint8_t>(encoder[encoderNum_].function - ENC_ROUTE_EQ_OUT), true);
+            break;
+
+        case ENC_ROUTE_METRO_OUT:
+            routing_setMetroOut((metroOut < NODE_MASTER) ? metroOut + 1 : NODE_EQ);
+            break;
+
+        case ENC_ROUTE_LINEIN_OUT:
+            (mixer.liMixerIn < kMaxMixerLiMixerIn) ? mixer_setLiIn(mixer.liMixerIn + 1) : mixer_setLiIn(kMinMixerLiMixerIn);
+            break;
+
             // Layer song functions
 
         case ENC_SONG_FILL:
@@ -4396,6 +4415,22 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
 
         case ENC_INST_2_OUT:
             (layerLibrary[selectedLayerNum].mixerInMode > kMinLayerOut) ? layerInst_setOut(selectedLayerNum, layerLibrary[selectedLayerNum].mixerInMode - 1) : layerInst_setOut(selectedLayerNum, kMaxLayerOut);
+            break;
+
+        case ENC_ROUTE_EQ_OUT:
+        case ENC_ROUTE_F1_OUT:
+        case ENC_ROUTE_F2_OUT:
+        case ENC_ROUTE_FX1_OUT:
+        case ENC_ROUTE_FX2_OUT:
+            routing_stepModuleOut(static_cast<uint8_t>(encoder[encoderNum_].function - ENC_ROUTE_EQ_OUT), false);
+            break;
+
+        case ENC_ROUTE_METRO_OUT:
+            routing_setMetroOut((metroOut > NODE_EQ) ? metroOut - 1 : NODE_MASTER);
+            break;
+
+        case ENC_ROUTE_LINEIN_OUT:
+            (mixer.liMixerIn > kMinMixerLiMixerIn) ? mixer_setLiIn(mixer.liMixerIn - 1) : mixer_setLiIn(kMaxMixerLiMixerIn);
             break;
 
             // Layer song functions
@@ -5568,6 +5603,9 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                     reverb_setDry(data[173]);
                     reverb_setWet(data[174]);
 
+                    // Module destinations (Routing.h); files without them get the default chain.
+                    routing_setPatch(reinterpret_cast<const uint8_t*>(data));
+
                     // LFO modulation settings
                     for (uint8_t i = 0; i < kLfoLibrarySize; i++) {
                         uint16_t offset = 180 + (i * 6);
@@ -5966,7 +6004,11 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
         data[offset + 20] = layer.mute;
         data[offset + 21] = layer.fill;
         data[offset + 22] = layer.style;
+        data[offset + kRouteFileLayerByte] = routeMaskFromEntry(layer.mixerInMode);
     }
+
+    // Module destinations and the routing marker (Routing.h).
+    routeWritePatch(data, routePatch);
 
     // 2.12 ASSET REFERENCES
     // Store per-layer instrument/sample activity flags and names.
@@ -6364,6 +6406,9 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                     reverb_setDry(data[173]);
                     reverb_setWet(data[174]);
 
+                    // Module destinations (Routing.h); files without them get the default chain.
+                    routing_setPatch(reinterpret_cast<const uint8_t*>(data));
+
                     // LFO modulation settings
                     for (uint8_t i = 0; i < kLfoLibrarySize; i++) {
                         uint16_t offset = 180 + (i * 6);
@@ -6692,7 +6737,11 @@ SdResult Controller::sd_saveDrumkit(uint8_t kitNum_) {
         data[offset + 20] = layer.mute;
         data[offset + 21] = layer.fill;
         data[offset + 22] = layer.style;
+        data[offset + kRouteFileLayerByte] = routeMaskFromEntry(layer.mixerInMode);
     }
+
+    // Module destinations and the routing marker (Routing.h).
+    routeWritePatch(data, routePatch);
 
     // 2.12 ASSET REFERENCES
     // Store per-layer instrument/sample activity flags and names.
@@ -8061,6 +8110,10 @@ void Controller::lcd_drawMenuIcon(Menu menu_) {
                 iconStr = "MX";
                 break;
 
+            case ROUTING_MENU:
+                iconStr = "RT";
+                break;
+
             case METRO_MENU:
                 iconStr = "ME";
                 break;
@@ -8373,6 +8426,11 @@ void Controller::lcd_transitionMenu() {
                     lcd_clearMenuTab(i);
                 }
             }
+            break;
+
+        case ROUTING_MENU:
+            // Tabs 0-6 are redrawn; tab 7 is unused.
+            lcd_clearMenuTab(kMaxMenu8Tab);
             break;
 
         case LAYER_SONG_MENU:
@@ -13842,6 +13900,7 @@ void Controller::mixer_setLiIn(uint8_t mode_) {
         // 4. UI & GLOBAL REFRESH
         // Refresh Mixer tab data (if visible) and global summary field.
         if (menu == MIXER_MENU) lcd_drawMixer_LiInData();
+        if (menu == ROUTING_MENU) lcd_drawRouting_Data(6);
         lcd_updateGlobalMenuData(ENC_MIXER_LIMIXERIN);
 
         // 5. DEFERRED PRESET PERSISTENCE
@@ -20192,6 +20251,119 @@ void Controller::layerInst_calculateMixMode(uint8_t layerNum_) {
     layer.mixerInMode = (MixerInMode)routeEntryFromLegacy(layer.eq, layer.filter, layer.effect, layer.reverb);
 }
 
+/* Routing Functions ---------------------------------------------------------*/
+
+void Controller::routing_setModuleOut(uint8_t module_, uint8_t out_) {
+    /// @brief Sets where a module (EQ, Filter 1/2, Effect 1/2) sends its output: a later module
+    ///        or MASTER. The audio engine crossfades to the new destination.
+
+    if ((module_ < NODE_REV) && (out_ < kRouteNodeCount) && routeModuleDestValid(module_, routeBit(out_))) {
+        routePatch.moduleDest[module_] = routeBit(out_);
+        if (menu == ROUTING_MENU) lcd_drawRouting_Data(module_);
+    }
+}
+
+void Controller::routing_stepModuleOut(uint8_t module_, bool up_) {
+    /// @brief Moves a module's OUT to the next/previous allowed destination (later modules, MASTER).
+
+    if (module_ >= NODE_REV) return;
+    const uint8_t current = routeFirstNode(routePatch.moduleDest[module_]);
+    routing_setModuleOut(module_, routeNextModuleOut(module_, current, up_));
+}
+
+void Controller::routing_select() {
+    /// @brief Opens the ROUTING page (second page of the MIXER key).
+
+    if (menu != ROUTING_MENU) {
+        // 1. MENU STATE TRANSITION
+        // No tab selection on this page: every field has its own encoder.
+        preMenu = menu;
+        preMenuTab = menuTab;
+        menuTab = -1;
+        menu = ROUTING_MENU;
+
+        // 2. UI TRANSITION & RENDER
+        lcd_transitionMenu();
+        lcd_transitionSelect();
+        lcd_drawRoutingMenu();
+
+        // 3. ENCODER CONTEXT UPDATE
+        encoder_update();
+    }
+}
+
+void Controller::lcd_drawRoutingMenu() {
+    /// @brief Draws the ROUTING page: where EQ, Filter 1/2, Effect 1/2, the metronome and line-in send
+    ///        their signal. The reverb always feeds the master.
+
+    // 1. MENU ICON AND NUMBER
+    lcd_drawMenuIcon(ROUTING_MENU);
+    lcd_setMenuHeaderState(CYAN);
+    lcd.clearRect(kMenuNumX, kMenuNumY, 7, 9);
+
+    // 2. HEADERS AND SIGNS
+    for (uint8_t i = 0; i < 7; i++) {
+        const EncoderFuncData& fd = kEncoderFuncDataLibrary[ENC_ROUTE_EQ_OUT + i];
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText(fd.funcHeader, kMenuHeaderTextSize, kMenuHeaderX[i], kMenuHeaderY[i]);
+        lcd_setMenuSignState(GRAY_75);
+        lcd.drawText(fd.sign, kMenuSignTextSize, kMenuSignBoxX[i], kMenuSignBoxY[i]);
+    }
+
+    // 3. DATA
+    for (uint8_t i = 0; i < 7; i++) lcd_drawRouting_Data(i);
+}
+
+void Controller::lcd_drawRouting_Data(uint8_t tab_) {
+    /// @brief Draws one ROUTING field's destination name.
+
+    uint8_t dest;
+    if (tab_ < NODE_REV) {
+        dest = routeFirstNode(routePatch.moduleDest[tab_]);
+    } else if (tab_ == 5) {
+        dest = metroOut;
+    } else if (tab_ == 6) {
+        dest = mixer.liMixerIn;
+    } else {
+        return;
+    }
+    if (dest >= kRouteNodeCount) dest = NODE_MASTER;
+    lcd_setMenuDataState(WHITE);
+    lcd.drawText(kRouteDestDataLibrary[dest].nameLongR, kMenuDataTextSize, kMenuDataX[tab_], kMenuDataY[tab_]);
+}
+
+void Controller::routing_setMetroOut(uint8_t out_) {
+    /// @brief Sets where the metronome click goes (global setting, saved in the system preset).
+
+    if (out_ < kRouteNodeCount) {
+        metroOut = out_;
+        if (menu == ROUTING_MENU) lcd_drawRouting_Data(5);
+        if (systemPresetSaveActive) {
+            stopSystemPresetTimer();
+            startSystemPresetTimer();
+        }
+    }
+}
+
+void Controller::routing_setPatch(const uint8_t* kit_) {
+    /// @brief Loads the module destinations from a kit/song file section (default chain if absent).
+
+    RoutePatch patch;
+    routeReadPatch(kit_, patch);
+    for (uint8_t m = 0; m < kRouteModuleCount; m++) routePatch.moduleDest[m] = patch.moduleDest[m];
+    if (menu == ROUTING_MENU) lcd_drawRoutingMenu();
+}
+
+void Controller::routing_reset() {
+    /// @brief Restores the default chain (EQ -> Filter 1 -> Filter 2 -> FX 1 -> FX 2 -> Reverb) and the
+    ///        metronome's default destination (reverb).
+
+    for (uint8_t m = 0; m < kRouteModuleCount; m++) routePatch.moduleDest[m] = kDefaultRoutePatch.moduleDest[m];
+    metroOut = NODE_REV;
+}
+
+/* Layer Instrument Functions ------------------------------------------------*/
+
 void Controller::layerInst_setOut(uint8_t layerNum_, uint8_t out_) {
     /// @brief Sets the layer's destination (OUT field). Writes the four stored routing settings
     ///        the way the old EQ/FILTER/EFFECT/REVERB fields did, so files stay compatible.
@@ -22152,25 +22324,26 @@ void Controller::processAudioRouting() {
     /// @brief Routes every source to its destination node and runs the modules in order,
     ///        each passing its output to the nodes set in routePatch (see Routing.h).
 
-    // 1. SOURCES AND THEIR DESTINATIONS
-    // Layers use the destination latched when their current note was triggered.
-    const float* sources[2 + kLayerLibrarySize];
-    uint8_t masks[2 + kLayerLibrarySize];
-    sources[0] = audioReceive;
-    masks[0] = routeMaskFromEntry(mixer.liMixerInMode);
-    sources[1] = audioMetronome;
-    masks[1] = routeMaskFromEntry(metroPlayData.mixerInMode);
+    // 1. PATCH SNAPSHOT
+    // The UI edits routePatch from the main loop; take one consistent copy per block.
+    const RoutePatch patch = routePatch;
+
+    // 2. SOURCES AND THEIR DESTINATIONS
+    // Line-in and metronome run continuously and crossfade when re-routed. Layers use the
+    // destination latched when their current note was triggered, so they switch at the next hit.
+    RouteSource sources[2 + kLayerLibrarySize];
+    sources[0] = {audioReceive, routeMaskFromEntry(mixer.liMixerInMode), &lineInFade};
+    sources[1] = {audioMetronome, routeMaskFromEntry(metroOut), &metroFade};
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-        sources[2 + i] = audioLayer[i];
-        masks[2 + i] = routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode);
+        sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr};
     }
 
-    // 2. NODE BUFFERS
+    // 3. NODE BUFFERS
     // Each module processes its own input buffer in place; the reverb also fills the right channel.
     const RouteBuffers buffers = {{audioEq, audioFilter[0], audioFilter[1], audioEffect[0], audioEffect[1], audioReverb_L}, audioReverb_R, audioSend_L, audioSend_R};
 
-    // 3. RUN
-    routeBlock<I2S_BLOCK_SIZE>(routePatch, buffers, sources, masks, 2 + kLayerLibrarySize, [this](uint8_t module_) {
+    // 4. RUN
+    routeBlock<I2S_BLOCK_SIZE>(patch, routeState, buffers, sources, 2 + kLayerLibrarySize, [this](uint8_t module_) {
         switch (module_) {
             case NODE_EQ:
                 processAudioEq();

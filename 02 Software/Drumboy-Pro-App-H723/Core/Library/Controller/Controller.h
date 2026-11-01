@@ -94,6 +94,10 @@ class Controller {
     volatile uint32_t i2sOvrCount = 0;                                  // I2S3 rx overruns; nonzero means word alignment may have shifted
     volatile uint32_t i2sUdrCount = 0;                                  // I2S3 tx underruns; nonzero means the audio isr missed its deadline
     RoutePatch routePatch = kDefaultRoutePatch;                         // where each module's output goes (Routing.h)
+    uint8_t metroOut = NODE_REV;                                        // metronome destination (V1.04 default: reverb)
+    RouteState routeState;                                              // module output fades (audio interrupt only)
+    RouteFade lineInFade;                                               // line-in route fade (audio interrupt only)
+    RouteFade metroFade;                                                // metronome route fade (audio interrupt only)
 #ifdef DSP_PROFILE
     // DSP load measurement (make PROFILE=1): CPU cycles spent in processAudioBlock
     volatile uint32_t dspCyclesSum = 0;                                 // summed since the last readout
@@ -976,6 +980,15 @@ class Controller {
 
     void layerInst_calculateMixMode(uint8_t layerNum_);
     void layerInst_setOut(uint8_t layerNum_, uint8_t out_);
+
+    void routing_select();
+    void lcd_drawRoutingMenu();
+    void lcd_drawRouting_Data(uint8_t tab_);
+    void routing_stepModuleOut(uint8_t module_, bool up_);
+    void routing_setModuleOut(uint8_t module_, uint8_t out_);
+    void routing_setMetroOut(uint8_t out_);
+    void routing_setPatch(const uint8_t* kit_);
+    void routing_reset();
 
     void layerInst_setMute(uint8_t layerNum_, bool mute_);
     void layerInst_setFill(uint8_t layerNum_, bool fill_);

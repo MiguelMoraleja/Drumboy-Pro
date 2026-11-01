@@ -180,8 +180,9 @@ inline uint8_t routeFedModules(const RoutePatch& patch_, const uint8_t* sourceMa
 
 // One overview line: the sources entering at entry_, then their chain, e.g.
 // "L1-3 L7 MT > F1 > F2 > FX1 > FX2 > REV > OUT". Layers are numbered from 1 and runs of three
-// or more are shortened. Lines longer than size_ - 1 end in "..". Returns the length.
-inline uint8_t routeOverviewLine(char* out_, uint8_t size_, uint16_t sources_, uint8_t entry_, const RoutePatch& patch_) {
+// or more are shortened. A line that does not fit in size_ - 1 characters drops the spaces around
+// ">" ("L1-10 LI>EQ>F1>...>OUT"); one that still does not fit ends in "..". Returns the length.
+inline uint8_t routeOverviewLineSep(char* out_, uint8_t size_, uint16_t sources_, uint8_t entry_, const RoutePatch& patch_, const char* sep_) {
     char buf[96];
     uint8_t len = 0;
     auto put = [&](const char* t) {
@@ -212,7 +213,7 @@ inline uint8_t routeOverviewLine(char* out_, uint8_t size_, uint16_t sources_, u
     uint8_t path[kRouteNodeCount];
     const uint8_t n = routePath(patch_, entry_, path);
     for (uint8_t k = 0; k < n; k++) {
-        put(" > ");
+        put(sep_);
         put(routeNodeShortName(path[k]));
     }
     buf[len] = 0;
@@ -224,6 +225,16 @@ inline uint8_t routeOverviewLine(char* out_, uint8_t size_, uint16_t sources_, u
     memcpy(out_, buf, len);
     out_[len] = 0;
     return len;
+}
+
+inline uint8_t routeOverviewLine(char* out_, uint8_t size_, uint16_t sources_, uint8_t entry_, const RoutePatch& patch_) {
+    char wide[96];
+    const uint8_t len = routeOverviewLineSep(wide, sizeof(wide), sources_, entry_, patch_, " > ");
+    if (len < size_) {
+        memcpy(out_, wide, len + 1);
+        return len;
+    }
+    return routeOverviewLineSep(out_, size_, sources_, entry_, patch_, ">");
 }
 
 // Buffers for one block. node[m] is module m's input, processed in place to become its output.

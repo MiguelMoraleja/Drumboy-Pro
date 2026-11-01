@@ -366,6 +366,12 @@ static void testOverview() {
     CHECK(strcmp(line, "L2 > F2 > FX1 > REV > OUT") == 0, "got '%s'", line);
     routeOverviewLine(line, sizeof(line), 0x4, NODE_MASTER, p);
     CHECK(strcmp(line, "L3 > OUT") == 0, "got '%s'", line);
+    // The default kit's line (all layers and line-in at EQ) is 47 characters: on the 46-character
+    // screen it drops the spaces around '>' instead of being cut.
+    routeOverviewLine(line, 47, 0x3FF | (1u << kRouteSourceLineIn), NODE_EQ, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L1-10 LI>EQ>F1>F2>FX1>FX2>REV>OUT") == 0, "default kit line: '%s'", line);
+    routeOverviewLine(line, 47, 0x3, NODE_EQ, kDefaultRoutePatch);
+    CHECK(strcmp(line, "L1 L2 > EQ > F1 > F2 > FX1 > FX2 > REV > OUT") == 0, "short lines keep spaces: '%s'", line);
     // Truncation keeps the buffer bounded and marks the cut.
     uint8_t len = routeOverviewLine(line, 20, 0x3FF, NODE_EQ, kDefaultRoutePatch);
     CHECK(len == 19 && strlen(line) == 19 && line[17] == '.' && line[18] == '.', "truncated: '%s' (%u)", line, len);

@@ -462,6 +462,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">⁘</span><div><b>Tap the SONG key</b> on its own (bottom right, the one you hold with the pads to pick a bank): the SONG page. Tap it there to turn the chain on or off (CHAIN).</div></div>
           <div class="k"><span class="keycap">↻</span><div><b>Fields:</b> STEP picks the step to edit, BANK and REPEATS set it, LENGTH adds or removes steps at the end (a new step copies the last one), END is LOOP or STOP, CHAIN ON/OFF.</div></div>
           <div class="k"><span class="keycap">⁘+</span><div><b>Picking a bank by hand</b> (SONG + pads) while the chain plays jumps the chain to the step that uses that bank. A bank the chain doesn't use turns the chain off.</div></div>
+          <div class="k"><span class="keycap">⧉</span><div><b>Copy a whole bank:</b> on the SONG page hold COPY (all 10 layers of the active bank, beats and fills), pick another bank with SONG + pads, hold PASTE. Works while playing; the per-layer copy on the song page is unchanged.</div></div>
           <div class="k"><span class="keycap">■</span><div><b>STOP</b> keeps the chain's position; <b>RESET</b> goes back to step 1. The chain is saved with the song; older firmware ignores it.</div></div>
         </div>
       </div>
@@ -1373,7 +1374,8 @@ const RELEASES = [
   { v: "V1.12", date: "2026-11-02", status: "Testing, not published",
     nw: ["Song mode: chain the 5 banks (up to 16 steps, 1–16 loops each), looping or stopping at the end; SONG page by tapping the SONG key",
          "A bank picked by hand while the chain plays jumps the chain to that step; STOP keeps the position, RESET goes to step 1",
-         "The chain is saved with the song; older firmware ignores it"],
+         "The chain is saved with the song; older firmware ignores it",
+         "Copy a whole bank (all 10 layers) to another: hold COPY, switch bank, hold PASTE on the SONG page"],
     fix: [] },
   { v: "V1.11", date: "2026-11-02", status: "GitHub release v1.11 · tested", pub: true,
     nw: ["Pitch in semitones, −24 to +24; a fast turn jumps by octaves; older kits keep their exact pitch until changed",

@@ -224,7 +224,7 @@ Kit and song files have a signature but no format version. Several items above c
 
 ### 15. Song mode: chain the banks
 
-**Status: done in V1.12** (`SongChain.h`, `test_songchain`). SONG page: tap the SONG key (the one held to pick banks); fields STEP, BANK, REPEATS, LENGTH, END (LOOP/STOP), CHAIN. Decided: a manual bank pick jumps the chain to the step using that bank (a bank not in the chain turns chain play off); STOP keeps the position, RESET goes to step 1. The chain is saved after the song file's EOF (marker `CHN`), so older firmware ignores it and no format version change was needed.
+**Status: done in V1.12** (`SongChain.h`, `test_songchain`). SONG page: tap the SONG key (the one held to pick banks); fields STEP, BANK, REPEATS, LENGTH, END (LOOP/STOP), CHAIN. Decided: a manual bank pick jumps the chain to the step using that bank (a bank not in the chain turns chain play off); STOP keeps the position, RESET goes to step 1. The chain is saved after the song file's EOF (marker `CHN`), so older firmware ignores it and no format version change was needed. Also in V1.12: whole-bank copy/paste on the SONG page (long COPY / PASTE, all 10 layers; clipboard in SDRAM after the preview ring).
 
 **Today.** Each layer has 5 song banks (`kBankLibrarySize`), and the active bank (`activeSongBank`) is the same for all layers. Holding the SONG key and pressing a pair of layer pads picks a bank (pads 1–2 = bank 1 … 9–10 = bank 5). While playing, `layerSong_triggerBank()` arms the change (`bankShiftFlag`, `targetSongBank`) and the sequencer switches at the next loop end; when stopped it switches at once (`layerSong_selectBank()`). Nothing plays the banks in sequence: every change is by hand.
 

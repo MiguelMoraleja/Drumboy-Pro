@@ -36,7 +36,7 @@ The MCU sits at the center of six subsystems: an NT35510 display driven over a 1
 - **Beat editing** on the Layer Song page (V1.10): MOVE a beat past its neighbours while keeping its fill (position shown as bar.beat.16th), SHIFT ALL to rotate a whole layer, and a short ADD press to insert a beat
 - **EUCLID page** (V1.10, the song page's second page): Euclidean rhythms with steps, hits, rotation and grid, applied live, REPLACE or MERGE with the layer's beats, CLEAR to undo; ACCENTS (V1.11) keeps some hits loud and makes the rest ghost notes
 - **Pitch in semitones** (V1.11): −24 to +24, a fast turn jumps by octaves; kits from older firmware keep their exact pitch until you change it
-- **Song mode** (V1.12): chain the 5 banks, each for 1–16 loops, up to 16 steps, looping or stopping at the end; tap the SONG key on its own for the SONG page
+- **Song mode** (V1.12): chain the 5 banks, each for 1–16 loops, up to 16 steps, looping or stopping at the end; tap the SONG key on its own for the SONG page; there, a long COPY / PASTE copies a whole bank (all 10 layers) to another
 - **Sample preview** (V1.11): turning SAMPLE plays the sample straight from the SD card (no loading, no length limit); the layer pad replays it; on/off and level on the Metronome page
 - **MIDI In/Out** (opto-isolated input) and **Sync In/Out** for external clock/gate sync
 - **SD-card firmware updates** via a dedicated bootloader with CRC-32 verified staged writes

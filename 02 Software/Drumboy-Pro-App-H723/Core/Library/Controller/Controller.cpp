@@ -488,6 +488,16 @@ void Controller::update() {
             layerSong_resetAllBeats(selectedLayerNum, activeSongBank);
         }
 
+        // Whole-bank copy/paste (SONG page).
+        if (bankCopyActionFlag) {
+            bankCopyActionFlag = false;
+            song_copyBank();
+        }
+        if (bankPasteActionFlag) {
+            bankPasteActionFlag = false;
+            song_pasteBank();
+        }
+
         // 11. SECONDARY NAVIGATION
         // Execute long-press navigation handlers.
         if (keyboard.upActionFlag) {
@@ -2291,6 +2301,11 @@ void Controller::keyboard_action() {
                                         startLongKeyTimer();
                                         break;
 
+                                    case SONG_MENU:
+                                        bankCopyKeyFlag = true;
+                                        startLongKeyTimer();
+                                        break;
+
                                     case LFO_MENU:
                                         lfoCopyKeyFlag = true;
                                         startLongKeyTimer();
@@ -2314,6 +2329,11 @@ void Controller::keyboard_action() {
                                     case LAYER_SONG_MENU:
                                         layerFillPasteKeyFlag = true;
                                         layerSongPasteKeyFlag = true;
+                                        startLongKeyTimer();
+                                        break;
+
+                                    case SONG_MENU:
+                                        bankPasteKeyFlag = true;
                                         startLongKeyTimer();
                                         break;
 
@@ -2446,6 +2466,11 @@ void Controller::keyboard_action() {
                                     keyboard.longKeyCounter = 0;
                                     lfoCopyKeyFlag = false;
                                 }
+                                if (bankCopyKeyFlag) {
+                                    stopLongKeyTimer();
+                                    keyboard.longKeyCounter = 0;
+                                    bankCopyKeyFlag = false;
+                                }
                                 break;
 
                             case KEY_PASTE:
@@ -2471,6 +2496,11 @@ void Controller::keyboard_action() {
                                     stopLongKeyTimer();
                                     keyboard.longKeyCounter = 0;
                                     lfoPasteKeyFlag = false;
+                                }
+                                if (bankPasteKeyFlag) {
+                                    stopLongKeyTimer();
+                                    keyboard.longKeyCounter = 0;
+                                    bankPasteKeyFlag = false;
                                 }
                                 break;
 
@@ -20869,6 +20899,42 @@ void Controller::song_toStartBank() {
     bankActionFlag = true;
 }
 
+// Whole-bank clipboard in SDRAM (RAM_BANK_CLIPBOARD_ADDRESS): one Bank per layer.
+static Bank* const bankClipboard = reinterpret_cast<Bank*>(RAM_BANK_CLIPBOARD_ADDRESS);
+static_assert(RAM_BANK_CLIPBOARD_ADDRESS + kLayerLibrarySize * sizeof(Bank) <= 0xC0FB9640u, "bank clipboard must end before the images");
+
+void Controller::song_copyBank() {
+    /// @brief SONG page, long COPY: copies the active bank of every layer (beats and fills).
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        memcpy(static_cast<void*>(&bankClipboard[i]), static_cast<const void*>(&layerLibrary[i].bankLibrary[activeSongBank]), sizeof(Bank));
+    }
+    bankCopyActive = true;
+    bankCopySource = activeSongBank;
+    if (menu == SONG_MENU) lcd_drawSongOverview();
+}
+
+void Controller::song_pasteBank() {
+    /// @brief SONG page, long PASTE: replaces the active bank of every layer with the copy. Each
+    /// layer is swapped in with the sequencer interrupt held off (as layerSong_commitBank does),
+    /// so pasting while playing is safe. Beats past the song end (the song got shorter since the
+    /// copy) are dropped.
+    if (!bankCopyActive) return;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        memcpy(static_cast<void*>(&layerSongScratch), static_cast<const void*>(&bankClipboard[i]), sizeof(Bank));
+        for (uint8_t b = 0; b < kBeatLibrarySize; b++) {
+            if (layerSongScratch.beatLibrary[b].getActive() && (layerSongScratch.beatLibrary[b].getStartInterval() >= songInterval)) layerSongScratch.resetBeat(b);
+        }
+        beatListRebuild(layerSongScratch, songInterval);
+        Bank& bank = layerLibrary[i].bankLibrary[activeSongBank];
+        __disable_irq();
+        bank = layerSongScratch;
+        layerSong_calculatePlayBeatNum(i, activeSongBank, playInterval);
+        __enable_irq();
+        lcd_drawSong(i, activeSongBank);
+    }
+    if (menu == SONG_MENU) lcd_drawSongOverview();
+}
+
 void Controller::song_setActive(bool active_) {
     /// @brief Chain play on/off. Turned on while playing, the chain continues from the step that uses
     /// the bank playing now (or from step 1); while stopped, it starts from its current step.
@@ -20883,6 +20949,7 @@ void Controller::song_setActive(bool active_) {
 void Controller::song_manualBank(uint8_t bank_) {
     /// @brief A bank picked by hand (SONG + pads) while the chain is on: the chain jumps to the step
     /// that uses that bank; a bank the chain doesn't use turns chain play off.
+    chainActionFlag = true;  // the SONG page shows the active bank (copy hint)
     if (!songChain.active) return;
     __disable_irq();
     const int8_t step = chainJumpToBank(songChain, chainPlay, bank_);
@@ -20990,6 +21057,12 @@ void Controller::lcd_drawSongOverview() {
     }
     lcd.setForeColor(songChain.active ? CYAN : GRAY_75);
     if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 4 * kLineStep);
+
+    // Whole-bank clipboard (long COPY / PASTE on this page).
+    len = bankCopyActive ? snprintf(line, sizeof(line), "COPIED BANK %u  PASTE: HOLD PASTE", static_cast<unsigned>(bankCopySource + 1))
+                         : snprintf(line, sizeof(line), "HOLD COPY: COPY BANK %u", static_cast<unsigned>(activeSongBank + 1));
+    lcd.setForeColor(GRAY_75);
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 3 * kLineStep);
 }
 
 bool Controller::layerPageMenu() const {
@@ -25728,6 +25801,23 @@ void Controller::interruptLongKeyRead() {
             keyboard.longKeyCounter = 0;
             layerInstResetKeyFlag = false;
             layerInstResetActionFlag = true;
+        }
+
+        // SONG PAGE: WHOLE-BANK COPY / PASTE
+        else if (bankCopyKeyFlag) {
+            stopLongKeyTimer();
+            keyboard.longKeyCounter = 0;
+            bankCopyKeyFlag = false;
+            bankCopyActionFlag = true;
+            textCopyFlag = true;
+        } else if (bankPasteKeyFlag) {
+            stopLongKeyTimer();
+            keyboard.longKeyCounter = 0;
+            bankPasteKeyFlag = false;
+            if (bankCopyActive) {
+                bankPasteActionFlag = true;
+                textPasteFlag = true;
+            }
         }
 
         // LAYER SONG ACTIONS

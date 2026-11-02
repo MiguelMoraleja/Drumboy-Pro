@@ -370,6 +370,9 @@ const uint32_t kChorusByteSize                      = kChorusSize * 4;
 const uint32_t kPreviewRingSize                     = 65536;
 static_assert(0xC0EA6000u + kPreviewRingSize * 4u <= 0xC0FB9640u, "preview ring must end before the images");
 
+// Whole-bank clipboard (SONG page COPY/PASTE): one Bank per layer, right after the preview ring.
+#define RAM_BANK_CLIPBOARD_ADDRESS                  (0xC0EA6000u + kPreviewRingSize * 4u)
+
 #define RAM_IMAGE_LOGO_ADDRESS                      0xC0FB9640                  // 170px * 170px
 #define RAM_IMAGE_LOGO_PALETTE_ADDRESS              0xC0FB9640                  // 128 bytes
 #define RAM_IMAGE_LOGO_DATA_ADDRESS                 0xC0FB9640 + 128            // 28.900 bytes

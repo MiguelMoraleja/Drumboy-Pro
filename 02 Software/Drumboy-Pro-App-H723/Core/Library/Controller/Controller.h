@@ -297,6 +297,11 @@ class Controller {
     uint8_t songStepSel = 0;            // step shown/edited on the SONG page
     bool songKeyUsed = false;           // a pad was pressed while SONG was held (bank pick, not a tap)
     volatile bool chainActionFlag = false;  // the interrupt moved the chain: redraw the SONG page
+    // Whole-bank copy/paste on the SONG page (long COPY / PASTE): all 10 layers of the active bank.
+    bool bankCopyKeyFlag = false, bankPasteKeyFlag = false;
+    volatile bool bankCopyActionFlag = false, bankPasteActionFlag = false;
+    bool bankCopyActive = false;
+    uint8_t bankCopySource = 0;
 
     uint8_t loadFormatVersion = 0;   // format version of the kit/song file being loaded (FileFormat.h)
     uint32_t pitchTurnTick = 0;      // last PITCH encoder step, for fast-turn octave steps
@@ -1038,6 +1043,8 @@ class Controller {
     void song_setActive(bool active_);
     void song_manualBank(uint8_t bank_);
     void song_toStartBank();
+    void song_copyBank();
+    void song_pasteBank();
     void lcd_drawSongMenu();
     void lcd_drawSong_Data();
     void lcd_drawSongOverview();

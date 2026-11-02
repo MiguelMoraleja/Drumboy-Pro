@@ -6,9 +6,11 @@
 #include <cmath>
 #include <random>
 
+#include "FileFormat.h"
 #include "Lfo.h"
 #include "MCP23017.h"
 #include "Metronome.h"
+#include "Pitch.h"
 #include "fatfs.h"
 #include "main.h"
 #include "sdmmc.h"
@@ -1369,7 +1371,7 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_INST_0_INST,         ENC_RES_M, "INST      ", "LAYER ", "   ", false},
     {ENC_INST_0_SAMPLE,       ENC_RES_M, "SAMPLE    ", "LAYER ", "   ", false},
     {ENC_INST_0_LEVEL,        ENC_RES_F, "LEVEL     ", "LAYER ", "  %", false},
-    {ENC_INST_0_PITCH,        ENC_RES_F, "PITCH     ", "LAYER ", "  %", false},
+    {ENC_INST_0_PITCH,        ENC_RES_M, "PITCH     ", "LAYER ", "  %", false},
     {ENC_INST_0_DIRECT,       ENC_RES_S, "DIRECTION ", "LAYER ", "   ", false},
     {ENC_INST_0_RESOL,        ENC_RES_F, "RESOLUTION", "LAYER ", "BIT", false},
 
@@ -6139,8 +6141,10 @@ struct Lfo {
 const uint8_t kMinLayerLevel                        = 0;
 const uint8_t kMaxLayerLevel                        = 100;
 
+// Layer pitch is a pitch code (Pitch.h): semitones -24..+24, or the old linear scale for layers
+// loaded from older files.
 const uint8_t kMinLayerPitch                        = 0;
-const uint8_t kMaxLayerPitch                        = 150;
+const uint8_t kMaxLayerPitch                        = kPitchCodeMax;
 
 const uint8_t kMinLayerDirection                    = 0;
 const uint8_t kMaxLayerDirection                    = 3;
@@ -6182,7 +6186,7 @@ const uint8_t kMinSongBank                          = 0;
 const uint8_t kMaxSongBank                          = 4;
 
 const uint8_t kInitialLayerLevel                    = 75;
-const uint8_t kInitialLayerPitch                    = 50;
+const uint8_t kInitialLayerPitch                    = kPitchDefaultCode;  // 0 semitones
 const uint8_t kInitialLayerDirection                = 0;
 const uint8_t kInitialLayerResolution               = 20;
 const uint8_t kInitialLayerStart                    = 0;

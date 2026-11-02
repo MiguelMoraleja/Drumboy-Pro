@@ -277,6 +277,9 @@ class Controller {
     uint16_t euclidDropped = 0;  // hits that did not fit in the bank
     uint8_t euclidBank = 0;      // song bank euclidSnapshot was taken from
 
+    uint8_t loadFormatVersion = 0;   // format version of the kit/song file being loaded (FileFormat.h)
+    uint32_t pitchTurnTick = 0;      // last PITCH encoder step, for fast-turn octave steps
+    uint32_t pitchOctaveTick = 0;    // last octave step
     uint32_t lfoValuesDrawTick = 0;  // last refresh of LFO-modulated values on the instrument page
     uint8_t lfoValuesLive = 0;       // instrument fields currently showing a modulated value (bit per LayerShown)
 
@@ -665,6 +668,8 @@ class Controller {
     void lcd_drawLayerInst_SampleData(uint8_t layerNum_);
     void lcd_drawLayerInst_GraphData(uint8_t layerNum_);
     void lcd_drawLayerInst_LevelData(uint8_t layerNum_);
+    bool sd_formatSupported(const char* fileName_, uint16_t refSize_);
+    void layerInst_stepPitch(bool up_, bool encoder_);
     bool layerInst_lfoShown(uint8_t layerNum_, LayerShown value_, int16_t& shown_);
     void lcd_drawLayerInstLfoValues();
     void lcd_drawLayerInst_PitchData(uint8_t layerNum_);

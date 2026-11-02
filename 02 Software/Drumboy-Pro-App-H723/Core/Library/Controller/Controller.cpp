@@ -3865,8 +3865,9 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_INST_0_PITCH:
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoPitch < kMaxLfo) ? layerInst_setLfoPitch(selectedLayerNum, layerLibrary[selectedLayerNum].lfoPitch + 1) : layerInst_setLfoPitch(selectedLayerNum, kMinLfo);
-            } else if (layerLibrary[selectedLayerNum].pitch < kMaxLayerPitch)
-                layerInst_setPitch(selectedLayerNum, layerLibrary[selectedLayerNum].pitch + 1);
+            } else {
+                layerInst_stepPitch(true, true);
+            }
             break;
 
         case ENC_INST_0_DIRECT:
@@ -4426,8 +4427,9 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_INST_0_PITCH:
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoPitch > kMinLfo) ? layerInst_setLfoPitch(selectedLayerNum, layerLibrary[selectedLayerNum].lfoPitch - 1) : layerInst_setLfoPitch(selectedLayerNum, kMaxLfo);
-            } else if (layerLibrary[selectedLayerNum].pitch > kMinLayerPitch)
-                layerInst_setPitch(selectedLayerNum, layerLibrary[selectedLayerNum].pitch - 1);
+            } else {
+                layerInst_stepPitch(false, true);
+            }
             break;
 
         case ENC_INST_0_DIRECT:
@@ -5519,6 +5521,21 @@ SdResult Controller::sd_checkFile(uint8_t fileNum_) {
     return result;
 }
 
+bool Controller::sd_formatSupported(const char* fileName_, uint16_t refSize_) {
+    /// @brief Reads only the file's format stamp (FileFormat.h) into loadFormatVersion and says
+    /// whether this firmware can load it. Files without a stamp are version 0 (V1.10 and older).
+
+    uint8_t stamp[2] = {0, 0};
+    UINT bytes = 0;
+    f_close(&sd.file);
+    if (f_open(&sd.file, fileName_, FA_READ) == FR_OK) {
+        if (f_lseek(&sd.file, refSize_ + kFormatVersionOffset) == FR_OK) f_read(&sd.file, stamp, 2, &bytes);
+        f_close(&sd.file);
+    }
+    loadFormatVersion = formatVersionFrom(stamp[0], stamp[1]);
+    return formatSupported(loadFormatVersion);
+}
+
 SdResult Controller::sd_loadFile(uint8_t fileNum_) {
     /// @brief Loads a project file and reconstructs runtime state in two verified phases.
     /// Applies global parameters, validates instrument/sample references, and restores song beats.
@@ -5558,7 +5575,8 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
 
     // 4. FILE ELIGIBILITY CHECK
     // Load only if file exists and is marked as an active project slot.
-    if ((sd_checkFile(fileNum_) == SD_OK) && (fileStatus == FILE_ACTIVE)) {
+    // A file from newer firmware (higher format version) is refused before anything changes.
+    if ((sd_checkFile(fileNum_) == SD_OK) && (fileStatus == FILE_ACTIVE) && sd_formatSupported(fileName, strlen(kFileRef))) {
         // 4.1 PREVIOUS SONG CLEANUP
         // Clear every layer's existing beats before this file's song values (bar/measure/etc.) are applied.
         for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
@@ -5698,7 +5716,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                         uint16_t offset = 240 + (i * 25);
                         layerInst_setLevel(i, data[offset + 0]);
-                        layerInst_setPitch(i, data[offset + 1]);
+                        layerInst_setPitch(i, pitchFromFile(static_cast<uint8_t>(data[offset + 1]), static_cast<uint8_t>(data[offset + 24]), loadFormatVersion));
                         layerInst_setDirection(i, data[offset + 2]);
                         layerInst_setResolution(i, data[offset + 3]);
                         layerInst_setStart(i, data[offset + 4]);
@@ -6059,7 +6077,8 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
         Layer& layer = layerLibrary[i];
         uint16_t offset = 240 + (i * 25);
         data[offset + 0] = layer.level;
-        data[offset + 1] = layer.pitch;
+        data[offset + 1] = pitchFileOldByte(layer.pitch);   // older firmware reads this
+        data[offset + 24] = pitchFileSemiByte(layer.pitch); // semitones (Pitch.h)
         data[offset + 2] = layer.direction;
         data[offset + 3] = layer.resolution;
         data[offset + 4] = layer.start;
@@ -6084,8 +6103,9 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
         data[offset + kRouteFileLayerByte] = routeMaskFromEntry(layer.mixerInMode);
     }
 
-    // Module destinations and the routing marker (Routing.h).
+    // Module destinations and the routing marker (Routing.h), and the file format version.
     routeWritePatch(data, routePatch);
+    formatWriteVersion(data);
 
     // 2.12 ASSET REFERENCES
     // Store per-layer instrument/sample activity flags and names.
@@ -6371,7 +6391,8 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
 
     // 4. FILE ELIGIBILITY CHECK
     // Load only if file exists and is marked as an active drumkit slot.
-    if ((sd_checkDrumkit(kitNum_) == SD_OK) && (drumkitStatus == FILE_ACTIVE)) {
+    // A kit from newer firmware (higher format version) is refused before anything changes.
+    if ((sd_checkDrumkit(kitNum_) == SD_OK) && (drumkitStatus == FILE_ACTIVE) && sd_formatSupported(drumkitName, strlen(kDrumkitRef))) {
         char data[kDrumkitByteSize] = {0x00};
         if (f_open(&sd.file, drumkitName, FA_READ) == FR_OK) {
             if (f_lseek(&sd.file, strlen(kDrumkitRef)) == FR_OK) {
@@ -6501,7 +6522,7 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                         uint16_t offset = 240 + (i * 25);
                         layerInst_setLevel(i, data[offset + 0]);
-                        layerInst_setPitch(i, data[offset + 1]);
+                        layerInst_setPitch(i, pitchFromFile(static_cast<uint8_t>(data[offset + 1]), static_cast<uint8_t>(data[offset + 24]), loadFormatVersion));
                         layerInst_setDirection(i, data[offset + 2]);
                         layerInst_setResolution(i, data[offset + 3]);
                         layerInst_setStart(i, data[offset + 4]);
@@ -6792,7 +6813,8 @@ SdResult Controller::sd_saveDrumkit(uint8_t kitNum_) {
         Layer& layer = layerLibrary[i];
         uint16_t offset = 240 + (i * 25);
         data[offset + 0] = layer.level;
-        data[offset + 1] = layer.pitch;
+        data[offset + 1] = pitchFileOldByte(layer.pitch);   // older firmware reads this
+        data[offset + 24] = pitchFileSemiByte(layer.pitch); // semitones (Pitch.h)
         data[offset + 2] = layer.direction;
         data[offset + 3] = layer.resolution;
         data[offset + 4] = layer.start;
@@ -6817,8 +6839,9 @@ SdResult Controller::sd_saveDrumkit(uint8_t kitNum_) {
         data[offset + kRouteFileLayerByte] = routeMaskFromEntry(layer.mixerInMode);
     }
 
-    // Module destinations and the routing marker (Routing.h).
+    // Module destinations and the routing marker (Routing.h), and the file format version.
     routeWritePatch(data, routePatch);
+    formatWriteVersion(data);
 
     // 2.12 ASSET REFERENCES
     // Store per-layer instrument/sample activity flags and names.
@@ -11626,7 +11649,7 @@ void Controller::lcd_drawLayerInst_GraphData(uint8_t layerNum_) {
 
     // 7. DURATION CALCULATION
     // Compute playback duration from selection window and pitch factor.
-    float pitchFactor = kLayerPitchDataLibrary[layer.pitch].data;
+    float pitchFactor = ::pitchFactor(layer.pitch);
     float selectionRatio = static_cast<float>(layer.end - layer.start) / 100.0f;
     if (selectionRatio < 0.0f) selectionRatio = 0.0f;
 
@@ -11741,10 +11764,13 @@ void Controller::lcd_drawLayerInst_PitchData(uint8_t layerNum_) {
 
     // 2. PITCH VALUE DRAW
     // Draw pitch value text.
-    // While playing with an LFO on it, show what the last hit used, in yellow.
+    // While playing with an LFO on it, show what the last hit used, in yellow. Semitones ("+7"),
+    // or the old speed factor ("1.37") for a pitch loaded from an older file and not changed yet.
     int16_t value = layerLibrary[layerNum_].pitch;
     lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_PITCH, value) ? YELLOW : WHITE);
-    lcd.drawText(kLayerPitchDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
+    char pitchText[24];
+    pitchName(static_cast<uint8_t>(value), pitchText, sizeof(pitchText));
+    lcd.drawText(pitchText, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
 
     // 3. LFO LABEL DRAW
     // Draw assigned LFO short label.
@@ -18786,16 +18812,17 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     tBD.volumeMultiplier = kLayerVolumeCoef * kNumberDataLibrary[nLevel].powMultiplier * fillVolMultiplier_ * normMultiplier * mixer.masterVolumeFloat;
 
                     // calculate pitch with lfo
+                    // (Pitch.h: semitone layers move +-12 semitones at full depth; layers loaded from
+                    // older files keep the old rule.)
                     if ((layer.lfoPitch) && (lfoLibrary[(layer.lfoPitch - 1)].active)) {
                         Lfo& lfo = lfoLibrary[(layer.lfoPitch - 1)];
                         float lfoData = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
                         float lfoDepth = kNumberDataLibrary[lfo.depth].stdMultiplier;
-                        nPitch = layer.pitch + round(100 * (lfoData - 0.5) * lfoDepth);
-                        nPitch = clamp(nPitch, (int16_t)kMinLayerPitch, (int16_t)kMaxLayerPitch);
+                        nPitch = pitchWithLfo(layer.pitch, lfoData, lfoDepth);
                     } else {
                         nPitch = layer.pitch;
                     }
-                    tBD.increment = kLayerPitchDataLibrary[nPitch].data;
+                    tBD.increment = pitchFactor(static_cast<uint8_t>(nPitch));
 
                     // calculate resolution with lfo
                     if ((layer.lfoResolution) && (lfoLibrary[(layer.lfoResolution - 1)].active)) {
@@ -18906,14 +18933,14 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     case 1:
                         tBD.fadeFlag = true;
                         tBD.fadeAction = false;
-                        tBD.counterFadeStart = tBD.counterStart + 50;
+                        tBD.counterFadeStart = tBD.counterStart + (50 * tBD.increment);
                         tBD.counterFade = 0;
                         break;
 
                     case 2:
                         tBD.fadeFlag = false;
                         tBD.fadeAction = false;
-                        tBD.counterFadeStart = tBD.counterStart + 50;
+                        tBD.counterFadeStart = tBD.counterStart + (50 * tBD.increment);
                         tBD.counterFade = 0;
                         break;
 
@@ -19157,8 +19184,9 @@ void Controller::layerInst_menuUp() {
                 case LAYER_INST_0_MENU:
                     if (keyboard.shiftKeyPress) {
                         (layer.lfoPitch < kMaxLfo) ? layerInst_setLfoPitch(selectedLayerNum, layer.lfoPitch + 1) : layerInst_setLfoPitch(selectedLayerNum, kMinLfo);
-                    } else if (layer.pitch < kMaxLayerPitch)
-                        layerInst_setPitch(selectedLayerNum, layer.pitch + 1);
+                    } else {
+                        layerInst_stepPitch(true, false);
+                    }
                     break;
 
                 case LAYER_INST_1_MENU:
@@ -19276,8 +19304,9 @@ void Controller::layerInst_menuDown() {
                 case LAYER_INST_0_MENU:
                     if (keyboard.shiftKeyPress) {
                         (layer.lfoPitch > kMinLfo) ? layerInst_setLfoPitch(selectedLayerNum, layer.lfoPitch - 1) : layerInst_setLfoPitch(selectedLayerNum, kMaxLfo);
-                    } else if (layer.pitch > kMinLayerPitch)
-                        layerInst_setPitch(selectedLayerNum, layer.pitch - 1);
+                    } else {
+                        layerInst_stepPitch(false, false);
+                    }
                     break;
 
                 case LAYER_INST_1_MENU:
@@ -20046,6 +20075,27 @@ void Controller::layerInst_setLevel(uint8_t layerNum_, uint8_t level_) {
         // Refresh data field when corresponding menu page is visible.
         if ((menu == LAYER_INST_0_MENU) && (selectedLayerNum == layer.number)) lcd_drawLayerInst_LevelData(layerNum_);
     }
+}
+
+void Controller::layerInst_stepPitch(bool up_, bool encoder_) {
+    /// @brief One PITCH step on the selected layer: a semitone, or with a fast encoder turn the next
+    /// octave line (-24, -12, 0, +12, +24). A pitch loaded from an older file snaps to its nearest
+    /// semitone on the first step (Pitch.h).
+
+    if (selectedLayerNum == -1) return;
+    bool octave = false;
+    if (encoder_) {
+        // Detents less than 60 ms apart count as a fast turn. One octave step per 150 ms, so a
+        // fast spin walks through the octaves instead of jumping straight to the end.
+        const uint32_t now = HAL_GetTick();
+        octave = (now - pitchTurnTick) < 60;
+        pitchTurnTick = now;
+        if (octave) {
+            if ((now - pitchOctaveTick) < 150) return;
+            pitchOctaveTick = now;
+        }
+    }
+    layerInst_setPitch(selectedLayerNum, pitchStep(layerLibrary[selectedLayerNum].pitch, up_, octave));
 }
 
 void Controller::layerInst_setPitch(uint8_t layerNum_, uint8_t pitch_) {

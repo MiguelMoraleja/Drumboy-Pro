@@ -36,7 +36,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 5. ✅ [8](#8-limiter-setting-does-nothing) LIMITER.
 6. ✅ Reproducible release builds (from [10](#10-housekeeping)), before tagging V1.10.
 
-**Sprint 2, "Formats and sound":** [14](#14-euclid-velocity-and-variance) part A (accents, no format change) as a quick start, then [9](#9-songkit-file-format-version) file format version, then [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones and [13](#13-sample-preview-while-browsing) sample preview (largest risk: SD streaming while playing, larger system preset).
+**Sprint 2, V1.11 "Formats and sound"** (built, waiting for the hardware test): ✅ [14](#14-euclid-velocity-and-variance) part A ACCENTS, ✅ [9](#9-songkit-file-format-version) file format version, ✅ [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones, ✅ [13](#13-sample-preview-while-browsing) sample preview.
 
 **Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
 
@@ -64,6 +64,8 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 **Done when.** Level with a sine LFO, playing: the LEVEL field visibly follows each hit. When stopped, it shows the base value again. No flicker, and no change in DSP load (check with `make PROFILE=1`).
 
 ### 2. Instrument pitch should step in semitones and octaves
+
+**Status: done in V1.11** (`Pitch.h`, `test_pitch`). −24 to +24 semitones; a fast turn steps to the next octave line; SHIFT still picks the pitch LFO; LFO depth ±12 semitones. Layers from older files keep their exact old pitch (shown as before, e.g. `1.37`) until PITCH is turned, then snap to the nearest semitone. Not done: anti-aliasing above 2× (linear interpolation only, so pitching up more than an octave can sound harsh on bright samples).
 
 **What happens.** PITCH on instrument page 0 is a playback-speed factor from 0.50 to 2.00 in steps of 0.01 (`kLayerPitchDataLibrary`, 151 entries, index 50 = 1.00). So it covers only one octave down and one up, and most values are not musical intervals. Patterning-style use (dial a pitch in semitones, jump by octaves) is not possible.
 
@@ -137,6 +139,8 @@ The mixer's LIMITER (0–10) is saved in the system preset (byte 6), shown and e
 
 ### 9. Song/kit file format version
 
+**Status: done in V1.11** (`FileFormat.h`). Kit section byte 496 = version, 497 = check byte; covers kit and song files. Old files are version 0; a newer file is refused before anything changes. Version 1 = semitone pitch in layer record byte 24.
+
 Kit and song files have a signature but no format version. Several items above change what is stored (pitch scale, multi-destination routing, LFO module targets, fill types). Add a version byte in a spare kit-section byte (and the song section) so new firmware can convert old files and fail cleanly on newer ones. The routing marker (`0xA5` at kit byte 498) is the pattern to follow.
 
 ### 10. Housekeeping
@@ -186,6 +190,8 @@ Kit and song files have a signature but no format version. Several items above c
 
 ### 13. Sample preview while browsing
 
+**Status: done in V1.11** (`Preview.h`, `test_preview`). PREVIEW and PREV LEVEL on the Metronome page (tabs 4–5); 256 KB ring in the SDRAM gap at 0xC0EA6000; FatFs `_FS_LOCK` raised to 3. The SDRAM gap was only checked statically (nothing in the code references it); watch for any glitch in the preview that could mean something else writes there.
+
 **Today.** On the instrument page, turning SAMPLE only selects a file (`layerInst_setSampleSelected()` reads its WAV header). To hear it, you have to load it with ADD (`layerInst_setSampleLoaded()`), which replaces the layer's sample, copies the whole file from SD to SDRAM and calls `keyboard_disable()` until it's done. The sample is cut at 5.44 s (`kSampleSize` = 240,000 samples).
 
 **Proposal.**
@@ -200,6 +206,8 @@ Kit and song files have a signature but no format version. Several items above c
 ### 14. EUCLID: velocity and variance
 
 **Today.** Every hit the EUCLID page makes is a plain beat at full velocity (BASIC / FLAT), so the pattern sounds mechanical. Plain beats have only three velocities: FLAT (100), GHOST (50) and MUTED (0), set by the beat's fill PATTERN; the VELOCITY field (FLAT, STEP, DESCEND, ASCEND, RANDOM) only shapes the micro-hits of a complex fill, not single beats. Variance is possible today only indirectly: an LFO on the layer's LEVEL (RANDOM type for humanising) with STYLE on changes each hit, and since V1.10 the instrument page shows the value used.
+
+**Status: part A done in V1.11** (ACCENTS on EUCLID tab 7, `euclidAccents()` in `Euclid.h`). Part B open.
 
 **Proposal**, in two parts:
 

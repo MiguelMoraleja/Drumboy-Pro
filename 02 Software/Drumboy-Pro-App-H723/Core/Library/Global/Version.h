@@ -6,6 +6,6 @@
 #define __VERSION_H
 
 #define FW_VERSION_MAJOR 1
-#define FW_VERSION_MINOR 10
+#define FW_VERSION_MINOR 11
 
 #endif

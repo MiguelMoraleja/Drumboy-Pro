@@ -161,7 +161,48 @@ static void testStream() {
     CHECK(maxStep < 0.05f, "smooth output, largest step %f", maxStep);  // sine step ~0.03 + fade
 }
 
+// Throughput: a 48 kHz 24-bit stereo file (6 bytes per frame) with a main loop that only gets to
+// run once every ~20 ms (28 audio blocks). One 4 KB read per pass (V1.11 first build) runs the
+// ring dry again and again; up to 4 x 12 KB per pass while the ring is under half full keeps up.
+static uint32_t streamUnderruns(uint32_t chunkBytes, int passes, int blocksPerLoop) {
+    std::vector<float> ringBuf(65536);
+    PreviewRing r{ringBuf.data(), static_cast<uint32_t>(ringBuf.size() - 1), 0, 0};
+    PreviewVoice v{};
+    const PreviewFormat f{24, 2, 48000};
+    const uint32_t step = previewFrameBytes(f);
+    std::vector<uint8_t> raw(6 * 48000 * 4);  // 4 s
+    for (auto& c : raw) c = static_cast<uint8_t>(rng());
+    size_t pos = 0;
+    auto service = [&]() {
+        for (int k = 0; k < passes && pos < raw.size(); k++) {
+            if (k > 0 && previewRingCount(r) >= (r.mask + 1) / 2) break;
+            uint32_t chunk = (chunkBytes / step) * step;
+            if (chunk > raw.size() - pos) chunk = static_cast<uint32_t>(raw.size() - pos);
+            if (previewRingFree(r) < chunk / step) break;
+            pos += previewConvert(r, raw.data() + pos, chunk, f);
+        }
+        if (pos >= raw.size()) v.sourceDone = true;
+    };
+    service();
+    v.state = PREVIEW_PLAY;
+    float out[32];
+    for (int b = 0; b < 8000 && v.state != PREVIEW_IDLE; b++) {
+        if (b % blocksPerLoop == 0) service();
+        previewRender(r, v, out, 32, 1.0f);
+    }
+    return v.underruns;
+}
+
+static void testThroughput() {
+    const uint32_t before = streamUnderruns(4096, 1, 28);
+    const uint32_t after = streamUnderruns(12288, 4, 28);
+    CHECK(before > 0, "4 KB per pass should starve a 24-bit stereo stream (%u underruns)", before);
+    CHECK(after == 0, "4 x 12 KB per pass keeps up (%u underruns)", after);
+    std::printf("48k/24-bit stereo, main loop every 20 ms: %u underruns with 4 KB/pass, %u with 4 x 12 KB\n", before, after);
+}
+
 int main() {
+    testThroughput();
     testDecode();
     testConvertMatchesLoader();
     testVoice();

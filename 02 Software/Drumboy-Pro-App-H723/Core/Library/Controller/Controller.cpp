@@ -20716,35 +20716,42 @@ void Controller::preview_start(uint8_t layerNum_) {
     previewVoice.ramp = 0.0f;
     previewVoice.last = 0.0f;
     previewVoice.starved = false;
-    for (uint8_t i = 0; i < 4; i++) preview_service();  // a head start before playing
+    preview_service();  // a head start before playing (up to 4 chunks)
     __DMB();
     previewVoice.state = PREVIEW_PLAY;
 }
 
 void Controller::preview_service() {
-    /// @brief Main loop: reads one chunk of the preview file into the ring when there is room.
-    static uint8_t raw[4096];
-    if (!previewFileOpen) return;
-    const uint32_t step = previewFrameBytes(previewFormat);
-    const uint8_t repeat = previewRepeat(previewFormat);
-    uint32_t chunk = (step == 0) ? 0 : (sizeof(raw) / step) * step;
-    if (step && (chunk > previewBytesLeft)) chunk = previewBytesLeft - (previewBytesLeft % step);
-    bool done = (chunk == 0);
-    if (!done) {
-        if (previewRingFree(previewRing) < (chunk / step) * repeat) return;  // not enough room yet
-        UINT got = 0;
-        if ((f_read(&previewFile, raw, chunk, &got) != FR_OK) || (got == 0)) {
-            done = true;
-        } else {
-            previewConvert(previewRing, raw, got - (got % step), previewFormat);
-            previewBytesLeft -= got;
-            done = (previewBytesLeft < step);
+    /// @brief Main loop: tops up the preview ring from the file. Reads up to 4 chunks per call while
+    /// the ring is under half full, so wide formats keep up: a 48 kHz 24-bit stereo file needs 6
+    /// bytes per output sample, three times a 16-bit mono one, and one 4 KB read per main-loop pass
+    /// was not enough for it (the ring kept running dry and the preview fluttered).
+    // 12288 bytes divides by every frame size (1, 2, 3, 4, 6, 8, 12, 16, 24 bytes), so chunks never
+    // split a frame.
+    static uint8_t raw[12288];
+    for (uint8_t pass = 0; (pass < 4) && previewFileOpen; pass++) {
+        if ((pass > 0) && (previewRingCount(previewRing) >= (previewRing.mask + 1) / 2)) return;
+        const uint32_t step = previewFrameBytes(previewFormat);
+        const uint8_t repeat = previewRepeat(previewFormat);
+        uint32_t chunk = (step == 0) ? 0 : (sizeof(raw) / step) * step;
+        if (step && (chunk > previewBytesLeft)) chunk = previewBytesLeft - (previewBytesLeft % step);
+        bool done = (chunk == 0);
+        if (!done) {
+            if (previewRingFree(previewRing) < (chunk / step) * repeat) return;  // not enough room yet
+            UINT got = 0;
+            if ((f_read(&previewFile, raw, chunk, &got) != FR_OK) || (got == 0)) {
+                done = true;
+            } else {
+                previewConvert(previewRing, raw, got - (got % step), previewFormat);
+                previewBytesLeft -= got;
+                done = (previewBytesLeft < step);
+            }
         }
-    }
-    if (done) {
-        previewVoice.sourceDone = true;
-        f_close(&previewFile);
-        previewFileOpen = false;
+        if (done) {
+            previewVoice.sourceDone = true;
+            f_close(&previewFile);
+            previewFileOpen = false;
+        }
     }
 }
 

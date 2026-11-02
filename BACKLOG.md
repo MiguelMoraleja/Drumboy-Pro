@@ -23,7 +23,7 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 13 | [Sample preview while browsing](#13-sample-preview-while-browsing) | Feature | L |
 | 14 | [EUCLID: velocity and variance](#14-euclid-velocity-and-variance) | Feature | S–M |
 | 15 | [Song mode: chain the banks](#15-song-mode-chain-the-banks) | Feature | M–L |
-| 16 | [Kids firmware](#16-kids-firmware) | Idea | L |
+| 16 | [Kids firmware](#16-kids-firmware) | Feature, on hold | L |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -43,7 +43,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 **To schedule after sprint 2:** [15](#15-song-mode-chain-the-banks) song mode (needs 9, which sprint 2 delivers).
 
-**Idea, to shape first:** [16](#16-kids-firmware) kids firmware.
+**On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
 **Later:** [3](#3-lfos-cant-modulate-filters-or-effects) (needs 9), [6](#6-routing-extra-effect-slots) (needs CPU measurement), the rest of [10](#10-housekeeping) alongside other work.
 
@@ -252,6 +252,12 @@ Kit and song files have a signature but no format version. Several items above c
 - Big, colourful screen; no numbers or menus deeper than one level.
 - **Safety:** a hard cap on master and headphone volume (`kMaxMixerHpVolume` is 20 steps today), no file deletion, no firmware or SD maintenance actions, settings that can't get stuck.
 
-**Questions to answer before speccing.** Age range? Which of the ideas above matter most? One firmware with a mode, or a separate file? Should a kid's loop be savable, and loadable on the normal firmware?
+**Decided (owner, 2026-11-02).** On hold until the owner says go.
+- Ages 9–11.
+- All the ideas above are in.
+- A separate firmware file (the build variant above; switching = flashing the other file).
+- Saving is not needed for the proof of concept.
+
+**Still open.** Which kits ship with it, and whether 9–11-year-olds want more than one effect knob (try the POC with a child first).
 
 **Done when.** To be defined once the shape is chosen; a first milestone could be a kids build with pads, kit knob, volume cap and a one-button loop.

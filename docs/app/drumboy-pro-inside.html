@@ -220,6 +220,8 @@ footer { font-size: .8rem; color: var(--muted); }
 .steps { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 3px; }
 .steps span { aspect-ratio: 1; border: 1px solid var(--line); border-radius: 3px; background: var(--bg); }
 .steps span.on { background: var(--hit); border-color: var(--hit); }
+.steps span.ghost { background: var(--hit-soft); border-color: var(--hit); }
+.lane .beat.ghost { opacity: .55; }
 .btnrow { display: flex; flex-wrap: wrap; gap: 6px; }
 .keys { display: grid; gap: 10px; }
 .keys .k { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; align-items: start; font-size: .9rem; }
@@ -248,7 +250,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.10</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.11 (testing)</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -332,9 +334,28 @@ table.rel td.new { min-width: 280px; }
             <div class="notes">
               <p><b>Cubed controls.</b> Level, master, pan and fill velocity all go through the same x³ table, so the top half of each knob does most of the work: 50 is about −18 dB, not −6 dB.</p>
               <p><b>Fill velocities.</b> Fill hits use 100 (high), 75 (the quiet STEP hits) and 40 (the bottom of DESCEND, ASCEND and RANDOM). GHOST is a single hit at 50.</p>
+              <p><b>Pitch.</b> See the panel below: from V1.11 pitch is set in semitones.</p>
               <p><b>Soft clip and LIMITER.</b> After master and pan the output is bent smoothly toward a ceiling instead of clipping hard. LIMITER on the mixer page sets that ceiling from −10 to +0 dB (V1.10+); the bend starts at 2/3 of it. At +0 dB, the default, that is 0.667 (−3.5 dBFS), as before V1.10.</p>
             </div>
           </div>
+        </div>
+
+        <div class="panel" style="display:grid; gap:14px">
+          <h3>Pitch in semitones (V1.11)</h3>
+          <div class="field"><div class="field-row"><label class="label" for="pt">Pitch</label><span class="mono" id="pt-v"></span></div><input type="range" id="pt" min="-24" max="24" value="0"></div>
+          <div class="transport"><button class="ghost" id="pt-play">Hear reference, then pitch</button><span class="muted mono" id="pt-note" style="font-size:.85rem"></span></div>
+          <div class="notes">
+            <p><b>On the device:</b> PITCH on instrument page 1 (hold I and press a pad). One detent = one semitone; a fast turn jumps to the next octave line (−24, −12, 0, +12, +24). Holding ADD while turning still picks the pitch LFO.</p>
+            <p><b>Speed, not time-stretch.</b> Pitch plays the sample faster or slower: +12 is twice as fast and half as long, −12 half as fast and twice as long. Range 0.25× to 4×.</p>
+            <p><b>Older kits and songs</b> keep their exact old pitch, shown the old way (e.g. <span class="mono">1.37</span>), until you turn PITCH; then it snaps to the nearest semitone. Files saved by V1.11 also keep a close old-style value, so older firmware still plays about the right pitch.</p>
+            <p><b>LFO on pitch</b> moves up to ±12 semitones at full depth (old-style layers keep the old rule). Above +12 bright samples can sound harsh: the player interpolates linearly, without anti-alias filtering.</p>
+          </div>
+        </div>
+
+        <div class="panel notes">
+          <h3>Sample preview (V1.11)</h3>
+          <p>On an instrument page, turning SAMPLE plays the selected sample a quarter of a second after the knob stops, straight from the SD card: no loading, no wait, and long samples play in full (loaded samples stop at 5.44 s). The layer pad replays it while the selected sample isn't the loaded one. Nothing changes in the layer until ADD loads it.</p>
+          <p>PREVIEW (on/off) and PREV LEVEL are on the Metronome page, bottom row. The preview goes straight to the output, before master volume, and stops when you leave the instrument pages, change layer or press ADD.</p>
         </div>
       </div>
     </div>
@@ -349,6 +370,7 @@ table.rel td.new { min-width: 280px; }
         <div class="field"><div class="field-row"><label class="label" for="eu-steps">Steps</label><span class="mono" id="eu-steps-v"></span></div><input type="range" id="eu-steps" min="1" max="32" value="8"></div>
         <div class="field"><div class="field-row"><label class="label" for="eu-hits">Hits</label><span class="mono" id="eu-hits-v"></span></div><input type="range" id="eu-hits" min="0" max="8" value="3"></div>
         <div class="field"><div class="field-row"><label class="label" for="eu-rot">Rotate</label><span class="mono" id="eu-rot-v"></span></div><input type="range" id="eu-rot" min="0" max="7" value="0"></div>
+        <div class="field"><div class="field-row"><label class="label" for="eu-acc">Accents (V1.11)</label><span class="mono" id="eu-acc-v"></span></div><input type="range" id="eu-acc" min="0" max="3" value="0"></div>
         <div class="field"><span class="label" id="eu-grid-label">Grid (one step)</span><div class="seg hit" id="eu-grid" role="group" aria-labelledby="eu-grid-label"></div></div>
         <div class="field"><span class="label" id="eu-mode-label">Mode</span><div class="seg hit" id="eu-mode" role="group" aria-labelledby="eu-mode-label"></div></div>
         <div class="divider"></div>
@@ -357,7 +379,7 @@ table.rel td.new { min-width: 280px; }
           <div class="field"><label class="label" for="eu-snd">Test sound</label><select id="eu-snd"><option value="hat">Hat</option><option value="snare">Snare</option><option value="kick">Kick</option></select></div>
         </div>
         <div class="field"><div class="field-row"><label class="label" for="eu-bpm">Tempo</label><span class="mono" id="eu-bpm-v"></span></div><input type="range" id="eu-bpm" min="40" max="200" value="120"></div>
-        <p class="muted" style="font-size:.85rem">Grey beats are the layer's beats from before (one on beats 1 and 3, the first with a WAVE fill). MERGE keeps them; REPLACE drops them.</p>
+        <p class="muted" style="font-size:.85rem">Grey beats are the layer's beats from before (one on beats 1 and 3, the first with a WAVE fill). MERGE keeps them; REPLACE drops them. ACCENTS spreads that many accents evenly over the hits; the other hits become GHOST notes (half velocity, about −18 dB). OFF keeps every hit full.</p>
       </div>
 
       <div class="stagecol">
@@ -388,6 +410,7 @@ table.rel td.new { min-width: 280px; }
           <h3>Getting there on the device</h3>
           <div class="k"><span class="keycap">S</span><div><b>Hold S</b> (right side, the L I S row) <b>and press a layer pad</b>: that layer's song page. <b>Tap S</b> on its own: EUCLID. Tap again: back to the song page. Holding S and pressing the same pad again also opens EUCLID.</div></div>
           <div class="k"><span class="keycap">I</span><div><b>Tap I</b>: the same layer's instrument pages, 1 → 2 → 3 → 1. From an instrument page, tap S for the song page.</div></div>
+          <div class="k"><span class="keycap">7</span><div><b>ACCENTS</b> (V1.11) is the last field on the EUCLID page's bottom row. On the device the pattern line shows X for accented hits and x for ghost hits.</div></div>
           <div class="k"><span class="keycap">C</span><div><b>CLEAR on EUCLID</b>: the layer gets back the beats it had when you opened the page. Nothing changes until you turn a field; after that the pattern is rebuilt live, also while playing.</div></div>
           <div class="k"><span class="keycap">+</span><div><b>Song page</b>: MOVE and SHIFT ALL are the last two fields on the bottom row (or hold ADD and press ◀ ▶ to move). A short ADD press inserts a beat. A bank holds 64 beats; when full, FULL is shown.</div></div>
         </div>
@@ -405,7 +428,7 @@ table.rel td.new { min-width: 280px; }
     <div class="panel"><div class="tablewrap"><table class="rel" id="rel"></table></div></div>
   </section>
 
-  <footer>Built from the Drumboy Pro firmware source (<span class="mono">Controller.cpp</span>, <span class="mono">Global.h</span>): fill tables, level rules, the routing patch (<span class="mono">Routing.h</span>), Euclidean patterns and beat editing (<span class="mono">Euclid.h</span>, <span class="mono">BeatList.h</span>) and volume math match the code. The test sounds are synthesized in the browser; the device plays your samples.</footer>
+  <footer>Built from the Drumboy Pro firmware source (<span class="mono">Controller.cpp</span>, <span class="mono">Global.h</span>): fill tables, level rules, the routing patch (<span class="mono">Routing.h</span>), Euclidean patterns, accents and beat editing (<span class="mono">Euclid.h</span>, <span class="mono">BeatList.h</span>), pitch (<span class="mono">Pitch.h</span>) and volume math match the code. The test sounds are synthesized in the browser; the device plays your samples.</footer>
 </div>
 
 <script>
@@ -960,7 +983,7 @@ function changed() {
 /* ---------- Euclid (port of Euclid.h) and beat editing (port of BeatList.h) ---------- */
 const QNAMES = ["1:64", "1:32", "1:16", "1:8", "1:4", "1:2", "1:1"], QINT = [50, 100, 200, 400, 800, 1600, 3200];
 const BAR = 3200, QUARTER = 800, MAXBEATS = 64;
-const eu = { steps: 8, hits: 3, rot: 0, grid: 2, merge: 0, bars: 2, snd: "hat", bpm: 120, q: 2, beats: [], sel: 0, shift: 0, dropped: 0, msg: "" };
+const eu = { steps: 8, hits: 3, rot: 0, acc: 0, grid: 2, merge: 0, bars: 2, snd: "hat", bpm: 120, q: 2, beats: [], sel: 0, shift: 0, dropped: 0, msg: "" };
 
 function euclidPattern(steps, hits, rotate) {
   const out = new Array(steps).fill(false);
@@ -980,10 +1003,21 @@ function euclidPattern(steps, hits, rotate) {
   p.forEach((h, i) => { if (h) out[(i + rotate) % steps] = true; });
   return out;
 }
+// Accents (Euclid.h euclidAccents): E(accents, hits) over the hits in order, rotated with the pattern.
+function euclidAccentsJS(steps, hits, rotate, acc) {
+  const pat = euclidPattern(steps, hits, rotate);
+  hits = Math.min(hits, steps);
+  if (acc === 0 || acc >= hits) return pat.slice();
+  const base = euclidPattern(steps, hits, 0), which = euclidPattern(hits, acc, 0), out = new Array(steps).fill(false);
+  let k = 0;
+  for (let i = 0; i < steps; i++) { if (!base[i]) continue; if (which[k]) out[(i + rotate) % steps] = true; k++; }
+  return out;
+}
 const song = () => eu.bars * BAR;
 const baseBeats = () => { const b = []; for (let k = 0; k < eu.bars; k++) { b.push({ start: k * BAR, base: true, fill: k === 0 ? "WAVE_A" : null }); b.push({ start: k * BAR + 1600, base: true, fill: null }); } return b; };
 function euApply() {
   const pat = euclidPattern(eu.steps, eu.hits, eu.rot), grid = QINT[eu.grid], S = song();
+  const acc = euclidAccentsJS(eu.steps, eu.hits, eu.rot, eu.acc);
   const beats = eu.merge ? baseBeats() : [];
   let dropped = 0;
   for (let start = 0; start < S; start += eu.steps * grid) {
@@ -991,7 +1025,7 @@ function euApply() {
       const at = start + i * grid;
       if (at >= S) break;
       if (!pat[i] || beats.some(b => b.start === at)) continue;
-      if (beats.length >= MAXBEATS) dropped++; else beats.push({ start: at, base: false, fill: null });
+      if (beats.length >= MAXBEATS) dropped++; else beats.push({ start: at, base: false, fill: null, ghost: !acc[i] });
     }
   }
   beats.sort((a, b) => a.start - b.start);
@@ -1048,20 +1082,25 @@ function euRender() {
   document.getElementById("eu-steps-v").textContent = eu.steps;
   document.getElementById("eu-hits-v").textContent = eu.hits;
   document.getElementById("eu-rot-v").textContent = eu.rot;
+  const accOn = eu.acc > 0 && eu.acc < eu.hits;
+  document.getElementById("eu-acc-v").textContent = accOn ? eu.acc : "OFF";
+  const accEl = document.getElementById("eu-acc"); accEl.max = eu.hits; accEl.value = eu.acc;
+  const accMask = euclidAccentsJS(eu.steps, eu.hits, eu.rot, eu.acc);
   document.getElementById("eu-bpm-v").textContent = eu.bpm + " BPM";
   const hits = document.getElementById("eu-hits"); hits.max = eu.steps; hits.value = eu.hits;
   const rot = document.getElementById("eu-rot"); rot.max = Math.max(0, eu.steps - 1); rot.value = eu.rot;
   syncSeg("eu-grid", eu.grid); syncSeg("eu-mode", eu.merge); syncSeg("eu-q", eu.q);
-  document.getElementById("eu-cells").innerHTML = pat.map(h => `<span class="${h ? "on" : ""}"></span>`).join("");
+  document.getElementById("eu-cells").innerHTML = pat.map((h, i) => `<span class="${h ? (accOn && !accMask[i] ? "ghost" : "on") : ""}"></span>`).join("");
   const cyc = eu.steps * QINT[eu.grid];
   document.getElementById("eu-note").textContent = `E(${eu.hits},${eu.steps}) · one cycle = ${lenText(cyc)} · ${eu.beats.length} beats in ${eu.bars} bar${eu.bars > 1 ? "s" : ""}`;
 
   // Device: the EUCLID page (lcd_drawEuclidMenu / lcd_drawEuclidOverview)
   const t = (h, v) => `<div class="tab"><span class="h">${h}</span><span class="v">${v}</span><span class="g">&nbsp;</span></div>`;
   const line5 = eu.dropped ? `FULL: ${eu.dropped} HITS NOT ADDED` : `${eu.beats.length} BEATS  CLEAR: UNDO`;
-  const ov = `E(${eu.hits},${eu.steps}) ROT ${eu.rot}  ${eu.merge ? "MERGE" : "REPLACE"}\n\n${pat.map(h => h ? "x" : ".").join("")}\n\n${line5}`;
+  const line1 = accOn ? `E(${eu.hits},${eu.steps}) ROT ${eu.rot} ACC ${eu.acc}  ${eu.merge ? "MERGE" : "REPLACE"}` : `E(${eu.hits},${eu.steps}) ROT ${eu.rot}  ${eu.merge ? "MERGE" : "REPLACE"}`;
+  const ov = `${line1}\n\n${pat.map((h, i) => h ? (accOn && accMask[i] ? "X" : "x") : ".").join("")}\n\n${line5}`;
   document.getElementById("eu-device").innerHTML = t("STEPS", eu.steps) + t("HITS", eu.hits) + `<div class="ov">${ov}</div>` +
-    t("ROTATE", eu.rot) + t("GRID", QNAMES[eu.grid]) + t("MODE", eu.merge ? "MERGE" : "REPLACE") + `<div class="tab empty"></div>`;
+    t("ROTATE", eu.rot) + t("GRID", QNAMES[eu.grid]) + t("MODE", eu.merge ? "MERGE" : "REPLACE") + t("ACCENTS", accOn ? eu.acc : "OFF");
 
   // Song page bottom row: TIMING, VELOCITY, MOVE, SHIFT ALL
   const b = eu.beats[eu.sel];
@@ -1084,12 +1123,13 @@ function euLane(flashIdx) {
   eu.beats.forEach((b, i) => {
     const end = i < eu.beats.length - 1 ? eu.beats[i + 1].start : S;
     if (b.fill) el("rect", { x: x(b.start), y: T + 8, width: Math.max(2, x(end) - x(b.start) - 2), height: laneH - 16, rx: 2, class: "span" + (b.base ? " base" : "") }, svg);
-    const r = el("rect", { x: x(b.start) - 1, y: T + 4, width: 5, height: laneH - 8, rx: 1.5, class: "beat" + (b.base ? " base" : "") + (i === eu.sel ? " sel" : "") + (i === flashIdx ? " flash" : ""), tabindex: 0, role: "button", "aria-label": "Beat at " + posText(b.start) }, svg);
+    const hh = b.ghost ? (laneH - 8) / 2 : laneH - 8;
+    const r = el("rect", { x: x(b.start) - 1, y: T + 4 + (laneH - 8 - hh), width: 5, height: hh, rx: 1.5, class: "beat" + (b.base ? " base" : "") + (b.ghost ? " ghost" : "") + (i === eu.sel ? " sel" : "") + (i === flashIdx ? " flash" : ""), tabindex: 0, role: "button", "aria-label": "Beat at " + posText(b.start) }, svg);
     const pick = () => { eu.sel = i; eu.msg = ""; euRender(); };
     r.addEventListener("click", pick);
     r.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); } });
   });
-  el("text", { x: L, y: H - 26 }, svg, "orange = Euclid hits · grey = beats from before · blue = selected · shaded = beat with a fill");
+  el("text", { x: L, y: H - 26 }, svg, "orange = Euclid hits (short = ghost) · grey = beats from before · blue = selected · shaded = beat with a fill");
   el("text", { x: L, y: H - 10 }, svg, "800 ticks per beat, 3200 per bar");
   euPlayhead = el("line", { x1: L, x2: L, y1: T, y2: T + laneH, class: "playhead", visibility: "hidden" }, svg);
 }
@@ -1100,7 +1140,7 @@ function euSchedule() {
   while (euNext < ctx.currentTime + 0.25) {
     eu.beats.forEach((b, i) => {
       const t = euNext + b.start * sPerTick;
-      if (t >= ctx.currentTime - 0.005) { voice(Math.max(t, ctx.currentTime), b.base ? 0.35 : 0.5, b.base ? "kick" : eu.snd, 20); euSched.push([t, i]); }
+      if (t >= ctx.currentTime - 0.005) { voice(Math.max(t, ctx.currentTime), b.base ? 0.35 : (b.ghost ? 0.5 * 0.125 : 0.5), b.base ? "kick" : eu.snd, 20); euSched.push([t, i]); }
     });
     euNext += loopLen;
   }
@@ -1141,8 +1181,9 @@ function euSetup() {
   segBtns("eu-grid", QNAMES, i => { eu.grid = i; euChanged(true); });
   segBtns("eu-mode", ["Replace", "Merge"], i => { eu.merge = i; euChanged(true); });
   segBtns("eu-q", QNAMES, i => { eu.q = i; euChanged(false); });
-  document.getElementById("eu-steps").addEventListener("input", e => { eu.steps = +e.target.value; eu.hits = Math.min(eu.hits, eu.steps); if (eu.rot >= eu.steps) eu.rot = 0; euChanged(true); });
-  document.getElementById("eu-hits").addEventListener("input", e => { eu.hits = +e.target.value; euChanged(true); });
+  document.getElementById("eu-steps").addEventListener("input", e => { eu.steps = +e.target.value; eu.hits = Math.min(eu.hits, eu.steps); eu.acc = Math.min(eu.acc, eu.hits); if (eu.rot >= eu.steps) eu.rot = 0; euChanged(true); });
+  document.getElementById("eu-hits").addEventListener("input", e => { eu.hits = +e.target.value; eu.acc = Math.min(eu.acc, eu.hits); euChanged(true); });
+  document.getElementById("eu-acc").addEventListener("input", e => { eu.acc = +e.target.value; euChanged(true); });
   document.getElementById("eu-rot").addEventListener("input", e => { eu.rot = +e.target.value; euChanged(true); });
   document.getElementById("eu-bars").addEventListener("change", e => { eu.bars = +e.target.value; euChanged(true); });
   document.getElementById("eu-snd").addEventListener("change", e => { eu.snd = e.target.value; });
@@ -1156,8 +1197,34 @@ function euSetup() {
   euApply(); euRender();
 }
 
+/* ---------- Pitch (port of Pitch.h) ---------- */
+const INTERVALS = ["unison", "minor 2nd", "major 2nd", "minor 3rd", "major 3rd", "4th", "tritone", "5th", "minor 6th", "major 6th", "minor 7th", "major 7th"];
+function ptRender() {
+  const n = +document.getElementById("pt").value, f = Math.pow(2, n / 12);
+  const a = Math.abs(n), oct = Math.floor(a / 12), rest = a % 12;
+  const name = n === 0 ? "no change" : `${n > 0 ? "up" : "down"} ${oct ? oct + " octave" + (oct > 1 ? "s" : "") + (rest ? " + " : "") : ""}${rest || !oct ? INTERVALS[rest] : ""}`;
+  document.getElementById("pt-v").textContent = (n > 0 ? "+" : "") + n;
+  document.getElementById("pt-note").textContent = `${f.toFixed(3)}× speed · ${name} · a 1.00 s sample lasts ${(1 / f).toFixed(2)} s`;
+}
+function ptPlay() {
+  initAudio(); if (ctx.state === "suspended") ctx.resume();
+  const n = +document.getElementById("pt").value, t0 = ctx.currentTime + 0.05;
+  [[220, t0], [220 * Math.pow(2, n / 12), t0 + 0.45]].forEach(([hz, t]) => {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = "triangle"; o.frequency.value = hz;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.4, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.38);
+    o.connect(g); g.connect(out); o.start(t); o.stop(t + 0.4);
+  });
+}
+
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
+  { v: "V1.11", date: "2026-11-02", status: "Testing, not published",
+    nw: ["Pitch in semitones, −24 to +24; a fast turn jumps by octaves; older kits keep their exact pitch until changed",
+         "Sample preview: turning SAMPLE plays it from the SD card (no loading, no length limit); the pad replays it; PREVIEW and PREV LEVEL on the Metronome page",
+         "EUCLID ACCENTS: a second Euclidean spread over the hits; the rest become ghost notes",
+         "Kit and song files carry a format version; files from newer firmware are refused without touching the current song"],
+    fix: ["Backward and ping playback cut their end fade short above 1× speed"] },
   { v: "V1.10", date: "2026-11-01", status: "GitHub release v1.10 · tested", pub: true,
     nw: ["EUCLID page: STEPS, HITS, ROTATE, GRID, MODE (REPLACE/MERGE), applied live; CLEAR restores the layer",
          "Song page beat editing: MOVE past neighbours keeping the fill (position as bar.beat.16th), SHIFT ALL, short ADD inserts a beat",
@@ -1217,6 +1284,9 @@ function setup() {
   document.getElementById("snd").addEventListener("change", e => { st.snd = e.target.value; });
   document.getElementById("play").addEventListener("click", () => playing ? stop() : start());
   euSetup(); drawReleases();
+  document.getElementById("pt").addEventListener("input", ptRender);
+  document.getElementById("pt-play").addEventListener("click", ptPlay);
+  ptRender();
   route(); render();
 }
 setup();

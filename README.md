@@ -34,7 +34,9 @@ The MCU sits at the center of six subsystems: an NT35510 display driven over a 1
 - **Sequencer** with 5 song banks per layer, 64 beats per bank, and algorithmic complex-fill generation (timing alignment × level curve templates)
 - **Layer pages** (V1.10): hold I or S (right side, L I S row) and press a layer pad to open that layer's instrument or song page; tap I or S on its own to step through the current layer's pages (instrument 1 → 2 → 3, song ↔ EUCLID) or to switch between its instrument and song pages
 - **Beat editing** on the Layer Song page (V1.10): MOVE a beat past its neighbours while keeping its fill (position shown as bar.beat.16th), SHIFT ALL to rotate a whole layer, and a short ADD press to insert a beat
-- **EUCLID page** (V1.10, the song page's second page): Euclidean rhythms with steps, hits, rotation and grid, applied live, REPLACE or MERGE with the layer's beats, CLEAR to undo
+- **EUCLID page** (V1.10, the song page's second page): Euclidean rhythms with steps, hits, rotation and grid, applied live, REPLACE or MERGE with the layer's beats, CLEAR to undo; ACCENTS (V1.11) keeps some hits loud and makes the rest ghost notes
+- **Pitch in semitones** (V1.11): −24 to +24, a fast turn jumps by octaves; kits from older firmware keep their exact pitch until you change it
+- **Sample preview** (V1.11): turning SAMPLE plays the sample straight from the SD card (no loading, no length limit); the layer pad replays it; on/off and level on the Metronome page
 - **MIDI In/Out** (opto-isolated input) and **Sync In/Out** for external clock/gate sync
 - **SD-card firmware updates** via a dedicated bootloader with CRC-32 verified staged writes
 - Fully open hardware (KiCad) and firmware (C/C++ against the STM32 HAL) — no CMSIS-DSP or external DSP library, all hand-rolled biquad/delay-line DSP on the Cortex-M7 FPU

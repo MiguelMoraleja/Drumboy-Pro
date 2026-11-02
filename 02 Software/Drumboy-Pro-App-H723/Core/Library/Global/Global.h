@@ -6,9 +6,12 @@
 #include <cmath>
 #include <random>
 
+#include "FileFormat.h"
 #include "Lfo.h"
 #include "MCP23017.h"
 #include "Metronome.h"
+#include "Pitch.h"
+#include "Preview.h"
 #include "fatfs.h"
 #include "main.h"
 #include "sdmmc.h"
@@ -359,6 +362,12 @@ const uint32_t kChorusByteSize                      = kChorusSize * 4;
 
 #define RAM_CHORUS_0                                RAM_CHORUS_ADDRESS
 #define RAM_CHORUS_1                                RAM_CHORUS_ADDRESS + (1 * kChorusByteSize)
+
+// Sample preview ring (Preview.h): in the unused gap after the chorus buffers (which end at
+// 0xC0EA6000) and before the images (0xC0FB9640). 65536 floats = 256 KB = 1.49 s at 44.1 kHz.
+#define RAM_PREVIEW_ADDRESS                         0xC0EA6000
+const uint32_t kPreviewRingSize                     = 65536;
+static_assert(0xC0EA6000u + kPreviewRingSize * 4u <= 0xC0FB9640u, "preview ring must end before the images");
 
 #define RAM_IMAGE_LOGO_ADDRESS                      0xC0FB9640                  // 170px * 170px
 #define RAM_IMAGE_LOGO_PALETTE_ADDRESS              0xC0FB9640                  // 128 bytes
@@ -902,6 +911,8 @@ const char kHeaderMove[]                            = "MOVE      ";
 const char kHeaderShiftAll[]                        = "SHIFT ALL ";
 const char kHeaderVelocity[]                        = "VELOCITY  ";
 const char kHeaderVolume[]                          = "VOLUME    ";
+const char kHeaderPreview[]                         = "PREVIEW   ";
+const char kHeaderPreviewLevel[]                    = "PREV LEVEL";
 const char kHeaderWet[]                             = "WET       ";
 
 const char kHeaderLow[]                             = "LOW       ";
@@ -1215,6 +1226,10 @@ typedef enum {
     ENC_EUC_ROTATE                                  = 0x6D,
     ENC_EUC_GRID                                    = 0x6E,
     ENC_EUC_MODE                                    = 0x6F,
+    ENC_EUC_ACCENTS                                 = 0x70,
+
+    ENC_METRO_PREVIEW                               = 0x71,  // sample preview on/off (Metronome tab 4)
+    ENC_METRO_PREVIEW_LEVEL                         = 0x72,  // sample preview level (Metronome tab 5)
 
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
@@ -1233,7 +1248,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // RHYTHM_MENU = 0x05
     {ENC_RHYTHM_TEMPO, ENC_RHYTHM_MEASURE, ENC_RHYTHM_BAR, ENC_RHYTHM_QUANTIZE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // METRO_MENU = 0x06
-    {ENC_METRO_ACTIVE, ENC_METRO_PRECOUNT, ENC_METRO_SAMPLE, ENC_METRO_VOLUME, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
+    {ENC_METRO_ACTIVE, ENC_METRO_PRECOUNT, ENC_METRO_SAMPLE, ENC_METRO_VOLUME, ENC_METRO_PREVIEW, ENC_METRO_PREVIEW_LEVEL, ENC_FNC_NONE, ENC_FNC_NONE},
     // IO_MENU = 0x07
     {ENC_IO_SYNCIN, ENC_IO_SYNCOUT, ENC_IO_MIDIIN, ENC_IO_MIDIOUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // FILTER_0_MENU = 0x08
@@ -1266,7 +1281,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     {ENC_ROUTE_EQ_OUT, ENC_ROUTE_F1_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_ROUTE_F2_OUT, ENC_ROUTE_FX1_OUT, ENC_ROUTE_FX2_OUT, ENC_ROUTE_METRO_OUT},
     // EUCLID_MENU = 0x15
     // Tabs 2-3 show the pattern.
-    {ENC_EUC_STEPS, ENC_EUC_HITS, ENC_FNC_NONE, ENC_FNC_NONE, ENC_EUC_ROTATE, ENC_EUC_GRID, ENC_EUC_MODE, ENC_FNC_NONE}};
+    {ENC_EUC_STEPS, ENC_EUC_HITS, ENC_FNC_NONE, ENC_FNC_NONE, ENC_EUC_ROTATE, ENC_EUC_GRID, ENC_EUC_MODE, ENC_EUC_ACCENTS}};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1368,7 +1383,7 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_INST_0_INST,         ENC_RES_M, "INST      ", "LAYER ", "   ", false},
     {ENC_INST_0_SAMPLE,       ENC_RES_M, "SAMPLE    ", "LAYER ", "   ", false},
     {ENC_INST_0_LEVEL,        ENC_RES_F, "LEVEL     ", "LAYER ", "  %", false},
-    {ENC_INST_0_PITCH,        ENC_RES_F, "PITCH     ", "LAYER ", "  %", false},
+    {ENC_INST_0_PITCH,        ENC_RES_M, "PITCH     ", "LAYER ", "  %", false},
     {ENC_INST_0_DIRECT,       ENC_RES_S, "DIRECTION ", "LAYER ", "   ", false},
     {ENC_INST_0_RESOL,        ENC_RES_F, "RESOLUTION", "LAYER ", "BIT", false},
 
@@ -1409,7 +1424,11 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_EUC_HITS,            ENC_RES_M, "HITS      ", "EUCLID", "   ", false},
     {ENC_EUC_ROTATE,          ENC_RES_M, "ROTATE    ", "EUCLID", "   ", false},
     {ENC_EUC_GRID,            ENC_RES_M, "GRID      ", "EUCLID", "   ", false},
-    {ENC_EUC_MODE,            ENC_RES_M, "MODE      ", "EUCLID", "   ", false}
+    {ENC_EUC_MODE,            ENC_RES_M, "MODE      ", "EUCLID", "   ", false},
+    {ENC_EUC_ACCENTS,         ENC_RES_M, "ACCENTS   ", "EUCLID", "   ", false},
+
+    {ENC_METRO_PREVIEW,       ENC_RES_S, "PREVIEW   ", "METRO ", "   ", false},
+    {ENC_METRO_PREVIEW_LEVEL, ENC_RES_F, "PREV LEVEL", "METRO ", "  %", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -1808,7 +1827,10 @@ const char kDataSong[kSongByteSize + 1]             = "lb                       
 const char kSystemPresetRef[]                       = "RW_DRUMBOYPRO_PRESET_SYS ";
 const char kSystemPresetFilename[]                  = "System/Preset/System.rwp";
 
-const uint8_t kSystemPresetDataSize                 = 21;
+// 21 bytes up to V1.10; 21-22 (sample preview on/off and level) added in V1.11. Older 21-byte
+// files still load: the missing bytes keep their defaults.
+const uint8_t kSystemPresetDataSize                 = 23;
+const uint8_t kSystemPresetDataSizeV110             = 21;
 
 const char kEncoderPresetRef[]                      = "RW_DRUMBOYPRO_PRESET_ENC ";
 const char kEncoderPresetFilename[]                 = "System/Preset/Encoder.rwp";
@@ -6137,8 +6159,10 @@ struct Lfo {
 const uint8_t kMinLayerLevel                        = 0;
 const uint8_t kMaxLayerLevel                        = 100;
 
+// Layer pitch is a pitch code (Pitch.h): semitones -24..+24, or the old linear scale for layers
+// loaded from older files.
 const uint8_t kMinLayerPitch                        = 0;
-const uint8_t kMaxLayerPitch                        = 150;
+const uint8_t kMaxLayerPitch                        = kPitchCodeMax;
 
 const uint8_t kMinLayerDirection                    = 0;
 const uint8_t kMaxLayerDirection                    = 3;
@@ -6180,7 +6204,7 @@ const uint8_t kMinSongBank                          = 0;
 const uint8_t kMaxSongBank                          = 4;
 
 const uint8_t kInitialLayerLevel                    = 75;
-const uint8_t kInitialLayerPitch                    = 50;
+const uint8_t kInitialLayerPitch                    = kPitchDefaultCode;  // 0 semitones
 const uint8_t kInitialLayerDirection                = 0;
 const uint8_t kInitialLayerResolution               = 20;
 const uint8_t kInitialLayerStart                    = 0;

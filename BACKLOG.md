@@ -22,6 +22,9 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 12 | [Free beat placement on Layer Song](#12-free-beat-placement-on-layer-song) | Feature | M |
 | 13 | [Sample preview while browsing](#13-sample-preview-while-browsing) | Feature | L |
 | 14 | [EUCLID: velocity and variance](#14-euclid-velocity-and-variance) | Feature | S–M |
+| 15 | [Song mode: chain the banks](#15-song-mode-chain-the-banks) | Feature | M–L |
+| 16 | [Kids firmware](#16-kids-firmware) | Feature, on hold | L |
+| 17 | [Sample rate conversion (48 kHz and others)](#17-sample-rate-conversion-48-khz-and-others) | Bug | M |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -35,9 +38,13 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 5. ✅ [8](#8-limiter-setting-does-nothing) LIMITER.
 6. ✅ Reproducible release builds (from [10](#10-housekeeping)), before tagging V1.10.
 
-**Sprint 2, "Formats and sound":** [14](#14-euclid-velocity-and-variance) part A (accents, no format change) as a quick start, then [9](#9-songkit-file-format-version) file format version, then [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones and [13](#13-sample-preview-while-browsing) sample preview (largest risk: SD streaming while playing, larger system preset).
+**Sprint 2, V1.11 "Formats and sound"** (done, tested on hardware): ✅ [14](#14-euclid-velocity-and-variance) part A ACCENTS, ✅ [9](#9-songkit-file-format-version) file format version, ✅ [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones, ✅ [13](#13-sample-preview-while-browsing) sample preview.
 
 **Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
+
+**To schedule after sprint 2:** [15](#15-song-mode-chain-the-banks) song mode (needs 9, which sprint 2 delivers).
+
+**On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
 **Later:** [3](#3-lfos-cant-modulate-filters-or-effects) (needs 9), [6](#6-routing-extra-effect-slots) (needs CPU measurement), the rest of [10](#10-housekeeping) alongside other work.
 
@@ -61,6 +68,8 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 **Done when.** Level with a sine LFO, playing: the LEVEL field visibly follows each hit. When stopped, it shows the base value again. No flicker, and no change in DSP load (check with `make PROFILE=1`).
 
 ### 2. Instrument pitch should step in semitones and octaves
+
+**Status: done in V1.11** (`Pitch.h`, `test_pitch`). −24 to +24 semitones; a fast turn steps to the next octave line; SHIFT still picks the pitch LFO; LFO depth ±12 semitones. Layers from older files keep their exact old pitch (shown as before, e.g. `1.37`) until PITCH is turned, then snap to the nearest semitone. Not done: anti-aliasing above 2× (linear interpolation only, so pitching up more than an octave can sound harsh on bright samples).
 
 **What happens.** PITCH on instrument page 0 is a playback-speed factor from 0.50 to 2.00 in steps of 0.01 (`kLayerPitchDataLibrary`, 151 entries, index 50 = 1.00). So it covers only one octave down and one up, and most values are not musical intervals. Patterning-style use (dial a pitch in semitones, jump by octaves) is not possible.
 
@@ -134,6 +143,8 @@ The mixer's LIMITER (0–10) is saved in the system preset (byte 6), shown and e
 
 ### 9. Song/kit file format version
 
+**Status: done in V1.11** (`FileFormat.h`). Kit section byte 496 = version, 497 = check byte; covers kit and song files. Old files are version 0; a newer file is refused before anything changes. Version 1 = semitone pitch in layer record byte 24.
+
 Kit and song files have a signature but no format version. Several items above change what is stored (pitch scale, multi-destination routing, LFO module targets, fill types). Add a version byte in a spare kit-section byte (and the song section) so new firmware can convert old files and fail cleanly on newer ones. The routing marker (`0xA5` at kit byte 498) is the pattern to follow.
 
 ### 10. Housekeeping
@@ -183,6 +194,8 @@ Kit and song files have a signature but no format version. Several items above c
 
 ### 13. Sample preview while browsing
 
+**Status: done in V1.11** (`Preview.h`, `test_preview`). PREVIEW and PREV LEVEL on the Metronome page (tabs 4–5); 256 KB ring in the SDRAM gap at 0xC0EA6000; FatFs `_FS_LOCK` raised to 3. The SDRAM gap was only checked statically (nothing in the code references it); watch for any glitch in the preview that could mean something else writes there.
+
 **Today.** On the instrument page, turning SAMPLE only selects a file (`layerInst_setSampleSelected()` reads its WAV header). To hear it, you have to load it with ADD (`layerInst_setSampleLoaded()`), which replaces the layer's sample, copies the whole file from SD to SDRAM and calls `keyboard_disable()` until it's done. The sample is cut at 5.44 s (`kSampleSize` = 240,000 samples).
 
 **Proposal.**
@@ -198,11 +211,77 @@ Kit and song files have a signature but no format version. Several items above c
 
 **Today.** Every hit the EUCLID page makes is a plain beat at full velocity (BASIC / FLAT), so the pattern sounds mechanical. Plain beats have only three velocities: FLAT (100), GHOST (50) and MUTED (0), set by the beat's fill PATTERN; the VELOCITY field (FLAT, STEP, DESCEND, ASCEND, RANDOM) only shapes the micro-hits of a complex fill, not single beats. Variance is possible today only indirectly: an LFO on the layer's LEVEL (RANDOM type for humanising) with STYLE on changes each hit, and since V1.10 the instrument page shows the value used.
 
+**Status: part A done in V1.11** (ACCENTS on EUCLID tab 7, `euclidAccents()` in `Euclid.h`). Part B open.
+
 **Proposal**, in two parts:
 
-- **A. ACCENTS field (S, no file change).** A second Euclidean pattern over the hits: ACCENTS 0–HITS spreads that many accents evenly over the pattern's hits (and follows ROTATE). Accented hits stay FLAT (100); the others become GHOST (50). Uses the beat states that already exist, so songs load on any firmware. Tab 7 on the EUCLID page is free for it. Example: E(5,8) with 2 accents gives `X.xX.xx.` (X loud, x ghost; the accents are E(2,5) over the five hits).
+- **A. ACCENTS field (S, no file change).** A second Euclidean pattern over the hits: ACCENTS 0–HITS spreads that many accents evenly over the pattern's hits (and follows ROTATE). Accented hits stay FLAT (100); the others become GHOST (50). Uses the beat states that already exist, so songs load on any firmware. Tab 7 on the EUCLID page is free for it. Example: E(5,8) with 2 accents gives `X.xX.xx.` (X loud, x ghost; the accents are E(2,5) over the five hits). The device shows ghost hits as `+` (`X.+X.++.`): its font has no lowercase.
 - **B. VELOCITY field (M).** Apply the fill VELOCITY modes across the Euclidean hits: FLAT, STEP (100/75 alternating), DESCEND and ASCEND over the cycle, and RANDOM (40–100) for variance; optionally a SPREAD amount (± random per hit, drawn once and stored, so the pattern stays the same on every loop). This needs a velocity per plain beat. The beat's 4-bit level field is unused on plain beats and is already saved and loaded, but the loader resets any level above 4 (`setBeatFill` range check), and older firmware plays all plain beats at FLAT/GHOST anyway. Decide the encoding together with [9](#9-songkit-file-format-version) (file format version), then play plain beats at their stored velocity in the sequencer (`kNumberDataLibrary[...]` multiplier instead of the fixed 100/50/0).
 - Put the accent and velocity distribution in `Euclid.h` with host tests (accent spacing, rotation, RANDOM stored per hit, values stay within 0–100).
 - The app's Euclid tab gets the same fields, so the result can be heard before building.
 
 **Done when.** On the device, E(5,8) with 2 accents plays two loud and three ghost hits on every loop; with VELOCITY RANDOM the levels vary per hit but repeat identically each loop and survive save/load; older kits and songs sound the same.
+
+### 15. Song mode: chain the banks
+
+**Today.** Each layer has 5 song banks (`kBankLibrarySize`), and the active bank (`activeSongBank`) is the same for all layers. Holding the SONG key and pressing a pair of layer pads picks a bank (pads 1–2 = bank 1 … 9–10 = bank 5). While playing, `layerSong_triggerBank()` arms the change (`bankShiftFlag`, `targetSongBank`) and the sequencer switches at the next loop end; when stopped it switches at once (`layerSong_selectBank()`). Nothing plays the banks in sequence: every change is by hand.
+
+**Proposal.**
+- **Chain:** a list of up to 16 steps, each a bank and a repeat count (1–16 loops), for example `1×4, 2×2, 1×4, 3×1`. Optionally an END step that stops, or the chain loops.
+- **Playback:** with chain play on, count loops at the loop end (where `bankShiftFlag` is handled today) and, when a step's repeats are done, switch to the next step's bank exactly like a manual trigger. A manual bank press while the chain plays either jumps the chain to that bank's first step or pauses the chain (decide on the device).
+- **Page:** a SONG page (e.g. tap the SONG key, the same tap pattern as I and S) with the chain as a list: STEP, BANK, REPEATS, plus INSERT/DELETE step and CHAIN ON/OFF. The top-right area shows the chain with the current step and the repeats left; the bank tabs keep showing the active bank.
+- **Transport and sync:** RESET goes back to step 1; STOP keeps the position (or resets, decide). With external sync, follow the incoming clock; loop ends are already counted by the sequencer, so nothing new is needed for sync.
+- **Files:** the chain is saved with the song (about 33 bytes: count + 16 × bank/repeats). Needs [9](#9-songkit-file-format-version) so older firmware ignores it and older songs load with chain play off.
+- Put the chain stepping (count, advance, END, jump) in a hardware-free header with host tests.
+
+**Done when.** A chain such as `1×4, 2×2, 3×1` plays back by itself with bank changes exactly on loop ends, survives save/load, RESET restarts it, manual bank presses behave as decided, and songs without a chain play as before.
+
+### 16. Kids firmware
+
+**Idea (open, "we will see").** A separate, much simpler firmware for children on the same hardware: few pages, big obvious actions, nothing that can break a kit or song, safe volume.
+
+**Approach to decide first.**
+- **A build variant of this firmware** (e.g. `make KIDS=1`), sharing the audio engine, sample player, sequencer, files and bootloader, with a different, reduced UI layer. Recommended: every engine fix reaches both, and the hardware-free headers (`Fill.h`, `BeatList.h`, `Euclid.h`, `Pitch.h`, `Preview.h`) are reused as they are.
+- **Or a KIDS MODE inside the normal firmware** (a locked mode entered with a key combination). Simpler to ship (one file), but the full UI code stays reachable, and every new feature has to be hidden from it.
+- **Or a firmware written from scratch.** Most freedom, most work; only worth it if the kids version shares little.
+- The update file must still match the bootloader's `Drumboy_Pro_Fw?*.bin` pattern and stay within 31 characters (e.g. `Drumboy_Pro_Fw_01_11_kids.bin`, 29). Switching between the normal and the kids firmware is then just flashing the other file.
+
+**First ideas for what it does** (to try with a child before building much):
+- Pads play sounds straight away; a fixed set of kits (animals, instruments, voices) chosen with one knob, no instrument/sample browsing.
+- A simple loop: press record, play the pads, it repeats; CLEAR erases the loop (with a confirm). Maybe the EUCLID idea as one "make a rhythm" knob.
+- One knob each for tempo, volume, and one fun effect (e.g. pitch in octaves, echo).
+- Big, colourful screen; no numbers or menus deeper than one level.
+- **Safety:** a hard cap on master and headphone volume (`kMaxMixerHpVolume` is 20 steps today), no file deletion, no firmware or SD maintenance actions, settings that can't get stuck.
+
+**Decided (owner, 2026-11-02).** On hold until the owner says go.
+- Ages 9–11.
+- All the ideas above are in.
+- A separate firmware file (the build variant above; switching = flashing the other file).
+- Saving is not needed for the proof of concept.
+
+**Still open.** Which kits ship with it, and whether 9–11-year-olds want more than one effect knob (try the POC with a child first).
+
+**Done when.** To be defined once the shape is chosen; a first milestone could be a kids build with pads, kit knob, volume cap and a one-button loop.
+
+### 17. Sample rate conversion (48 kHz and others)
+
+**What happens.** The device plays at 44.1 kHz, but samples at several common rates are not converted, only repeated or thinned out by whole frames, so they play about 8.8% slow (roughly 1.5 semitones low, and 9% longer):
+
+| File rate | What the loader does | Plays as |
+|---|---|---|
+| 8, 16, 24 kHz | repeats each frame 6, 3, 2 times | 48 kHz content at 44.1 kHz: 8.8% slow |
+| 48 kHz | as is | 8.8% slow |
+| 96, 192 kHz | keeps every 2nd / 4th frame, no filter | 8.8% slow, and can alias |
+| 11.025, 22.05 kHz | repeats 4, 2 times | correct (but stair-stepped, no smoothing) |
+| 44.1, 88.2, 176.4 kHz | as is / every 2nd / every 4th | correct (the last two can alias) |
+
+Same rule in the layer loader (`layerInst_setSampleLoaded()`) and the sample preview (`Preview.h`, which copies it on purpose so the preview sounds like the loaded sample).
+
+**Proposal.**
+- A hardware-free `Resample.h`: convert any accepted rate to 44.1 kHz with a fractional step (ratio = file rate / 44100) and interpolation (linear at least; a short windowed-sinc or polyphase filter for downsampling 88.2–192 kHz so it doesn't alias). Used by both the loader and the preview, streaming-friendly (keeps its phase between chunks).
+- Check the cost: the loader converts once at load (fine); the preview converts in the main loop per chunk (measure, it must still keep up; see the V1.11 throughput fix).
+- The 5.44 s limit (`kSampleSize`) then counts in 44.1 kHz samples, so a 48 kHz file holds 8.8% less of its length than today; document it.
+- **Compatibility to decide:** kits made with 48 kHz samples were tuned by ear to the slow playback and will sound about 1.5 semitones higher after the fix. Options: accept it (it's the correct pitch), or for files saved before the change (format version 1 or older, `FileFormat.h`) add -1.5 semitones back. Semitone pitch can't express that exactly, so an old-file flag would be needed.
+- Related, optional: stereo files use only the left channel today; mixing to mono would keep both sides.
+
+**Done when.** A 48 kHz and a 44.1 kHz recording of the same sound play at the same pitch and length, loaded and previewed; 96/192 kHz files don't alias; host tests for the converter (pitch of a sine at each rate, no clicks at chunk boundaries); the preview still never underruns on 48 kHz 24-bit stereo.

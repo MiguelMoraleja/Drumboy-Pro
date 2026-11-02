@@ -153,10 +153,83 @@ static void testApply() {
     }
 }
 
+static void testAccents() {
+    char text[kEuclidMaxSteps + 1];
+    euclidText(euclidPattern(8, 5, 0), 8, text, euclidAccents(8, 5, 0, 2));
+    CHECK(!strcmp(text, "X.xX.xx."), "E(5,8) with 2 accents = %s", text);
+    euclidText(euclidPattern(8, 5, 0), 8, text, euclidAccents(8, 5, 0, 0));
+    CHECK(!strcmp(text, "x.xx.xx."), "no accents shows plain hits: %s", text);
+    euclidText(euclidPattern(8, 5, 0), 8, text, euclidAccents(8, 5, 0, 5));
+    CHECK(!strcmp(text, "x.xx.xx."), "all hits accented is the plain pattern: %s", text);
+    euclidText(euclidPattern(8, 5, 1), 8, text, euclidAccents(8, 5, 1, 2));
+    CHECK(!strcmp(text, ".X.xX.xx"), "accents rotate with the pattern: %s", text);
+    euclidText(euclidPattern(16, 4, 0), 16, text, euclidAccents(16, 4, 0, 1));
+    CHECK(!strcmp(text, "X...x...x...x..."), "one accent on the first hit: %s", text);
+
+    // Every steps/hits/accents/rotate: accents are a subset of the hits, the right count, and
+    // spread evenly over the hits (gaps between accents, counted in hits, differ by <= 1).
+    for (uint8_t steps = 1; steps <= kEuclidMaxSteps; steps++) {
+        for (uint8_t hits = 1; hits <= steps; hits++) {
+            for (uint8_t acc = 0; acc <= hits; acc++) {
+                for (uint8_t rot = 0; rot < steps; rot += (steps > 8 ? 5 : 1)) {
+                    const uint32_t p = euclidPattern(steps, hits, rot), a = euclidAccents(steps, hits, rot, acc);
+                    if ((a & ~p) || (__builtin_popcount(a) != ((acc == 0) ? hits : acc))) {
+                        CHECK(false, "accents %u of E(%u,%u) rot %u: wrong set", acc, hits, steps, rot);
+                        continue;
+                    }
+                    if ((acc == 0) || (acc == hits)) continue;
+                    int k = 0, first = -1, prev = -1, minGap = 99, maxGap = 0;
+                    for (int i = 0; i < steps; i++) {
+                        const int s = (i + rot) % steps;
+                        if (!(p & (1UL << s))) continue;
+                        if (a & (1UL << s)) {
+                            if (prev >= 0) minGap = std::min(minGap, k - prev), maxGap = std::max(maxGap, k - prev);
+                            else first = k;
+                            prev = k;
+                        }
+                        k++;
+                    }
+                    const int wrap = first + hits - prev;
+                    minGap = std::min(minGap, wrap), maxGap = std::max(maxGap, wrap);
+                    CHECK(maxGap - minGap <= 1, "accents %u of E(%u,%u): gaps %d..%d", acc, hits, steps, minGap, maxGap);
+                }
+            }
+        }
+    }
+
+    // On a bank: unaccented new hits are GHOST, accented FLAT; a hit on a beat already there
+    // keeps that beat untouched.
+    Bank base, out;
+    beatListAdd(base, 600, 3200);
+    beatListRebuild(base, 3200);
+    base.setBeatFill(0, 1, 2, 0, 0);  // WAVE_C on the beat at 600
+    const uint32_t p = euclidPattern(8, 5, 0), a = euclidAccents(8, 5, 0, 2);  // X.xX.xx. on 1:16
+    euclidApply(out, base, true, p, 8, 200, 3200, a);
+    const uint16_t at[] = {0, 400, 600, 1000, 1200};
+    const uint8_t want[] = {0, 1, 0, 1, 1};  // fill pattern: 0 FLAT, 1 GHOST; 600 keeps WAVE_C
+    for (int c = 0; c < 2; c++) {
+        for (int i = 0; i < 5; i++) {
+            const int16_t idx = beatListFind(out, static_cast<uint16_t>(at[i] + c * 1600));
+            if (idx < 0) { CHECK(false, "missing hit at %u", at[i] + c * 1600); continue; }
+            const Beat& b = out.beatLibrary[idx];
+            if ((at[i] == 600) && (c == 0)) {
+                CHECK(b.getFillType() == 1 && b.getFillPattern() == 2, "existing beat keeps its fill");
+            } else {
+                CHECK(b.getFillType() == 0 && b.getFillPattern() == want[i], "hit at %u: pattern %u, want %u", at[i] + c * 1600, b.getFillPattern(), want[i]);
+            }
+        }
+    }
+    euclidApply(out, base, false, p, 8, 200, 3200);  // no accent mask: all FLAT, as before
+    bool flat = true;
+    for (int16_t i = 0; i <= out.lastActiveBeatNum; i++) flat = flat && (out.beatLibrary[i].getFillPattern() == 0);
+    CHECK(flat && out.lastActiveBeatNum == 9, "without accents every hit is FLAT");
+}
+
 int main() {
     testKnown();
     testProperties();
     testApply();
+    testAccents();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

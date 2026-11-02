@@ -365,6 +365,9 @@ void Controller::update() {
         // Push buffered graphical changes to the LCD.
         lcd_update();
 
+        // Stream the sample preview from the SD card (Preview.h).
+        preview_update();
+
 #ifdef DSP_PROFILE
         lcd_drawDspProfile();
 #endif
@@ -827,6 +830,12 @@ void Controller::loadSystemPreset() {
                         metro_setVolume(dataSystemPreset[15]);
                         routing_setMetroOut(routeUnpackMetro((uint8_t)dataSystemPreset[11]));
 
+                        // Sample preview: only in files written by V1.11 or later (23 bytes).
+                        if (sd.byteswritten >= kSystemPresetDataSize) {
+                            preview_setOn((bool)dataSystemPreset[21]);
+                            preview_setLevel((uint8_t)dataSystemPreset[22]);
+                        }
+
                         // 6. I/O & SYNC PARAMETER APPLY
                         // Apply persisted sync and MIDI routing parameters.
                         io_setSyncIn(dataSystemPreset[16]);
@@ -891,6 +900,10 @@ void Controller::saveSystemPreset() {
             dataSystemPreset[18] = (uint8_t)((io.midiIn << 4) | io.midiInChannel);
             dataSystemPreset[19] = (uint8_t)((io.midiOut << 4) | io.midiOutChannel);
             dataSystemPreset[20] = (uint8_t)((io.syncInPpqn << 4) | io.syncOutPpqn);
+
+            // Sample preview (V1.11)
+            dataSystemPreset[21] = (uint8_t)previewOn;
+            dataSystemPreset[22] = previewLevel;
 
             // 4. SD CARD WRITE
             // Seek payload offset and write serialized preset data.
@@ -1585,6 +1598,8 @@ void Controller::keyboard_action() {
                             ledLayerPlayMode = false;
                             ledLayerSelectFlag = true;
                             ledLayerSelectData = 0x03 << (selectedEncoderBank * 2);
+                        } else if (preview_padReplay(layerNum)) {
+                            // Browsing samples: the pad replays the preview, not the loaded sample.
                         } else {
                             Layer& layer = layerLibrary[layerNum];
                             if ((!layer.mute) && (layer.samplePlay)) layer_playBeat(layerNum, 1.0f);
@@ -3520,6 +3535,14 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             if (metronome.volume < kMaxMetroVolume) metro_setVolume(metronome.volume + 1);
             break;
 
+        case ENC_METRO_PREVIEW:
+            preview_setOn(!previewOn);
+            break;
+
+        case ENC_METRO_PREVIEW_LEVEL:
+            if (previewLevel < 100) preview_setLevel(previewLevel + 1);
+            break;
+
             // Filter 0 functions
 
         case ENC_FILTER_0_ACTIVE:
@@ -3852,7 +3875,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_INST_1_SAMPLE:
         case ENC_INST_2_SAMPLE:
             if ((layerLibrary[selectedLayerNum].instSelected != -1) && (sampleLibrarySize[layerLibrary[selectedLayerNum].instSelected] > 0))
+            {
                 (layerLibrary[selectedLayerNum].sampleSelected < (sampleLibrarySize[layerLibrary[selectedLayerNum].instSelected] - 1)) ? layerInst_setSampleSelected(selectedLayerNum, layerLibrary[selectedLayerNum].sampleSelected + 1) : layerInst_setSampleSelected(selectedLayerNum, 0);
+                preview_request(selectedLayerNum, false);
+            }
             break;
 
         case ENC_INST_0_LEVEL:
@@ -3865,8 +3891,9 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_INST_0_PITCH:
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoPitch < kMaxLfo) ? layerInst_setLfoPitch(selectedLayerNum, layerLibrary[selectedLayerNum].lfoPitch + 1) : layerInst_setLfoPitch(selectedLayerNum, kMinLfo);
-            } else if (layerLibrary[selectedLayerNum].pitch < kMaxLayerPitch)
-                layerInst_setPitch(selectedLayerNum, layerLibrary[selectedLayerNum].pitch + 1);
+            } else {
+                layerInst_stepPitch(true, true);
+            }
             break;
 
         case ENC_INST_0_DIRECT:
@@ -3963,6 +3990,7 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_EUC_ROTATE:
         case ENC_EUC_GRID:
         case ENC_EUC_MODE:
+        case ENC_EUC_ACCENTS:
             euclid_step(encoder[encoderNum_].function, true);
             break;
 
@@ -4108,6 +4136,14 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_METRO_VOLUME:
             if (metronome.volume > kMinMetroVolume)
                 metro_setVolume(metronome.volume - 1);
+            break;
+
+        case ENC_METRO_PREVIEW:
+            preview_setOn(!previewOn);
+            break;
+
+        case ENC_METRO_PREVIEW_LEVEL:
+            if (previewLevel > 0) preview_setLevel(previewLevel - 1);
             break;
 
             // Filter 0 functions
@@ -4412,7 +4448,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_INST_1_SAMPLE:
         case ENC_INST_2_SAMPLE:
             if ((layerLibrary[selectedLayerNum].instSelected != -1) && (sampleLibrarySize[layerLibrary[selectedLayerNum].instSelected] > 0))
+            {
                 (layerLibrary[selectedLayerNum].sampleSelected > 0) ? layerInst_setSampleSelected(selectedLayerNum, layerLibrary[selectedLayerNum].sampleSelected - 1) : layerInst_setSampleSelected(selectedLayerNum, sampleLibrarySize[layerLibrary[selectedLayerNum].instSelected] - 1);
+                preview_request(selectedLayerNum, false);
+            }
             break;
 
         case ENC_INST_0_LEVEL:
@@ -4425,8 +4464,9 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_INST_0_PITCH:
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoPitch > kMinLfo) ? layerInst_setLfoPitch(selectedLayerNum, layerLibrary[selectedLayerNum].lfoPitch - 1) : layerInst_setLfoPitch(selectedLayerNum, kMaxLfo);
-            } else if (layerLibrary[selectedLayerNum].pitch > kMinLayerPitch)
-                layerInst_setPitch(selectedLayerNum, layerLibrary[selectedLayerNum].pitch - 1);
+            } else {
+                layerInst_stepPitch(false, true);
+            }
             break;
 
         case ENC_INST_0_DIRECT:
@@ -4523,6 +4563,7 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_EUC_ROTATE:
         case ENC_EUC_GRID:
         case ENC_EUC_MODE:
+        case ENC_EUC_ACCENTS:
             euclid_step(encoder[encoderNum_].function, false);
             break;
 
@@ -5517,6 +5558,21 @@ SdResult Controller::sd_checkFile(uint8_t fileNum_) {
     return result;
 }
 
+bool Controller::sd_formatSupported(const char* fileName_, uint16_t refSize_) {
+    /// @brief Reads only the file's format stamp (FileFormat.h) into loadFormatVersion and says
+    /// whether this firmware can load it. Files without a stamp are version 0 (V1.10 and older).
+
+    uint8_t stamp[2] = {0, 0};
+    UINT bytes = 0;
+    f_close(&sd.file);
+    if (f_open(&sd.file, fileName_, FA_READ) == FR_OK) {
+        if (f_lseek(&sd.file, refSize_ + kFormatVersionOffset) == FR_OK) f_read(&sd.file, stamp, 2, &bytes);
+        f_close(&sd.file);
+    }
+    loadFormatVersion = formatVersionFrom(stamp[0], stamp[1]);
+    return formatSupported(loadFormatVersion);
+}
+
 SdResult Controller::sd_loadFile(uint8_t fileNum_) {
     /// @brief Loads a project file and reconstructs runtime state in two verified phases.
     /// Applies global parameters, validates instrument/sample references, and restores song beats.
@@ -5556,7 +5612,8 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
 
     // 4. FILE ELIGIBILITY CHECK
     // Load only if file exists and is marked as an active project slot.
-    if ((sd_checkFile(fileNum_) == SD_OK) && (fileStatus == FILE_ACTIVE)) {
+    // A file from newer firmware (higher format version) is refused before anything changes.
+    if ((sd_checkFile(fileNum_) == SD_OK) && (fileStatus == FILE_ACTIVE) && sd_formatSupported(fileName, strlen(kFileRef))) {
         // 4.1 PREVIOUS SONG CLEANUP
         // Clear every layer's existing beats before this file's song values (bar/measure/etc.) are applied.
         for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
@@ -5696,7 +5753,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                         uint16_t offset = 240 + (i * 25);
                         layerInst_setLevel(i, data[offset + 0]);
-                        layerInst_setPitch(i, data[offset + 1]);
+                        layerInst_setPitch(i, pitchFromFile(static_cast<uint8_t>(data[offset + 1]), static_cast<uint8_t>(data[offset + 24]), loadFormatVersion));
                         layerInst_setDirection(i, data[offset + 2]);
                         layerInst_setResolution(i, data[offset + 3]);
                         layerInst_setStart(i, data[offset + 4]);
@@ -6057,7 +6114,8 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
         Layer& layer = layerLibrary[i];
         uint16_t offset = 240 + (i * 25);
         data[offset + 0] = layer.level;
-        data[offset + 1] = layer.pitch;
+        data[offset + 1] = pitchFileOldByte(layer.pitch);   // older firmware reads this
+        data[offset + 24] = pitchFileSemiByte(layer.pitch); // semitones (Pitch.h)
         data[offset + 2] = layer.direction;
         data[offset + 3] = layer.resolution;
         data[offset + 4] = layer.start;
@@ -6082,8 +6140,9 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
         data[offset + kRouteFileLayerByte] = routeMaskFromEntry(layer.mixerInMode);
     }
 
-    // Module destinations and the routing marker (Routing.h).
+    // Module destinations and the routing marker (Routing.h), and the file format version.
     routeWritePatch(data, routePatch);
+    formatWriteVersion(data);
 
     // 2.12 ASSET REFERENCES
     // Store per-layer instrument/sample activity flags and names.
@@ -6369,7 +6428,8 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
 
     // 4. FILE ELIGIBILITY CHECK
     // Load only if file exists and is marked as an active drumkit slot.
-    if ((sd_checkDrumkit(kitNum_) == SD_OK) && (drumkitStatus == FILE_ACTIVE)) {
+    // A kit from newer firmware (higher format version) is refused before anything changes.
+    if ((sd_checkDrumkit(kitNum_) == SD_OK) && (drumkitStatus == FILE_ACTIVE) && sd_formatSupported(drumkitName, strlen(kDrumkitRef))) {
         char data[kDrumkitByteSize] = {0x00};
         if (f_open(&sd.file, drumkitName, FA_READ) == FR_OK) {
             if (f_lseek(&sd.file, strlen(kDrumkitRef)) == FR_OK) {
@@ -6499,7 +6559,7 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                         uint16_t offset = 240 + (i * 25);
                         layerInst_setLevel(i, data[offset + 0]);
-                        layerInst_setPitch(i, data[offset + 1]);
+                        layerInst_setPitch(i, pitchFromFile(static_cast<uint8_t>(data[offset + 1]), static_cast<uint8_t>(data[offset + 24]), loadFormatVersion));
                         layerInst_setDirection(i, data[offset + 2]);
                         layerInst_setResolution(i, data[offset + 3]);
                         layerInst_setStart(i, data[offset + 4]);
@@ -6790,7 +6850,8 @@ SdResult Controller::sd_saveDrumkit(uint8_t kitNum_) {
         Layer& layer = layerLibrary[i];
         uint16_t offset = 240 + (i * 25);
         data[offset + 0] = layer.level;
-        data[offset + 1] = layer.pitch;
+        data[offset + 1] = pitchFileOldByte(layer.pitch);   // older firmware reads this
+        data[offset + 24] = pitchFileSemiByte(layer.pitch); // semitones (Pitch.h)
         data[offset + 2] = layer.direction;
         data[offset + 3] = layer.resolution;
         data[offset + 4] = layer.start;
@@ -6815,8 +6876,9 @@ SdResult Controller::sd_saveDrumkit(uint8_t kitNum_) {
         data[offset + kRouteFileLayerByte] = routeMaskFromEntry(layer.mixerInMode);
     }
 
-    // Module destinations and the routing marker (Routing.h).
+    // Module destinations and the routing marker (Routing.h), and the file format version.
     routeWritePatch(data, routePatch);
+    formatWriteVersion(data);
 
     // 2.12 ASSET REFERENCES
     // Store per-layer instrument/sample activity flags and names.
@@ -8526,10 +8588,9 @@ void Controller::lcd_transitionMenu() {
             break;
 
         case EUCLID_MENU:
-            // Tabs 2-3 hold the pattern; tab 7 is unused.
+            // Tabs 2-3 hold the pattern.
             lcd.setBackColor(BLACK);
             lcd.clearRect(493, 29, 325, 60);
-            lcd_clearMenuTab(7);
             break;
 
         case LAYER_SONG_MENU:
@@ -10109,6 +10170,8 @@ void Controller::lcd_drawMetroMenu() {
     lcd.drawText(kHeaderPrecount, kMenuHeaderTextSize, kMenuHeaderX[1], kMenuHeaderY[1]);
     lcd.drawText(kHeaderSample, kMenuHeaderTextSize, kMenuHeaderX[2], kMenuHeaderY[2]);
     lcd.drawText(kHeaderVolume, kMenuHeaderTextSize, kMenuHeaderX[3], kMenuHeaderY[3]);
+    lcd.drawText(kHeaderPreview, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
+    lcd.drawText(kHeaderPreviewLevel, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
 
     // 4. SIGN/UNIT DRAW
     // Draw unit/sign text for each parameter slot.
@@ -10117,6 +10180,8 @@ void Controller::lcd_drawMetroMenu() {
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[1], kMenuSignBoxY[1]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[2], kMenuSignBoxY[2]);
     lcd.drawText("  %", kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
+    lcd.drawText("  %", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
 
     // 5. DATA DRAW
     // Draw metronome parameter values.
@@ -10124,6 +10189,20 @@ void Controller::lcd_drawMetroMenu() {
     lcd_drawMetro_PrecountData();
     lcd_drawMetro_SampleData();
     lcd_drawMetro_VolumeData();
+    lcd_drawMetro_PreviewData();
+    lcd_drawMetro_PreviewLevelData();
+}
+
+void Controller::lcd_drawMetro_PreviewData() {
+    /// @brief Draws the sample preview on/off field (tab 4).
+    lcd_setMenuDataState(WHITE);
+    lcd.drawText(previewOn ? kDataOn : kDataOff, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
+}
+
+void Controller::lcd_drawMetro_PreviewLevelData() {
+    /// @brief Draws the sample preview level field (tab 5).
+    lcd_setMenuDataState(WHITE);
+    lcd.drawText(kNumberDataLibrary[previewLevel].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
 }
 
 void Controller::lcd_drawMetro_ActiveData() {
@@ -11625,7 +11704,7 @@ void Controller::lcd_drawLayerInst_GraphData(uint8_t layerNum_) {
 
     // 7. DURATION CALCULATION
     // Compute playback duration from selection window and pitch factor.
-    float pitchFactor = kLayerPitchDataLibrary[layer.pitch].data;
+    float pitchFactor = ::pitchFactor(layer.pitch);
     float selectionRatio = static_cast<float>(layer.end - layer.start) / 100.0f;
     if (selectionRatio < 0.0f) selectionRatio = 0.0f;
 
@@ -11740,10 +11819,13 @@ void Controller::lcd_drawLayerInst_PitchData(uint8_t layerNum_) {
 
     // 2. PITCH VALUE DRAW
     // Draw pitch value text.
-    // While playing with an LFO on it, show what the last hit used, in yellow.
+    // While playing with an LFO on it, show what the last hit used, in yellow. Semitones ("+7"),
+    // or the old speed factor ("1.37") for a pitch loaded from an older file and not changed yet.
     int16_t value = layerLibrary[layerNum_].pitch;
     lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_PITCH, value) ? YELLOW : WHITE);
-    lcd.drawText(kLayerPitchDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
+    char pitchText[24];
+    pitchName(static_cast<uint8_t>(value), pitchText, sizeof(pitchText));
+    lcd.drawText(pitchText, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
 
     // 3. LFO LABEL DRAW
     // Draw assigned LFO short label.
@@ -14749,6 +14831,8 @@ void Controller::metro_reset() {
     metro_setPrecount(kInitialMetroPrecount);
     metro_setSample(kInitialMetroSample);
     metro_setVolume(kInitialMetroVolume);
+    preview_setOn(true);
+    preview_setLevel(70);
 }
 
 void Controller::metro_menuRight() {
@@ -14757,7 +14841,8 @@ void Controller::metro_menuRight() {
     // 1. TAB STATE UPDATE
     // Advance tab index and wrap to first tab at upper boundary.
     preMenuTab = menuTab;
-    menuTab = (menuTab < kMaxMenu4Tab) ? (menuTab + 1) : kMinMenu4Tab;
+    // Tabs 0-3 metronome, 4-5 sample preview.
+    menuTab = (menuTab < 5) ? (menuTab + 1) : kMinMenu4Tab;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation for tab change.
@@ -14770,7 +14855,7 @@ void Controller::metro_menuLeft() {
     // 1. TAB STATE UPDATE
     // Decrement tab index and wrap to last tab at lower boundary.
     preMenuTab = menuTab;
-    menuTab = (menuTab > kMinMenu4Tab) ? (menuTab - 1) : kMaxMenu4Tab;
+    menuTab = (menuTab > kMinMenu4Tab) ? (menuTab - 1) : 5;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation for tab change.
@@ -14798,6 +14883,14 @@ void Controller::metro_menuUp() {
         case 3:
             if (metronome.volume < kMaxMetroVolume) metro_setVolume(metronome.volume + 1);
             break;
+
+        case 4:
+            preview_setOn(!previewOn);
+            break;
+
+        case 5:
+            if (previewLevel < 100) preview_setLevel(previewLevel + 1);
+            break;
     }
 }
 
@@ -14821,6 +14914,14 @@ void Controller::metro_menuDown() {
 
         case 3:
             if (metronome.volume > kMinMetroVolume) metro_setVolume(metronome.volume - 1);
+            break;
+
+        case 4:
+            preview_setOn(!previewOn);
+            break;
+
+        case 5:
+            if (previewLevel > 0) preview_setLevel(previewLevel - 1);
             break;
     }
 }
@@ -18785,16 +18886,17 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     tBD.volumeMultiplier = kLayerVolumeCoef * kNumberDataLibrary[nLevel].powMultiplier * fillVolMultiplier_ * normMultiplier * mixer.masterVolumeFloat;
 
                     // calculate pitch with lfo
+                    // (Pitch.h: semitone layers move +-12 semitones at full depth; layers loaded from
+                    // older files keep the old rule.)
                     if ((layer.lfoPitch) && (lfoLibrary[(layer.lfoPitch - 1)].active)) {
                         Lfo& lfo = lfoLibrary[(layer.lfoPitch - 1)];
                         float lfoData = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
                         float lfoDepth = kNumberDataLibrary[lfo.depth].stdMultiplier;
-                        nPitch = layer.pitch + round(100 * (lfoData - 0.5) * lfoDepth);
-                        nPitch = clamp(nPitch, (int16_t)kMinLayerPitch, (int16_t)kMaxLayerPitch);
+                        nPitch = pitchWithLfo(layer.pitch, lfoData, lfoDepth);
                     } else {
                         nPitch = layer.pitch;
                     }
-                    tBD.increment = kLayerPitchDataLibrary[nPitch].data;
+                    tBD.increment = pitchFactor(static_cast<uint8_t>(nPitch));
 
                     // calculate resolution with lfo
                     if ((layer.lfoResolution) && (lfoLibrary[(layer.lfoResolution - 1)].active)) {
@@ -18905,14 +19007,14 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     case 1:
                         tBD.fadeFlag = true;
                         tBD.fadeAction = false;
-                        tBD.counterFadeStart = tBD.counterStart + 50;
+                        tBD.counterFadeStart = tBD.counterStart + (50 * tBD.increment);
                         tBD.counterFade = 0;
                         break;
 
                     case 2:
                         tBD.fadeFlag = false;
                         tBD.fadeAction = false;
-                        tBD.counterFadeStart = tBD.counterStart + 50;
+                        tBD.counterFadeStart = tBD.counterStart + (50 * tBD.increment);
                         tBD.counterFade = 0;
                         break;
 
@@ -19156,8 +19258,9 @@ void Controller::layerInst_menuUp() {
                 case LAYER_INST_0_MENU:
                     if (keyboard.shiftKeyPress) {
                         (layer.lfoPitch < kMaxLfo) ? layerInst_setLfoPitch(selectedLayerNum, layer.lfoPitch + 1) : layerInst_setLfoPitch(selectedLayerNum, kMinLfo);
-                    } else if (layer.pitch < kMaxLayerPitch)
-                        layerInst_setPitch(selectedLayerNum, layer.pitch + 1);
+                    } else {
+                        layerInst_stepPitch(true, false);
+                    }
                     break;
 
                 case LAYER_INST_1_MENU:
@@ -19275,8 +19378,9 @@ void Controller::layerInst_menuDown() {
                 case LAYER_INST_0_MENU:
                     if (keyboard.shiftKeyPress) {
                         (layer.lfoPitch > kMinLfo) ? layerInst_setLfoPitch(selectedLayerNum, layer.lfoPitch - 1) : layerInst_setLfoPitch(selectedLayerNum, kMaxLfo);
-                    } else if (layer.pitch > kMinLayerPitch)
-                        layerInst_setPitch(selectedLayerNum, layer.pitch - 1);
+                    } else {
+                        layerInst_stepPitch(false, false);
+                    }
                     break;
 
                 case LAYER_INST_1_MENU:
@@ -19706,7 +19810,10 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
     /// Handles metadata copy, sector allocation, PCM conversion, normalization, and UI refresh.
 
     // 1. FATFS PRE-CLEANUP
-    // Force-close any previous file handle to start from clean FatFs state.
+    // Force-close any previous file handle to start from clean FatFs state. A running sample
+    // preview fades out (it is the sample being loaded, or one the user moved away from).
+    if (previewVoice.state == PREVIEW_PLAY) previewVoice.state = PREVIEW_STOP;
+    previewPending = false;
     f_close(&sd.file);
     Layer& layer = layerLibrary[layerNum_];
     const int16_t prevSampleLoaded = layer.sampleLoaded;
@@ -20045,6 +20152,27 @@ void Controller::layerInst_setLevel(uint8_t layerNum_, uint8_t level_) {
         // Refresh data field when corresponding menu page is visible.
         if ((menu == LAYER_INST_0_MENU) && (selectedLayerNum == layer.number)) lcd_drawLayerInst_LevelData(layerNum_);
     }
+}
+
+void Controller::layerInst_stepPitch(bool up_, bool encoder_) {
+    /// @brief One PITCH step on the selected layer: a semitone, or with a fast encoder turn the next
+    /// octave line (-24, -12, 0, +12, +24). A pitch loaded from an older file snaps to its nearest
+    /// semitone on the first step (Pitch.h).
+
+    if (selectedLayerNum == -1) return;
+    bool octave = false;
+    if (encoder_) {
+        // Detents less than 60 ms apart count as a fast turn. One octave step per 150 ms, so a
+        // fast spin walks through the octaves instead of jumping straight to the end.
+        const uint32_t now = HAL_GetTick();
+        octave = (now - pitchTurnTick) < 60;
+        pitchTurnTick = now;
+        if (octave) {
+            if ((now - pitchOctaveTick) < 150) return;
+            pitchOctaveTick = now;
+        }
+    }
+    layerInst_setPitch(selectedLayerNum, pitchStep(layerLibrary[selectedLayerNum].pitch, up_, octave));
 }
 
 void Controller::layerInst_setPitch(uint8_t layerNum_, uint8_t pitch_) {
@@ -20512,6 +20640,140 @@ void Controller::routing_select() {
     }
 }
 
+void Controller::preview_setOn(bool on_) {
+    /// @brief Sample preview on/off (Metronome page, saved in the system preset).
+    previewOn = on_;
+    if (!previewOn) {
+        if (previewVoice.state == PREVIEW_PLAY) previewVoice.state = PREVIEW_STOP;
+        previewPending = false;
+    }
+    if (menu == METRO_MENU) lcd_drawMetro_PreviewData();
+    if (systemPresetSaveActive) {
+        stopSystemPresetTimer();
+        startSystemPresetTimer();
+    }
+}
+
+void Controller::preview_setLevel(uint8_t level_) {
+    /// @brief Sample preview level 0-100 (cubed like the other levels).
+    if (level_ > 100) return;
+    previewLevel = level_;
+    if (menu == METRO_MENU) lcd_drawMetro_PreviewLevelData();
+    if (systemPresetSaveActive) {
+        stopSystemPresetTimer();
+        startSystemPresetTimer();
+    }
+}
+
+void Controller::preview_request(uint8_t layerNum_, bool now_) {
+    /// @brief Asks for the layer's selected sample to be previewed: when the SAMPLE knob has rested
+    /// for 250 ms (now_ = false), or at once (the layer pad). A preview already playing fades out
+    /// first; preview_update() starts the new one when the voice is idle.
+    if (!previewOn) return;
+    if (previewVoice.state == PREVIEW_PLAY) previewVoice.state = PREVIEW_STOP;
+    previewPending = true;
+    previewLayer = static_cast<int8_t>(layerNum_);
+    previewRequestTick = now_ ? (HAL_GetTick() - 250) : HAL_GetTick();
+}
+
+bool Controller::preview_padReplay(uint8_t layerNum_) {
+    /// @brief On an instrument page, the selected layer's pad replays the preview while the selected
+    /// sample is not the loaded one. Not while recording.
+    if (!previewOn || recordActive || (static_cast<int16_t>(layerNum_) != selectedLayerNum)) return false;
+    if ((menu != LAYER_INST_0_MENU) && (menu != LAYER_INST_1_MENU) && (menu != LAYER_INST_2_MENU)) return false;
+    const Layer& layer = layerLibrary[layerNum_];
+    if ((layer.sampleSelected == -1) || layer.sampleSelectedReadError || layer.sampleSelectedTypeError) return false;
+    if ((layer.instSelected == layer.instLoaded) && (layer.sampleSelected == layer.sampleLoaded)) return false;
+    preview_request(layerNum_, true);
+    return true;
+}
+
+void Controller::preview_start(uint8_t layerNum_) {
+    /// @brief Opens the layer's selected sample and starts streaming it. The voice must be idle.
+    Layer& layer = layerLibrary[layerNum_];
+    if ((layer.sampleSelected == -1) || layer.sampleSelectedReadError || layer.sampleSelectedTypeError) return;
+    if (previewFileOpen) {
+        f_close(&previewFile);
+        previewFileOpen = false;
+    }
+    if (f_open(&previewFile, layer.sampleSelectedData.fileName, FA_READ) != FR_OK) return;
+    if (f_lseek(&previewFile, layer.wavSelectedData.data_chunk.chunkStartByte + 8) != FR_OK) {
+        f_close(&previewFile);
+        return;
+    }
+    previewFileOpen = true;
+    previewFormat.bits = static_cast<uint8_t>(layer.wavSelectedData.fmt_chunk.bitPerSample);
+    previewFormat.channels = static_cast<uint8_t>(layer.wavSelectedData.fmt_chunk.nbrChannels);
+    previewFormat.rate = layer.wavSelectedData.fmt_chunk.sampleRate;
+    previewBytesLeft = layer.sampleSelectedData.sampleByteSize;
+    const uint32_t rest = static_cast<uint32_t>(f_size(&previewFile) - f_tell(&previewFile));
+    if (previewBytesLeft > rest) previewBytesLeft = rest;
+
+    // The voice is idle, so the audio interrupt does not touch the ring now.
+    previewRing.read = 0;
+    previewRing.write = 0;
+    previewVoice.sourceDone = false;
+    previewVoice.ramp = 0.0f;
+    previewVoice.last = 0.0f;
+    previewVoice.starved = false;
+    preview_service();  // a head start before playing (up to 4 chunks)
+    __DMB();
+    previewVoice.state = PREVIEW_PLAY;
+}
+
+void Controller::preview_service() {
+    /// @brief Main loop: tops up the preview ring from the file. Reads up to 4 chunks per call while
+    /// the ring is under half full, so wide formats keep up: a 48 kHz 24-bit stereo file needs 6
+    /// bytes per output sample, three times a 16-bit mono one, and one 4 KB read per main-loop pass
+    /// was not enough for it (the ring kept running dry and the preview fluttered).
+    // 12288 bytes divides by every frame size (1, 2, 3, 4, 6, 8, 12, 16, 24 bytes), so chunks never
+    // split a frame.
+    static uint8_t raw[12288];
+    for (uint8_t pass = 0; (pass < 4) && previewFileOpen; pass++) {
+        if ((pass > 0) && (previewRingCount(previewRing) >= (previewRing.mask + 1) / 2)) return;
+        const uint32_t step = previewFrameBytes(previewFormat);
+        const uint8_t repeat = previewRepeat(previewFormat);
+        uint32_t chunk = (step == 0) ? 0 : (sizeof(raw) / step) * step;
+        if (step && (chunk > previewBytesLeft)) chunk = previewBytesLeft - (previewBytesLeft % step);
+        bool done = (chunk == 0);
+        if (!done) {
+            if (previewRingFree(previewRing) < (chunk / step) * repeat) return;  // not enough room yet
+            UINT got = 0;
+            if ((f_read(&previewFile, raw, chunk, &got) != FR_OK) || (got == 0)) {
+                done = true;
+            } else {
+                previewConvert(previewRing, raw, got - (got % step), previewFormat);
+                previewBytesLeft -= got;
+                done = (previewBytesLeft < step);
+            }
+        }
+        if (done) {
+            previewVoice.sourceDone = true;
+            f_close(&previewFile);
+            previewFileOpen = false;
+        }
+    }
+}
+
+void Controller::preview_update() {
+    /// @brief Main loop: stops the preview off the instrument pages, starts a requested one when the
+    /// voice is idle and the knob has rested, and keeps the ring filled.
+    const bool instPage = (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU);
+    if (!instPage || !previewOn || (previewLayer != selectedLayerNum)) {
+        if (previewVoice.state == PREVIEW_PLAY) previewVoice.state = PREVIEW_STOP;
+        previewPending = false;
+    }
+    if (previewPending && (previewVoice.state == PREVIEW_IDLE) && ((HAL_GetTick() - previewRequestTick) >= 250)) {
+        previewPending = false;
+        if (previewLayer == selectedLayerNum) preview_start(static_cast<uint8_t>(previewLayer));
+    }
+    if ((previewVoice.state == PREVIEW_IDLE) && previewFileOpen && !previewPending) {
+        f_close(&previewFile);
+        previewFileOpen = false;
+    }
+    preview_service();
+}
+
 bool Controller::layerPageMenu() const {
     /// @brief True on a page of one layer: instrument pages 1-3, song, EUCLID.
     return (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU) || (menu == LAYER_SONG_MENU) || (menu == EUCLID_MENU);
@@ -20548,7 +20810,8 @@ void Controller::euclid_apply() {
         euclidBank = activeSongBank;
     }
     const uint32_t pattern = euclidPattern(euclidSteps, euclidHits, euclidRotate);
-    euclidDropped = euclidApply(layerSongScratch, euclidSnapshot, euclidMerge, pattern, euclidSteps, static_cast<uint16_t>(kQuantizeInterval[euclidGrid]), songInterval);
+    const uint32_t accents = euclidAccents(euclidSteps, euclidHits, euclidRotate, euclidAccentCount);
+    euclidDropped = euclidApply(layerSongScratch, euclidSnapshot, euclidMerge, pattern, euclidSteps, static_cast<uint16_t>(kQuantizeInterval[euclidGrid]), songInterval, accents);
     euclidApplied = true;
     layerSong_commitBank(0);
     if (euclidDropped) textFullFlag = true;
@@ -20575,9 +20838,14 @@ void Controller::euclid_step(EncoderFunc function_, bool up_) {
             euclidSteps = up_ ? ((euclidSteps < kEuclidMaxSteps) ? euclidSteps + 1 : 1) : ((euclidSteps > 1) ? euclidSteps - 1 : kEuclidMaxSteps);
             if (euclidHits > euclidSteps) euclidHits = euclidSteps;
             if (euclidRotate >= euclidSteps) euclidRotate = 0;
+            if (euclidAccentCount > euclidHits) euclidAccentCount = euclidHits;
             break;
         case ENC_EUC_HITS:
             euclidHits = up_ ? ((euclidHits < euclidSteps) ? euclidHits + 1 : 0) : ((euclidHits > 0) ? euclidHits - 1 : euclidSteps);
+            if (euclidAccentCount > euclidHits) euclidAccentCount = euclidHits;
+            break;
+        case ENC_EUC_ACCENTS:
+            euclidAccentCount = up_ ? ((euclidAccentCount < euclidHits) ? euclidAccentCount + 1 : 0) : ((euclidAccentCount > 0) ? euclidAccentCount - 1 : euclidHits);
             break;
         case ENC_EUC_ROTATE:
             euclidRotate = up_ ? ((euclidRotate + 1 < euclidSteps) ? euclidRotate + 1 : 0) : ((euclidRotate > 0) ? euclidRotate - 1 : euclidSteps - 1);
@@ -20596,8 +20864,9 @@ void Controller::euclid_step(EncoderFunc function_, bool up_) {
     euclid_apply();
 }
 
-// EUCLID page fields (index -> tab): STEPS, HITS | pattern | ROTATE, GRID, MODE.
-static const uint8_t kEuclidTab[5] = {0, 1, 4, 5, 6};
+// EUCLID page fields (index -> tab): STEPS, HITS | pattern | ROTATE, GRID, MODE, ACCENTS.
+static const uint8_t kEuclidFields = 6;
+static const uint8_t kEuclidTab[kEuclidFields] = {0, 1, 4, 5, 6, 7};
 
 void Controller::lcd_drawEuclidMenu() {
     /// @brief Draws the EUCLID page: settings, the pattern and where it lands.
@@ -20605,7 +20874,7 @@ void Controller::lcd_drawEuclidMenu() {
     lcd_drawMenuIcon(EUCLID_MENU);
     lcd_setMenuHeaderState(CYAN);
     lcd.drawText(kDataMenuNum + selectedLayerNum, 1, kMenuNumX, kMenuNumY);
-    for (uint8_t f = 0; f < 5; f++) {
+    for (uint8_t f = 0; f < kEuclidFields; f++) {
         const uint8_t tab = kEuclidTab[f];
         lcd_setMenuHeaderState(CYAN);
         lcd.drawText(kEncoderFuncDataLibrary[ENC_EUC_STEPS + f].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[tab], kMenuHeaderY[tab]);
@@ -20617,16 +20886,21 @@ void Controller::lcd_drawEuclidMenu() {
 }
 
 void Controller::lcd_drawEuclid_Data() {
-    /// @brief Draws the five EUCLID field values.
+    /// @brief Draws the EUCLID field values.
 
-    char text[5][kMenuDataTextSize + 1];
+    char text[kEuclidFields][kMenuDataTextSize + 1];
     snprintf(text[0], sizeof(text[0]), "%10u", static_cast<unsigned>(euclidSteps));
     snprintf(text[1], sizeof(text[1]), "%10u", static_cast<unsigned>(euclidHits));
     snprintf(text[2], sizeof(text[2]), "%10u", static_cast<unsigned>(euclidRotate));
     memcpy(text[3], kQuantizeDataLibrary[euclidGrid].nameLongR, sizeof(text[3]));
     memcpy(text[4], euclidMerge ? "     MERGE" : "   REPLACE", sizeof(text[4]));
+    if ((euclidAccentCount == 0) || (euclidAccentCount >= euclidHits)) {
+        memcpy(text[5], "       OFF", sizeof(text[5]));
+    } else {
+        snprintf(text[5], sizeof(text[5]), "%10u", static_cast<unsigned>(euclidAccentCount));
+    }
     lcd_setMenuDataState(WHITE);
-    for (uint8_t f = 0; f < 5; f++) {
+    for (uint8_t f = 0; f < kEuclidFields; f++) {
         const uint8_t tab = kEuclidTab[f];
         lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[tab], kMenuDataY[tab]);
     }
@@ -20643,11 +20917,18 @@ void Controller::lcd_drawEuclidOverview() {
     lcd.setAlignment(LEFT);
 
     char line[40];
-    int len = snprintf(line, sizeof(line), "E(%u,%u) ROT %u  %s", static_cast<unsigned>(euclidHits), static_cast<unsigned>(euclidSteps), static_cast<unsigned>(euclidRotate), euclidMerge ? "MERGE" : "REPLACE");
+    const bool accented = (euclidAccentCount > 0) && (euclidAccentCount < euclidHits);
+    int len = accented ? snprintf(line, sizeof(line), "E(%u,%u) ROT %u ACC %u  %s", static_cast<unsigned>(euclidHits), static_cast<unsigned>(euclidSteps), static_cast<unsigned>(euclidRotate), static_cast<unsigned>(euclidAccentCount), euclidMerge ? "MERGE" : "REPLACE")
+                       : snprintf(line, sizeof(line), "E(%u,%u) ROT %u  %s", static_cast<unsigned>(euclidHits), static_cast<unsigned>(euclidSteps), static_cast<unsigned>(euclidRotate), euclidMerge ? "MERGE" : "REPLACE");
     lcd.setForeColor(CYAN);
     if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY);
 
-    euclidText(euclidPattern(euclidSteps, euclidHits, euclidRotate), euclidSteps, line);
+    // X = hit, + = ghost hit (with ACCENTS on). The screen font has no lowercase letters (an x
+    // would be drawn as X), so ghost hits use +.
+    euclidText(euclidPattern(euclidSteps, euclidHits, euclidRotate), euclidSteps, line, euclidAccents(euclidSteps, euclidHits, euclidRotate, euclidAccentCount));
+    for (uint8_t i = 0; i < euclidSteps; i++) {
+        if (line[i] == 'x') line[i] = accented ? '+' : 'X';
+    }
     lcd.setForeColor(WHITE);
     lcd.drawText(line, euclidSteps, kX, kY + 2 * kLineStep);
 
@@ -22958,9 +23239,14 @@ void Controller::processAudioSend(uint32_t* outputBuffer) {
     const float ceiling = kMixerLimiterDataLibrary[limiter].data;
     const float invCeiling = 1.0f / ceiling;
     const bool limit = (ceiling < 1.0f);
+
+    // Sample preview (Preview.h): mono, added to both sides before master volume.
+    float previewBlock[I2S_BLOCK_SIZE];
+    previewRender(previewRing, previewVoice, previewBlock, I2S_BLOCK_SIZE, kLayerVolumeCoef * kNumberDataLibrary[(previewLevel <= 100) ? previewLevel : 100].powMultiplier);
+
     for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-        float outL = audioSend_L[i];
-        float outR = audioSend_R[i];
+        float outL = audioSend_L[i] + previewBlock[i];
+        float outR = audioSend_R[i] + previewBlock[i];
 
         // Apply master volume gains
         outL *= mixer.volumeLeftFloat;

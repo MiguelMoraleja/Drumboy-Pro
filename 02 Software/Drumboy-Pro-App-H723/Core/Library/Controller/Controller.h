@@ -272,10 +272,28 @@ class Controller {
     uint8_t euclidRotate = 0;
     uint8_t euclidGrid = kInitialQuantize;  // index into kQuantizeInterval
     bool euclidMerge = false;
+    uint8_t euclidAccentCount = 0;  // 0 = off (every hit full); else that many accents, the other hits GHOST
     bool euclidApplied = false;  // the layer holds a pattern; CLEAR restores euclidSnapshot
     uint16_t euclidDropped = 0;  // hits that did not fit in the bank
     uint8_t euclidBank = 0;      // song bank euclidSnapshot was taken from
 
+    // Sample preview (Preview.h): the ring and voice are shared with the audio interrupt, which only
+    // renders; the main loop streams the file (preview_update).
+    PreviewRing previewRing{reinterpret_cast<float*>(RAM_PREVIEW_ADDRESS), kPreviewRingSize - 1, 0, 0};
+    PreviewVoice previewVoice{};
+    FIL previewFile;
+    bool previewFileOpen = false;
+    uint32_t previewBytesLeft = 0;
+    PreviewFormat previewFormat{0, 0, 0};
+    bool previewPending = false;        // start once the voice is idle and the knob has rested
+    uint32_t previewRequestTick = 0;
+    int8_t previewLayer = -1;
+    bool previewOn = true;              // Metronome page, saved in the system preset
+    uint8_t previewLevel = 70;
+
+    uint8_t loadFormatVersion = 0;   // format version of the kit/song file being loaded (FileFormat.h)
+    uint32_t pitchTurnTick = 0;      // last PITCH encoder step, for fast-turn octave steps
+    uint32_t pitchOctaveTick = 0;    // last octave step
     uint32_t lfoValuesDrawTick = 0;  // last refresh of LFO-modulated values on the instrument page
     uint8_t lfoValuesLive = 0;       // instrument fields currently showing a modulated value (bit per LayerShown)
 
@@ -664,6 +682,8 @@ class Controller {
     void lcd_drawLayerInst_SampleData(uint8_t layerNum_);
     void lcd_drawLayerInst_GraphData(uint8_t layerNum_);
     void lcd_drawLayerInst_LevelData(uint8_t layerNum_);
+    bool sd_formatSupported(const char* fileName_, uint16_t refSize_);
+    void layerInst_stepPitch(bool up_, bool encoder_);
     bool layerInst_lfoShown(uint8_t layerNum_, LayerShown value_, int16_t& shown_);
     void lcd_drawLayerInstLfoValues();
     void lcd_drawLayerInst_PitchData(uint8_t layerNum_);
@@ -1006,6 +1026,15 @@ class Controller {
 
     void routing_select();
     void euclid_select();
+    void preview_request(uint8_t layerNum_, bool now_);
+    void preview_start(uint8_t layerNum_);
+    void preview_service();
+    void preview_update();
+    bool preview_padReplay(uint8_t layerNum_);
+    void preview_setOn(bool on_);
+    void preview_setLevel(uint8_t level_);
+    void lcd_drawMetro_PreviewData();
+    void lcd_drawMetro_PreviewLevelData();
     bool layerPageMenu() const;
     void euclid_apply();
     void euclid_clear();

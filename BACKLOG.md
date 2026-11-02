@@ -308,6 +308,8 @@ Not worth bringing over: LXR's analog-style voices and wavetables (a synthesis e
 
 ### 18. MIDI in: velocity, running status, note queue
 
+**Status: done, waiting for a hardware test** (`MidiIn.h`, `test_midiin`). All four problems fixed: velocity scales the hit on the same curve as FLAT/GHOST beats; note-on 0 is a note-off; running status works, also across clock bytes; a 16-note queue between the UART interrupt and the main loop. Recorded hits below velocity 64 become GHOST beats, also during precount. Not done: a velocity curve setting in the IO menu (the system preset has no free bytes; do it with item 13's preset growth pattern if wanted).
+
 **What happens.** Notes from a controller or DAW sometimes go missing or play at the wrong level:
 - **Velocity is ignored.** `receiveMidiCommand()` stores `rxNoteOnVelocity`, but the main loop calls `layer_playBeat(layerNum, 1.0f)`: every hit is full level, and recorded beats are plain FLAT beats.
 - **Note-on with velocity 0 plays a hit.** By the MIDI spec it means note-off, and many devices send it instead of 0x80. Each note then plays twice.

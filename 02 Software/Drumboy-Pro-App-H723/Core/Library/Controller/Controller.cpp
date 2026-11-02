@@ -81,7 +81,7 @@ Controller::Controller()
       drumkitStatus(FILE_NONE),
       playActive(false),
       recordActive(false),
-      precountPendingBeat{false},
+      precountPendingBeat{0},
     ignoreNextMidiStopAfterSpecialCmd(false),
       playTimerPeriod(0),
       measureTimerPeriod(0),
@@ -517,31 +517,31 @@ void Controller::update() {
 
         // 13. INBOUND MIDI PROCESSING
         // Translate incoming MIDI events to playback and recording actions.
-        if (io.midi.rxNoteOnWriteFlag == 1) {
-            uint8_t layerNum = io.midi.rxNoteOnKey % 12;  // Map MIDI key to layer (0-11)
+        // Every queued note-on plays (a chord or several hits on one step all arrive),
+        // scaled by its velocity on the same curve as the sequencer's FLAT and GHOST beats.
+        MidiInNote rxNote;
+        while (io.midi.rxNoteQueue.pop(rxNote)) {
+            uint8_t layerNum = rxNote.key % 12;  // Map MIDI key to layer (0-11)
             if (layerNum < kLayerLibrarySize) {
                 Layer& layer = layerLibrary[layerNum];
+                const float velocity = kNumberDataLibrary[midiInVelocityTo100(rxNote.velocity)].powMultiplier;
 
                 // Trigger audio if layer is active and unmuted
                 if ((!layer.mute) && (layer.samplePlay))
-                    layer_playBeat(layerNum, 1.0f);
+                    layer_playBeat(layerNum, velocity);
 
-                // Write note to the current sequencer step if Recording is enabled
+                // Write note to the current sequencer step if Recording is enabled.
+                // Soft hits are recorded as GHOST beats (fill pattern 1), the rest FLAT (0).
                 if (recordActive) {
+                    const uint8_t pattern = (rxNote.velocity < kMidiInGhostBelow) ? 1 : 0;
                     if (!metronome.precountState) {
-                        layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true);
+                        layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, pattern, 0, 0, true);
                     } else {
                         // Note landed during precount; commit it to position 0 once playback starts.
-                        precountPendingBeat[layerNum] = true;
+                        precountPendingBeat[layerNum] = static_cast<uint8_t>(pattern + 1);
                     }
                 }
             }
-            io.midi.rxNoteOnWriteFlag = 0;  // Clear software interrupt flag
-        }
-
-        // Clean up inbound Note Off logic
-        if (io.midi.rxNoteOffWriteFlag == 1) {
-            io.midi.rxNoteOffWriteFlag = 0;
         }
 
         // 14. INBOUND MIDI TRANSPORT AND CLOCK
@@ -1186,6 +1186,15 @@ void Controller::receiveMidiCommand() {
         return;
     }
 
+    // 3. CHANNEL MESSAGES (running status, note-on velocity 0 = note-off, see MidiIn.h)
+    // Every byte goes through the parser, SysEx included, so it stays in step with the
+    // stream; only note-ons on the selected channel are queued, and only in NOTE modes.
+    {
+        MidiInNote note;
+        if (midiInParse(io.midi.rxParser, rxData, io.midi.rxChannel, note) && io.midi.rxNotes)
+            io.midi.rxNoteQueue.push(note);
+    }
+
     if (rxData == kMidiSysExStart) {
         io.midi.rxSysExStage = 1;
         io.midi.rxSysExCmd = 0;
@@ -1226,39 +1235,6 @@ void Controller::receiveMidiCommand() {
                 break;
         }
         return;
-    }
-
-    // 3. NOTE ON PARSER (0x90 + CHANNEL)
-    // Only processed when rxNotes is enabled (NOTES or SYN+NOT mode).
-    if (io.midi.rxNotes) {
-        if ((io.midi.rxNoteOnReadStage == 0) && (rxData == (0x90 + io.midi.rxChannel))) {
-            // Stage 0: Valid Status byte detected for the selected channel.
-            io.midi.rxNoteOnReadStage = 1;
-        } else if (io.midi.rxNoteOnReadStage == 1) {
-            // Stage 1: Capture the Note Number (0–127).
-            io.midi.rxNoteOnKey = rxData;
-            io.midi.rxNoteOnReadStage = 2;
-        } else if (io.midi.rxNoteOnReadStage == 2) {
-            // Stage 2: Capture the Velocity and finalize the message.
-            io.midi.rxNoteOnVelocity = rxData;
-            io.midi.rxNoteOnReadStage = 0;
-            io.midi.rxNoteOnWriteFlag = 1;
-        }
-
-        // 4. NOTE OFF PARSER (0x80 + CHANNEL)
-        if ((io.midi.rxNoteOffReadStage == 0) && (rxData == (0x80 + io.midi.rxChannel))) {
-            // Stage 0: Valid Note Off Status byte detected.
-            io.midi.rxNoteOffReadStage = 1;
-        } else if (io.midi.rxNoteOffReadStage == 1) {
-            // Stage 1: Capture the Note Number.
-            io.midi.rxNoteOffKey = rxData;
-            io.midi.rxNoteOffReadStage = 2;
-        } else if (io.midi.rxNoteOffReadStage == 2) {
-            // Stage 2: Capture the Release Velocity and finalize.
-            io.midi.rxNoteOffVelocity = rxData;
-            io.midi.rxNoteOffReadStage = 0;
-            io.midi.rxNoteOffWriteFlag = 1;
-        }
     }
 }
 
@@ -1608,7 +1584,7 @@ void Controller::keyboard_action() {
                                     layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true);
                                 } else {
                                     // Hit landed during precount; commit it to position 0 once playback starts.
-                                    precountPendingBeat[layerNum] = true;
+                                    precountPendingBeat[layerNum] = 1;  // FLAT
                                 }
                             }
                         }
@@ -22268,7 +22244,7 @@ void Controller::record() {
             metronome.countDown = rhythm.measure;
 
             // Clear any stale pending hits from a previous precount take.
-            for (uint8_t i = 0; i < kLayerLibrarySize; i++) precountPendingBeat[i] = false;
+            for (uint8_t i = 0; i < kLayerLibrarySize; i++) precountPendingBeat[i] = 0;
         }
 
         // Reset LFO counters to start modulation cycles from known phase.
@@ -24116,8 +24092,9 @@ void Controller::interruptPlay() {
                 // time for the very next tick's beat-trigger pass to play them in sync.
                 for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                     if (precountPendingBeat[i]) {
-                        precountPendingBeat[i] = false;
-                        layerSong_setBeat(i, activeSongBank, playInterval, 0, 0, 0, 0, true);
+                        const uint8_t pattern = static_cast<uint8_t>(precountPendingBeat[i] - 1);
+                        precountPendingBeat[i] = 0;
+                        layerSong_setBeat(i, activeSongBank, playInterval, 0, pattern, 0, 0, true);
                     }
                 }
             }

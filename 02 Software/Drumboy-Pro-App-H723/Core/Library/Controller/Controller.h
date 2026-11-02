@@ -193,7 +193,7 @@ class Controller {
     TriggerMode triggerMode = TRIG_BAR;                                 // Quantization setting
     bool playActive;                                                    // Transport status: Playing
     bool recordActive;                                                  // Transport status: Recording
-    bool precountPendingBeat[kLayerLibrarySize];                        // Layer hits during precount, committed to interval 0 when playback starts
+    uint8_t precountPendingBeat[kLayerLibrarySize];                     // Layer hits during precount (0 = none, else fill pattern + 1), committed when playback starts
     bool playArmed;                                                     // Slave mode: waiting for master START to play
     bool recordArmed;                                                   // Slave mode: waiting for master START to record
     bool ignoreNextMidiStopAfterSpecialCmd;

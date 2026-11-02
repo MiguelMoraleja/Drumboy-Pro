@@ -9,6 +9,7 @@
 #include "FileFormat.h"
 #include "Lfo.h"
 #include "MCP23017.h"
+#include "MidiIn.h"
 #include "Metronome.h"
 #include "Pitch.h"
 #include "Preview.h"
@@ -2353,15 +2354,8 @@ struct Midi {
     uint8_t rxChannel                               = 0;
     uint8_t txChannel                               = 0;
 
-    uint8_t rxNoteOnReadStage                       = 0;
-    uint8_t rxNoteOnWriteFlag                       = 0;
-    uint8_t rxNoteOnKey                             = 0;
-    uint8_t rxNoteOnVelocity                        = 0;
-
-    uint8_t rxNoteOffReadStage                      = 0;
-    uint8_t rxNoteOffWriteFlag                      = 0;
-    uint8_t rxNoteOffKey                            = 0;
-    uint8_t rxNoteOffVelocity                       = 0;
+    MidiInParser rxParser;                                              // channel messages, running status (UART ISR only)
+    MidiInQueue<16> rxNoteQueue;                                        // note-ons: pushed by the UART ISR, drained by the main loop
 
     bool txTriggerNoteOn[10]                        = {false};
     bool txTriggerNoteOff[10]                       = {false};

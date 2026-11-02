@@ -7,6 +7,8 @@
 //   0  up to V1.10
 //   1  V1.11: semitone pitch in layer record byte 24 (Pitch.h)
 // A file with a higher version than this firmware knows is refused before anything is changed.
+// Song files may also carry a song mode chain after their "EOF" (SongChain.h). It has its own
+// marker and older firmware stops reading at "EOF", so it needed no version change.
 #ifndef __FILEFORMAT_H
 #define __FILEFORMAT_H
 

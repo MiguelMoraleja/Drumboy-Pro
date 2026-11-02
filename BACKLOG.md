@@ -42,7 +42,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 **Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
 
-**To schedule after sprint 2:** [15](#15-song-mode-chain-the-banks) song mode (needs 9, which sprint 2 delivers).
+**V1.12 "Song mode"** (built, waiting for the hardware test): ✅ [15](#15-song-mode-chain-the-banks) song mode.
 
 **On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
@@ -223,6 +223,8 @@ Kit and song files have a signature but no format version. Several items above c
 **Done when.** On the device, E(5,8) with 2 accents plays two loud and three ghost hits on every loop; with VELOCITY RANDOM the levels vary per hit but repeat identically each loop and survive save/load; older kits and songs sound the same.
 
 ### 15. Song mode: chain the banks
+
+**Status: done in V1.12** (`SongChain.h`, `test_songchain`). SONG page: tap the SONG key (the one held to pick banks); fields STEP, BANK, REPEATS, LENGTH, END (LOOP/STOP), CHAIN. Decided: a manual bank pick jumps the chain to the step using that bank (a bank not in the chain turns chain play off); STOP keeps the position, RESET goes to step 1. The chain is saved after the song file's EOF (marker `CHN`), so older firmware ignores it and no format version change was needed.
 
 **Today.** Each layer has 5 song banks (`kBankLibrarySize`), and the active bank (`activeSongBank`) is the same for all layers. Holding the SONG key and pressing a pair of layer pads picks a bank (pads 1–2 = bank 1 … 9–10 = bank 5). While playing, `layerSong_triggerBank()` arms the change (`bankShiftFlag`, `targetSongBank`) and the sequencer switches at the next loop end; when stopped it switches at once (`layerSong_selectBank()`). Nothing plays the banks in sequence: every change is by hand.
 

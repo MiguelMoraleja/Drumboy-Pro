@@ -3963,6 +3963,7 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_EUC_ROTATE:
         case ENC_EUC_GRID:
         case ENC_EUC_MODE:
+        case ENC_EUC_ACCENTS:
             euclid_step(encoder[encoderNum_].function, true);
             break;
 
@@ -4523,6 +4524,7 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_EUC_ROTATE:
         case ENC_EUC_GRID:
         case ENC_EUC_MODE:
+        case ENC_EUC_ACCENTS:
             euclid_step(encoder[encoderNum_].function, false);
             break;
 
@@ -8526,10 +8528,9 @@ void Controller::lcd_transitionMenu() {
             break;
 
         case EUCLID_MENU:
-            // Tabs 2-3 hold the pattern; tab 7 is unused.
+            // Tabs 2-3 hold the pattern.
             lcd.setBackColor(BLACK);
             lcd.clearRect(493, 29, 325, 60);
-            lcd_clearMenuTab(7);
             break;
 
         case LAYER_SONG_MENU:
@@ -20548,7 +20549,8 @@ void Controller::euclid_apply() {
         euclidBank = activeSongBank;
     }
     const uint32_t pattern = euclidPattern(euclidSteps, euclidHits, euclidRotate);
-    euclidDropped = euclidApply(layerSongScratch, euclidSnapshot, euclidMerge, pattern, euclidSteps, static_cast<uint16_t>(kQuantizeInterval[euclidGrid]), songInterval);
+    const uint32_t accents = euclidAccents(euclidSteps, euclidHits, euclidRotate, euclidAccentCount);
+    euclidDropped = euclidApply(layerSongScratch, euclidSnapshot, euclidMerge, pattern, euclidSteps, static_cast<uint16_t>(kQuantizeInterval[euclidGrid]), songInterval, accents);
     euclidApplied = true;
     layerSong_commitBank(0);
     if (euclidDropped) textFullFlag = true;
@@ -20575,9 +20577,14 @@ void Controller::euclid_step(EncoderFunc function_, bool up_) {
             euclidSteps = up_ ? ((euclidSteps < kEuclidMaxSteps) ? euclidSteps + 1 : 1) : ((euclidSteps > 1) ? euclidSteps - 1 : kEuclidMaxSteps);
             if (euclidHits > euclidSteps) euclidHits = euclidSteps;
             if (euclidRotate >= euclidSteps) euclidRotate = 0;
+            if (euclidAccentCount > euclidHits) euclidAccentCount = euclidHits;
             break;
         case ENC_EUC_HITS:
             euclidHits = up_ ? ((euclidHits < euclidSteps) ? euclidHits + 1 : 0) : ((euclidHits > 0) ? euclidHits - 1 : euclidSteps);
+            if (euclidAccentCount > euclidHits) euclidAccentCount = euclidHits;
+            break;
+        case ENC_EUC_ACCENTS:
+            euclidAccentCount = up_ ? ((euclidAccentCount < euclidHits) ? euclidAccentCount + 1 : 0) : ((euclidAccentCount > 0) ? euclidAccentCount - 1 : euclidHits);
             break;
         case ENC_EUC_ROTATE:
             euclidRotate = up_ ? ((euclidRotate + 1 < euclidSteps) ? euclidRotate + 1 : 0) : ((euclidRotate > 0) ? euclidRotate - 1 : euclidSteps - 1);
@@ -20596,8 +20603,9 @@ void Controller::euclid_step(EncoderFunc function_, bool up_) {
     euclid_apply();
 }
 
-// EUCLID page fields (index -> tab): STEPS, HITS | pattern | ROTATE, GRID, MODE.
-static const uint8_t kEuclidTab[5] = {0, 1, 4, 5, 6};
+// EUCLID page fields (index -> tab): STEPS, HITS | pattern | ROTATE, GRID, MODE, ACCENTS.
+static const uint8_t kEuclidFields = 6;
+static const uint8_t kEuclidTab[kEuclidFields] = {0, 1, 4, 5, 6, 7};
 
 void Controller::lcd_drawEuclidMenu() {
     /// @brief Draws the EUCLID page: settings, the pattern and where it lands.
@@ -20605,7 +20613,7 @@ void Controller::lcd_drawEuclidMenu() {
     lcd_drawMenuIcon(EUCLID_MENU);
     lcd_setMenuHeaderState(CYAN);
     lcd.drawText(kDataMenuNum + selectedLayerNum, 1, kMenuNumX, kMenuNumY);
-    for (uint8_t f = 0; f < 5; f++) {
+    for (uint8_t f = 0; f < kEuclidFields; f++) {
         const uint8_t tab = kEuclidTab[f];
         lcd_setMenuHeaderState(CYAN);
         lcd.drawText(kEncoderFuncDataLibrary[ENC_EUC_STEPS + f].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[tab], kMenuHeaderY[tab]);
@@ -20617,16 +20625,21 @@ void Controller::lcd_drawEuclidMenu() {
 }
 
 void Controller::lcd_drawEuclid_Data() {
-    /// @brief Draws the five EUCLID field values.
+    /// @brief Draws the EUCLID field values.
 
-    char text[5][kMenuDataTextSize + 1];
+    char text[kEuclidFields][kMenuDataTextSize + 1];
     snprintf(text[0], sizeof(text[0]), "%10u", static_cast<unsigned>(euclidSteps));
     snprintf(text[1], sizeof(text[1]), "%10u", static_cast<unsigned>(euclidHits));
     snprintf(text[2], sizeof(text[2]), "%10u", static_cast<unsigned>(euclidRotate));
     memcpy(text[3], kQuantizeDataLibrary[euclidGrid].nameLongR, sizeof(text[3]));
     memcpy(text[4], euclidMerge ? "     MERGE" : "   REPLACE", sizeof(text[4]));
+    if ((euclidAccentCount == 0) || (euclidAccentCount >= euclidHits)) {
+        memcpy(text[5], "       OFF", sizeof(text[5]));
+    } else {
+        snprintf(text[5], sizeof(text[5]), "%10u", static_cast<unsigned>(euclidAccentCount));
+    }
     lcd_setMenuDataState(WHITE);
-    for (uint8_t f = 0; f < 5; f++) {
+    for (uint8_t f = 0; f < kEuclidFields; f++) {
         const uint8_t tab = kEuclidTab[f];
         lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[tab], kMenuDataY[tab]);
     }
@@ -20643,11 +20656,14 @@ void Controller::lcd_drawEuclidOverview() {
     lcd.setAlignment(LEFT);
 
     char line[40];
-    int len = snprintf(line, sizeof(line), "E(%u,%u) ROT %u  %s", static_cast<unsigned>(euclidHits), static_cast<unsigned>(euclidSteps), static_cast<unsigned>(euclidRotate), euclidMerge ? "MERGE" : "REPLACE");
+    const bool accented = (euclidAccentCount > 0) && (euclidAccentCount < euclidHits);
+    int len = accented ? snprintf(line, sizeof(line), "E(%u,%u) ROT %u ACC %u  %s", static_cast<unsigned>(euclidHits), static_cast<unsigned>(euclidSteps), static_cast<unsigned>(euclidRotate), static_cast<unsigned>(euclidAccentCount), euclidMerge ? "MERGE" : "REPLACE")
+                       : snprintf(line, sizeof(line), "E(%u,%u) ROT %u  %s", static_cast<unsigned>(euclidHits), static_cast<unsigned>(euclidSteps), static_cast<unsigned>(euclidRotate), euclidMerge ? "MERGE" : "REPLACE");
     lcd.setForeColor(CYAN);
     if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY);
 
-    euclidText(euclidPattern(euclidSteps, euclidHits, euclidRotate), euclidSteps, line);
+    // X = accented hit, x = ghost hit (all x without accents).
+    euclidText(euclidPattern(euclidSteps, euclidHits, euclidRotate), euclidSteps, line, euclidAccents(euclidSteps, euclidHits, euclidRotate, euclidAccentCount));
     lcd.setForeColor(WHITE);
     lcd.drawText(line, euclidSteps, kX, kY + 2 * kLineStep);
 

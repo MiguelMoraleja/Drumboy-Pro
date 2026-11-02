@@ -272,6 +272,7 @@ class Controller {
     uint8_t euclidRotate = 0;
     uint8_t euclidGrid = kInitialQuantize;  // index into kQuantizeInterval
     bool euclidMerge = false;
+    uint8_t euclidAccentCount = 0;  // 0 = off (every hit full); else that many accents, the other hits GHOST
     bool euclidApplied = false;  // the layer holds a pattern; CLEAR restores euclidSnapshot
     uint16_t euclidDropped = 0;  // hits that did not fit in the bank
     uint8_t euclidBank = 0;      // song bank euclidSnapshot was taken from

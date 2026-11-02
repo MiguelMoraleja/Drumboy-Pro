@@ -23,7 +23,7 @@ const uint8_t kFillLevelRandom = 4;  // kFillLevelDataLibrary: RANDOM
 // Index of the active beat starting at start_, or -1.
 inline int16_t beatListFind(const Bank& bank_, uint16_t start_) {
     for (int16_t i = 0; i <= bank_.lastActiveBeatNum; i++) {
-        if (bank_.beatLibrary[i].getStartInterval() == start_) return i;
+        if (bank_.beatLibrary[i].getActive() && (bank_.beatLibrary[i].getStartInterval() == start_)) return i;
     }
     return -1;
 }

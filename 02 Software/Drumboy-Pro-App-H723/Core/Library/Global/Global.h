@@ -1215,6 +1215,7 @@ typedef enum {
     ENC_EUC_ROTATE                                  = 0x6D,
     ENC_EUC_GRID                                    = 0x6E,
     ENC_EUC_MODE                                    = 0x6F,
+    ENC_EUC_ACCENTS                                 = 0x70,
 
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
@@ -1266,7 +1267,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     {ENC_ROUTE_EQ_OUT, ENC_ROUTE_F1_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_ROUTE_F2_OUT, ENC_ROUTE_FX1_OUT, ENC_ROUTE_FX2_OUT, ENC_ROUTE_METRO_OUT},
     // EUCLID_MENU = 0x15
     // Tabs 2-3 show the pattern.
-    {ENC_EUC_STEPS, ENC_EUC_HITS, ENC_FNC_NONE, ENC_FNC_NONE, ENC_EUC_ROTATE, ENC_EUC_GRID, ENC_EUC_MODE, ENC_FNC_NONE}};
+    {ENC_EUC_STEPS, ENC_EUC_HITS, ENC_FNC_NONE, ENC_FNC_NONE, ENC_EUC_ROTATE, ENC_EUC_GRID, ENC_EUC_MODE, ENC_EUC_ACCENTS}};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1409,7 +1410,8 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_EUC_HITS,            ENC_RES_M, "HITS      ", "EUCLID", "   ", false},
     {ENC_EUC_ROTATE,          ENC_RES_M, "ROTATE    ", "EUCLID", "   ", false},
     {ENC_EUC_GRID,            ENC_RES_M, "GRID      ", "EUCLID", "   ", false},
-    {ENC_EUC_MODE,            ENC_RES_M, "MODE      ", "EUCLID", "   ", false}
+    {ENC_EUC_MODE,            ENC_RES_M, "MODE      ", "EUCLID", "   ", false},
+    {ENC_EUC_ACCENTS,         ENC_RES_M, "ACCENTS   ", "EUCLID", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");

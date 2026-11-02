@@ -25,6 +25,14 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 15 | [Song mode: chain the banks](#15-song-mode-chain-the-banks) | Feature | M–L |
 | 16 | [Kids firmware](#16-kids-firmware) | Feature, on hold | L |
 | 17 | [Sample rate conversion (48 kHz and others)](#17-sample-rate-conversion-48-khz-and-others) | Bug | M |
+| 18 | [MIDI in: velocity, running status, note queue](#18-midi-in-velocity-running-status-note-queue) | Bug | S |
+| 19 | [MIDI out velocity and CC control](#19-midi-out-velocity-and-cc-control) | Feature | M |
+| 20 | [Choke groups](#20-choke-groups) | Feature | S |
+| 21 | [Roll / note repeat](#21-roll--note-repeat) | Feature | S–M |
+| 22 | [Velocity as a modulation source](#22-velocity-as-a-modulation-source) | Feature | M |
+| 23 | [Kit morph](#23-kit-morph) | Feature | M |
+| 24 | [Beat parameter locks](#24-beat-parameter-locks) | Feature | L |
+| 25 | [LFO retrigger and shapes](#25-lfo-retrigger-and-shapes) | Feature | S |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -40,9 +48,13 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 **Sprint 2, V1.11 "Formats and sound"** (done, tested on hardware): ✅ [14](#14-euclid-velocity-and-variance) part A ACCENTS, ✅ [9](#9-songkit-file-format-version) file format version, ✅ [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones, ✅ [13](#13-sample-preview-while-browsing) sample preview.
 
-**Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
+**Sprint 3, "MIDI and performance":** [18](#18-midi-in-velocity-running-status-note-queue), [20](#20-choke-groups), [21](#21-roll--note-repeat). Small, and 18 matters for playing and recording from Loopy Pro or the BeatStep Pro.
+
+**Sprint 4, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
 
 **To schedule after sprint 2:** [15](#15-song-mode-chain-the-banks) song mode (needs 9, which sprint 2 delivers).
+
+**Ideas from LXR (later):** [19](#19-midi-out-velocity-and-cc-control), [22](#22-velocity-as-a-modulation-source) (a cheap first step toward 3), [23](#23-kit-morph), [24](#24-beat-parameter-locks) (needs 9), [25](#25-lfo-retrigger-and-shapes). A RANDOM chain step for [15](#15-song-mode-chain-the-banks) also comes from LXR, see the end of this file.
 
 **On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
@@ -285,3 +297,114 @@ Same rule in the layer loader (`layerInst_setSampleLoaded()`) and the sample pre
 - Related, optional: stereo files use only the left channel today; mixing to mono would keep both sides.
 
 **Done when.** A 48 kHz and a 44.1 kHz recording of the same sound play at the same pitch and length, loaded and previewed; 96/192 kHz files don't alias; host tests for the converter (pitch of a sine at each rate, no clicks at chunk boundaries); the preview still never underruns on 48 kHz 24-bit stereo.
+
+---
+
+## Ideas from the LXR firmware
+
+Items 18–25 come from reading Erica Synths' open-source LXR V2 firmware (fork: MiguelMoraleja/lxr-desktop-app, STM32F765). **Licence:** LXR is GPL-3.0, this repo is MIT. Don't copy LXR code here: that would make the fork GPL and it could no longer go upstream to Randomwaves (item 10). Take the idea, write our own code, and put the logic in a hardware-free header with host tests as usual. LXR file names are given only so the behaviour can be looked up.
+
+Not worth bringing over: LXR's analog-style voices and wavetables (a synthesis engine, not a sample player), its trigger outputs (no matching hardware), and most of its master FX (we already have compressor, expander, overdrive, distortion, bitcrusher). A one-knob tilt EQ on the master is a small optional extra.
+
+### 18. MIDI in: velocity, running status, note queue
+
+**What happens.** Notes from a controller or DAW sometimes go missing or play at the wrong level:
+- **Velocity is ignored.** `receiveMidiCommand()` stores `rxNoteOnVelocity`, but the main loop calls `layer_playBeat(layerNum, 1.0f)`: every hit is full level, and recorded beats are plain FLAT beats.
+- **Note-on with velocity 0 plays a hit.** By the MIDI spec it means note-off, and many devices send it instead of 0x80. Each note then plays twice.
+- **No running status.** The note parser only starts on a status byte (`rxNoteOnReadStage == 0` needs `0x90 + channel`). A sender that leaves out repeated status bytes loses every note after the first.
+- **One pending note.** `rxNoteOnKey` / `rxNoteOnWriteFlag` is a single slot, cleared in the main loop. Two notes before the loop runs (a chord, or a kick and hat on the same step) lose one.
+
+**Proposal.**
+- A hardware-free `MidiIn.h` parser: running status (remember the last channel status byte; real-time bytes 0xF8–0xFF don't cancel it, SysEx and other system common bytes do), note-on velocity 0 → note-off, and a small ring buffer of events (e.g. 16) filled in the UART ISR and drained in the main loop.
+- Velocity scales the hit: `layer_playBeat(layerNum, velocity / 127.0f)`, or through a curve (LINEAR / SOFT / FIXED) in the IO menu.
+- Recording: a hit below a threshold (e.g. velocity < 64) records as GHOST, the rest FLAT, until item 14 B gives plain beats a real velocity.
+- Host tests: running status across real-time bytes, note-on 0, a burst of 8 notes, channel filter.
+
+**Done when.** A chord of three layers from Loopy Pro plays all three; a sender using running status and note-on 0 plays each note once; soft and hard hits are audibly different; recorded soft hits come back as ghosts.
+
+### 19. MIDI out velocity and CC control
+
+**Today.** MIDI out sends notes at a fixed velocity 100 (`0x64` in the TX block of the main loop). MIDI in has no control change (0xB0) parser: nothing on the device can be set from a controller. LXR maps every sound parameter to a CC or NRPN (`ParameterArray.c`, `MidiParser.c`) and sends them out when a knob moves.
+
+**Proposal.**
+- **Out:** send the velocity the hit actually played at (beat state × fill velocity × level, scaled to 1–127).
+- **In:** a CC map for the parameters most worth playing live: per-layer level, pitch, start, LFO depth; filter frequency/resonance; effect wet; reverb wet; master. One fixed, documented map first (e.g. CC 16–27 = layer 1–12 level), editable later. Values arrive in the ISR; apply them from the main loop, smoothed like an encoder move.
+- Optionally send the same CCs out when an encoder moves, so a DAW can record knob moves.
+- Uses the parser and queue from 18.
+
+**Done when.** Turning a BeatStep Pro knob mapped to a layer's level changes it on the device and on the screen; MIDI out velocities follow ghosts and fills.
+
+### 20. Choke groups
+
+**Today.** Every layer plays on its own. An open hat keeps ringing under the closed hat that follows it. LXR has this for its hats: the closed hat stops the open one (`sequencer.c`).
+
+**Proposal.**
+- A CHOKE field per layer: OFF or group A–D. A hit in a group fades out (a few ms, no click) every other layer playing in the same group.
+- Applies to sequencer hits, pads and MIDI in.
+- Files: one byte per layer; needs a format version step ([9](#9-songkit-file-format-version)). Old files load with CHOKE OFF.
+- Put "which layers to cut" in a hardware-free function with a host test; the fade is in the voice.
+
+**Done when.** Open hat in group A, closed hat in group A: the closed hat cuts the open one without a click; layers with CHOKE OFF are unchanged; the setting saves and loads.
+
+### 21. Roll / note repeat
+
+**Today.** A held pad plays once. LXR has a roll mode: while a pad is held, the voice retriggers at a set rate (1/16, 1/32, …) locked to the sequencer clock, and roll hits go through the step probability (`seq_setRoll`, `seq_rollRate`).
+
+**Proposal.**
+- Hold a modifier (or a ROLL key combination, to be decided on the device) and press pads: they retrigger at the ROLL RATE while held, on the sequencer grid (`kQuantizeInterval`), only while playing (or at the set tempo when stopped, decide).
+- ROLL RATE: 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32. Optional ROLL FADE: each repeat a little quieter, or a ramp up.
+- With RECORD on, rolls are recorded as beats (or as a fill, which already describes repeated hits inside a beat: try that first).
+- Performance only; nothing new is saved unless recorded.
+
+**Done when.** Holding a pad while playing gives tight 1/16 repeats in time with the sequencer and external clock; releasing stops at once; recorded rolls play back the same.
+
+### 22. Velocity as a modulation source
+
+**Today.** A hit's level only scales the output. In LXR, each voice's velocity can be routed to one other parameter with an amount (`modulationNode.c`): harder hits can open a filter, shorten a decay or raise a pitch.
+
+**Proposal.**
+- Per layer: VEL DEST (OFF, PITCH, START, END, FILTER of the layer's route, …) and VEL AMOUNT (±). Applied per hit in `layer_playBeat()`, like the LFO values today (sample and hold at trigger), so it costs nothing per sample.
+- Velocity comes from the beat (FLAT/GHOST, fills, item 14 B) and from MIDI in (item 18).
+- A cheap first step toward [3](#3-lfos-cant-modulate-filters-or-effects): same destination list and file layout ideas.
+- Files: two bytes per layer, with a format version step.
+
+**Done when.** VEL → PITCH +2 semitones: ghost hits and full hits play at audibly different pitches; with VEL DEST OFF everything plays as before.
+
+### 23. Kit morph
+
+**Today.** Changing kits is a hard switch. LXR has MORPH: one knob crossfades every sound parameter from the active kit to a second loaded kit, and spreads the work by updating one parameter per audio block so the CPU never spikes (`preset_morph_tick()` in `presetManager.c`). Audio routing is not morphed; it stays with the first kit.
+
+**Proposal.**
+- Load a second kit as the MORPH target (parameters only; samples stay those of the active kit, since morphing samples isn't possible).
+- One encoder (e.g. on the mixer or a new page) goes 0–100 %: level, pitch (in semitones), start/end, filter and effect parameters interpolate; discrete fields (filter type, effect type, routing, sample) switch at 50 % or stay with the active kit (decide per field).
+- Interpolate in the main loop, a few parameters per pass, and let the existing click-free paths apply them.
+- Optional: drive MORPH from a CC (item 19).
+
+**Done when.** Two kits differing in pitch and filter: sweeping MORPH moves smoothly between them with no clicks or DSP spikes (`make PROFILE=1`), and MORPH 0 % sounds exactly like the active kit.
+
+### 24. Beat parameter locks
+
+**Today.** A beat has a position, a state and a fill; all hits of a layer use the layer's parameters (plus LFO). LXR steps carry up to two parameter overrides each (`param1Nr/param1Val`, `param2Nr/param2Val` in its step struct, recorded with `seq_recordAutomation()`).
+
+**Proposal.**
+- Up to two locks per beat: a parameter (pitch, level, start, end, filter frequency, effect wet, …) and a value. Applied at trigger in `layer_playBeat()` instead of the layer value; the LFO then modulates around the locked value.
+- Editing: select a beat on Layer Song (item 12 already does selection), hold the beat's key and turn the parameter's encoder; the beat shows a lock mark. Clearing: a long press, or CLEAR LOCKS for the layer.
+- Memory and files: two (param, value) pairs per beat is 4 bytes × 64 beats × 5 banks × 12 layers ≈ 15 KB per song. Check against the song file layout; needs a format version step ([9](#9-songkit-file-format-version)).
+- Put the lock lookup and merge (lock vs LFO vs base) in a hardware-free header with host tests.
+
+**Done when.** A hat pattern with a pitch lock on beat 3 and a filter lock on beat 7 plays them on every loop, survives save/load and MOVE/SHIFT ALL, and older songs load with no locks.
+
+### 25. LFO retrigger and shapes
+
+**Today.** LFOs run free (or from `sampleStart`) with five shapes: SIN, TRI, SAW, SQR, RND. LXR also has saw down, exponential up/down, and per-voice retrigger: the LFO restarts at its phase on each note (`lfo_retrigger()`), which makes it act like a per-hit envelope.
+
+**Proposal.**
+- RETRIG field per LFO: FREE, BAR (restart at each bar, as now if that's what it does), NOTE (restart on each hit of the layer it modulates).
+- Add shapes: SAW DOWN (if INVERT doesn't already cover it, check), EXP UP, EXP DOWN.
+- Files: one byte per LFO, with a format version step.
+
+**Done when.** An EXP DOWN LFO on PITCH with RETRIG NOTE gives every hit the same falling pitch; FREE behaves as today.
+
+### Related: RANDOM step for song mode (item 15)
+
+LXR lets each pattern name the next one, including "random among the previous patterns" and "random of all", and change every N bars. If [15](#15-song-mode-chain-the-banks) gets built, a RANDOM step type (pick a bank at random, optionally from a set) costs almost nothing and makes long jams less static.

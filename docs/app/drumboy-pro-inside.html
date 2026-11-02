@@ -410,7 +410,7 @@ table.rel td.new { min-width: 280px; }
           <h3>Getting there on the device</h3>
           <div class="k"><span class="keycap">S</span><div><b>Hold S</b> (right side, the L I S row) <b>and press a layer pad</b>: that layer's song page. <b>Tap S</b> on its own: EUCLID. Tap again: back to the song page. Holding S and pressing the same pad again also opens EUCLID.</div></div>
           <div class="k"><span class="keycap">I</span><div><b>Tap I</b>: the same layer's instrument pages, 1 → 2 → 3 → 1. From an instrument page, tap S for the song page.</div></div>
-          <div class="k"><span class="keycap">7</span><div><b>ACCENTS</b> (V1.11) is the last field on the EUCLID page's bottom row. On the device the pattern line shows X for accented hits and x for ghost hits.</div></div>
+          <div class="k"><span class="keycap">7</span><div><b>ACCENTS</b> (V1.11) is the last field on the EUCLID page's bottom row. On the device the pattern line shows X for accented hits and + for ghost hits (e.g. <span class="mono">X.+X.++.</span>).</div></div>
           <div class="k"><span class="keycap">C</span><div><b>CLEAR on EUCLID</b>: the layer gets back the beats it had when you opened the page. Nothing changes until you turn a field; after that the pattern is rebuilt live, also while playing.</div></div>
           <div class="k"><span class="keycap">+</span><div><b>Song page</b>: MOVE and SHIFT ALL are the last two fields on the bottom row (or hold ADD and press ◀ ▶ to move). A short ADD press inserts a beat. A bank holds 64 beats; when full, FULL is shown.</div></div>
         </div>
@@ -1098,7 +1098,8 @@ function euRender() {
   const t = (h, v) => `<div class="tab"><span class="h">${h}</span><span class="v">${v}</span><span class="g">&nbsp;</span></div>`;
   const line5 = eu.dropped ? `FULL: ${eu.dropped} HITS NOT ADDED` : `${eu.beats.length} BEATS  CLEAR: UNDO`;
   const line1 = accOn ? `E(${eu.hits},${eu.steps}) ROT ${eu.rot} ACC ${eu.acc}  ${eu.merge ? "MERGE" : "REPLACE"}` : `E(${eu.hits},${eu.steps}) ROT ${eu.rot}  ${eu.merge ? "MERGE" : "REPLACE"}`;
-  const ov = `${line1}\n\n${pat.map((h, i) => h ? (accOn && accMask[i] ? "X" : "x") : ".").join("")}\n\n${line5}`;
+  // Device font has no lowercase: hits are X, ghost hits + (ACCENTS on).
+  const ov = `${line1}\n\n${pat.map((h, i) => h ? (accOn && !accMask[i] ? "+" : "X") : ".").join("")}\n\n${line5}`;
   document.getElementById("eu-device").innerHTML = t("STEPS", eu.steps) + t("HITS", eu.hits) + `<div class="ov">${ov}</div>` +
     t("ROTATE", eu.rot) + t("GRID", QNAMES[eu.grid]) + t("MODE", eu.merge ? "MERGE" : "REPLACE") + t("ACCENTS", accOn ? eu.acc : "OFF");
 

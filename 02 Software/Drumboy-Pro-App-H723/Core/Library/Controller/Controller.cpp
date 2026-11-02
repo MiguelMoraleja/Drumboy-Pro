@@ -20923,8 +20923,12 @@ void Controller::lcd_drawEuclidOverview() {
     lcd.setForeColor(CYAN);
     if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY);
 
-    // X = accented hit, x = ghost hit (all x without accents).
+    // X = hit, + = ghost hit (with ACCENTS on). The screen font has no lowercase letters (an x
+    // would be drawn as X), so ghost hits use +.
     euclidText(euclidPattern(euclidSteps, euclidHits, euclidRotate), euclidSteps, line, euclidAccents(euclidSteps, euclidHits, euclidRotate, euclidAccentCount));
+    for (uint8_t i = 0; i < euclidSteps; i++) {
+        if (line[i] == 'x') line[i] = accented ? '+' : 'X';
+    }
     lcd.setForeColor(WHITE);
     lcd.drawText(line, euclidSteps, kX, kY + 2 * kLineStep);
 

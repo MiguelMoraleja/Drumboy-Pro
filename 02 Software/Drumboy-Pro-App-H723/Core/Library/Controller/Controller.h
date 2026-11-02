@@ -291,6 +291,13 @@ class Controller {
     bool previewOn = true;              // Metronome page, saved in the system preset
     uint8_t previewLevel = 70;
 
+    // Song mode (SongChain.h). chainPlay advances in the sequencer interrupt at loop ends.
+    SongChain songChain;
+    ChainPlay chainPlay;
+    uint8_t songStepSel = 0;            // step shown/edited on the SONG page
+    bool songKeyUsed = false;           // a pad was pressed while SONG was held (bank pick, not a tap)
+    volatile bool chainActionFlag = false;  // the interrupt moved the chain: redraw the SONG page
+
     uint8_t loadFormatVersion = 0;   // format version of the kit/song file being loaded (FileFormat.h)
     uint32_t pitchTurnTick = 0;      // last PITCH encoder step, for fast-turn octave steps
     uint32_t pitchOctaveTick = 0;    // last octave step
@@ -1026,6 +1033,14 @@ class Controller {
 
     void routing_select();
     void euclid_select();
+    void song_select();
+    void song_step(EncoderFunc function_, bool up_);
+    void song_setActive(bool active_);
+    void song_manualBank(uint8_t bank_);
+    void song_toStartBank();
+    void lcd_drawSongMenu();
+    void lcd_drawSong_Data();
+    void lcd_drawSongOverview();
     void preview_request(uint8_t layerNum_, bool now_);
     void preview_start(uint8_t layerNum_);
     void preview_service();

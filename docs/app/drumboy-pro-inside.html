@@ -228,6 +228,22 @@ footer { font-size: .8rem; color: var(--muted); }
 .keycap { font-family: var(--font-display); font-weight: 800; font-size: 1.1rem; text-align: center; border: 1px solid var(--line); border-bottom-width: 3px; border-radius: 6px; padding: 4px 0; background: var(--bg); }
 .msg { font-family: var(--font-mono); font-size: .78rem; color: var(--clip); min-height: 1.2em; }
 
+/* Song */
+.chainlist { display: grid; gap: 6px; }
+.crow { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) 34px; gap: 6px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 8px; }
+.crow.sel { border-color: var(--signal); box-shadow: inset 0 0 0 1px var(--signal); }
+.crow.now { background: var(--hit-soft); }
+.crow .n { font-family: var(--font-mono); font-size: .8rem; color: var(--muted); text-align: center; }
+.crow select { padding: 6px; font-size: .85rem; }
+.crow button { font-family: var(--font-mono); background: none; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); cursor: pointer; height: 32px; }
+.crow button:disabled { opacity: .3; cursor: default; }
+.loops { display: flex; flex-wrap: wrap; gap: 3px; }
+.loops span { font-family: var(--font-mono); font-size: .72rem; min-width: 26px; text-align: center; padding: 4px 2px; border-radius: 4px; color: #fff; }
+.loops span.now { outline: 2px solid var(--ink); outline-offset: 1px; }
+.loops span.end { background: none; color: var(--muted); border: 1px dashed var(--line); }
+.device .ov .y { color: #ffd84a; }
+.device .ov .c { color: #4fd6e8; }
+
 /* Releases */
 table.rel th, table.rel td { white-space: normal; text-align: left; vertical-align: top; }
 table.rel td:first-child { white-space: nowrap; font-weight: 500; }
@@ -250,11 +266,12 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.11</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.12 (testing)</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
       <a href="#euclid" id="tab-euclid" role="tab" aria-selected="false" aria-controls="view-euclid">Euclid</a>
+      <a href="#song" id="tab-song" role="tab" aria-selected="false" aria-controls="view-song">Song</a>
       <a href="#releases" id="tab-releases" role="tab" aria-selected="false" aria-controls="view-releases">Releases</a>
     </nav>
   </header>
@@ -418,6 +435,39 @@ table.rel td.new { min-width: 280px; }
     </div>
   </section>
 
+  <!-- SONG -->
+  <section id="view-song" role="tabpanel" aria-labelledby="tab-song" hidden>
+    <div class="lab">
+      <div class="panel controls">
+        <h2>Song mode</h2>
+        <p class="muted" style="font-size:.85rem">A chain of the 5 song banks, each played for a number of loops, up to 16 steps. It plays by itself: the bank changes exactly at a loop end. V1.12.</p>
+        <div class="chainlist" id="sg-list"></div>
+        <button class="ghost" id="sg-add">+ Add step (LENGTH)</button>
+        <div class="field"><span class="label" id="sg-end-label">After the last step (END)</span><div class="seg hit" id="sg-end" role="group" aria-labelledby="sg-end-label"></div></div>
+        <div class="field"><div class="field-row"><label class="label" for="sg-bpm">Tempo</label><span class="mono" id="sg-bpm-v"></span></div><input type="range" id="sg-bpm" min="60" max="200" value="140"></div>
+        <p class="muted" style="font-size:.85rem">One loop here is one bar. Each bank has its own test sound so you can hear the changes.</p>
+      </div>
+      <div class="stagecol">
+        <div class="panel" style="display:grid; gap:14px">
+          <div class="transport">
+            <button class="play" id="sg-play" aria-pressed="false">Play</button>
+            <button class="ghost" id="sg-reset">Reset (step 1)</button>
+            <span class="muted" id="sg-note" style="font-size:.85rem"></span>
+          </div>
+          <div class="field"><span class="label">Loop by loop: which bank plays</span><div class="loops" id="sg-loops"></div></div>
+          <div class="field"><span class="label">The SONG page on the device</span><div class="device" id="sg-device" aria-label="SONG page preview"></div></div>
+        </div>
+        <div class="panel keys">
+          <h3>On the device</h3>
+          <div class="k"><span class="keycap">⁘</span><div><b>Tap the SONG key</b> on its own (bottom right, the one you hold with the pads to pick a bank): the SONG page. Tap it there to turn the chain on or off (CHAIN).</div></div>
+          <div class="k"><span class="keycap">↻</span><div><b>Fields:</b> STEP picks the step to edit, BANK and REPEATS set it, LENGTH adds or removes steps at the end (a new step copies the last one), END is LOOP or STOP, CHAIN ON/OFF.</div></div>
+          <div class="k"><span class="keycap">⁘+</span><div><b>Picking a bank by hand</b> (SONG + pads) while the chain plays jumps the chain to the step that uses that bank. A bank the chain doesn't use turns the chain off.</div></div>
+          <div class="k"><span class="keycap">■</span><div><b>STOP</b> keeps the chain's position; <b>RESET</b> goes back to step 1. The chain is saved with the song; older firmware ignores it.</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- RELEASES -->
   <section id="view-releases" role="tabpanel" aria-labelledby="tab-releases" class="stagecol" hidden>
     <div class="panel intro">
@@ -428,14 +478,14 @@ table.rel td.new { min-width: 280px; }
     <div class="panel"><div class="tablewrap"><table class="rel" id="rel"></table></div></div>
   </section>
 
-  <footer>Built from the Drumboy Pro firmware source (<span class="mono">Controller.cpp</span>, <span class="mono">Global.h</span>): fill tables, level rules, the routing patch (<span class="mono">Routing.h</span>), Euclidean patterns, accents and beat editing (<span class="mono">Euclid.h</span>, <span class="mono">BeatList.h</span>), pitch (<span class="mono">Pitch.h</span>) and volume math match the code. The test sounds are synthesized in the browser; the device plays your samples.</footer>
+  <footer>Built from the Drumboy Pro firmware source (<span class="mono">Controller.cpp</span>, <span class="mono">Global.h</span>): fill tables, level rules, the routing patch (<span class="mono">Routing.h</span>), Euclidean patterns, accents and beat editing (<span class="mono">Euclid.h</span>, <span class="mono">BeatList.h</span>), pitch (<span class="mono">Pitch.h</span>), song mode (<span class="mono">SongChain.h</span>) and volume math match the code. The test sounds are synthesized in the browser; the device plays your samples.</footer>
 </div>
 
 <script>
 const FILLS=[["BASIC",[["FLAT",1,[0.0,0.0]],["GHOST",1,[0.0,0.0]],["MUTED",1,[0.0,0.0]],["BASIC_2",2,[0.0,0.5,1.0]],["BASIC_3",3,[0.0,0.333333,0.666666,1.0]],["BASIC_4",4,[0.0,0.25,0.5,0.75,1.0]],["BASIC_6",6,[0.0,0.166666,0.333333,0.5,0.666666,0.833333,1.0]],["BASIC_8",8,[0.0,0.125,0.25,0.375,0.5,0.625,0.75,0.875,1.0]]]],["WAVE",[["WAVE_A",12,[0.0,0.0625,0.125,0.1875,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["WAVE_B",12,[0.0,0.125,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]],["WAVE_C",9,[0.0,0.083333,0.166666,0.25,0.333333,0.416666,0.5,0.666666,0.833333,1.0]],["WAVE_D",9,[0.0,0.166666,0.333333,0.5,0.583333,0.666666,0.75,0.833333,0.916666,1.0]],["WAVE_E",11,[0.0,0.0625,0.125,0.1875,0.25,0.3125,0.375,0.4375,0.5,0.666666,0.833333,1.0]],["WAVE_F",10,[0.0,0.125,0.25,0.375,0.5,0.583333,0.666666,0.75,0.833333,0.916666,1.0]],["WAVE_G",10,[0.0,0.083333,0.166666,0.25,0.333333,0.416666,0.5,0.625,0.75,0.875,1.0]],["WAVE_H",11,[0.0,0.166666,0.333333,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]]]],["TRAP-A",[["TRAP_A1",5,[0.0,0.25,0.5,0.625,0.75,1.0]],["TRAP_A2",5,[0.0,0.125,0.25,0.5,0.75,1.0]],["TRAP_A3",7,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.75,1.0]],["TRAP_A4",7,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.75,1.0]],["TRAP_A5",7,[0.0,0.25,0.3125,0.375,0.5,0.75,0.875,1.0]],["TRAP_A6",7,[0.0,0.25,0.5,0.5625,0.625,0.6875,0.75,1.0]],["TRAP_A7",8,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.666666,0.833333,1.0]],["TRAP_A8",9,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.75,0.833333,0.916666,1.0]]]],["TRAP-B",[["TRAP_B1",8,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.75,0.875,1.0]],["TRAP_B2",8,[0.0,0.25,0.5,0.5625,0.625,0.6875,0.75,0.875,1.0]],["TRAP_B3",7,[0.0,0.25,0.5,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_B4",9,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["TRAP_B5",10,[0.0,0.125,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["TRAP_B6",10,[0.0,0.041666,0.083333,0.125,0.166666,0.25,0.333333,0.5,0.666666,0.833333,1.0]],["TRAP_B7",10,[0.0,0.166667,0.333333,0.5,0.541666,0.583333,0.625,0.666666,0.75,0.833333,1.0]],["TRAP_B8",11,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.625,0.75,0.8125,0.875,0.9375,1.0]]]],["TRAP-C",[["TRAP_C1",11,[0.0,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_C2",12,[0.0,0.0625,0.125,0.1875,0.25,0.375,0.5,0.625,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_C3",11,[0.0,0.0625,0.125,0.25,0.3125,0.375,0.5,0.625,0.75,0.8125,0.875,1.0]],["TRAP_C4",12,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.5,0.666666,0.833333,1.0]],["TRAP_C5",14,[0.0,0.166666,0.333333,0.5,0.53125,0.5625,0.59375,0.625,0.65625,0.6875,0.71875,0.75,0.8125,0.875,1.0]],["TRAP_C6",10,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_C7",11,[0.0,0.125,0.25,0.3125,0.375,0.4375,0.5,0.5625,0.625,0.75,0.875,1.0]],["TRAP_C8",13,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.375,0.5,0.75,0.875,1.0]]]],["TRAP-D",[["TRAP_D1",13,[0.0,0.125,0.25,0.28125,0.3125,0.34375,0.375,0.40625,0.4375,0.46875,0.5,0.625,0.75,1.0]],["TRAP_D2",13,[0.0,0.125,0.1875,0.25,0.375,0.40625,0.4375,0.46875,0.5,0.625,0.75,0.8125,0.875,1.0]],["TRAP_D3",15,[0.0,0.125,0.25,0.3125,0.375,0.5,0.625,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["TRAP_D4",16,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.875,1.0]],["TRAP_D5",15,[0.0,0.125,0.25,0.28125,0.3125,0.34375,0.375,0.5,0.53125,0.5625,0.59375,0.625,0.75,0.8125,0.875,1.0]],["TRAP_D6",15,[0.0,0.125,0.25,0.28125,0.3125,0.34375,0.375,0.40625,0.4375,0.46875,0.5,0.53125,0.625,0.75,0.875,1.0]],["TRAP_D7",16,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["TRAP_D8",15,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.375,0.5,0.5625,0.625,0.75,0.875,1.0]]]],["SWING",[["SWING_A",3,[0.0,0.5,0.875,1.0]],["SWING_B",4,[0.0,0.25,0.5,0.875,1.0]],["SWING_C",7,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.875,1.0]],["SWING_D",5,[0.0,0.166666,0.333333,0.5,0.875,1.0]],["SWING_E",6,[0.0,0.125,0.25,0.375,0.5,0.875,1.0]],["SWING_F",4,[0.0,0.375,0.5,0.875,1.0]],["SWING_G",4,[0.0,0.0625,0.125,0.875,1.0]],["SWING_H",5,[0.0,0.333333,0.666666,0.75,0.875,1.0]]]],["ROLL",[["ROLL_DBL",15,[0.0,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_TRIP",12,[0.0,0.25,0.375,0.5,0.583333,0.666667,0.75,0.791667,0.833333,0.875,0.916667,0.958333,1.0]],["ROLL_EVEN",15,[0.0,0.125,0.25,0.333333,0.416667,0.5,0.5625,0.625,0.6875,0.75,0.791667,0.833333,0.875,0.916667,0.958333,1.0]],["ROLL_LONG",15,[0.0,0.125,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.791667,0.833333,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_STEP",16,[0.0,0.125,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_LATE",13,[0.0,0.5,0.5625,0.625,0.6875,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_BRAKE",15,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,1.0]],["ROLL_32",16,[0.0,0.0625,0.125,0.1875,0.25,0.3125,0.375,0.4375,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]]]],["TECHNO",[["GALLOP",12,[0.0,0.125,0.1875,0.25,0.375,0.4375,0.5,0.625,0.6875,0.75,0.875,0.9375,1.0]],["GALLOP_R",12,[0.0,0.0625,0.1875,0.25,0.3125,0.4375,0.5,0.5625,0.6875,0.75,0.8125,0.9375,1.0]],["ROLLING",12,[0.0,0.0625,0.125,0.25,0.3125,0.375,0.5,0.5625,0.625,0.75,0.8125,0.875,1.0]],["TRESILLO",6,[0.0,0.1875,0.375,0.5,0.6875,0.875,1.0]],["DOTTED_8",6,[0.0,0.1875,0.375,0.5625,0.75,0.9375,1.0]],["EVERY_5",4,[0.0,0.3125,0.625,0.9375,1.0]],["RUMBLE",8,[0.0,0.25,0.375,0.4375,0.5,0.75,0.875,0.9375,1.0]],["PICKUP",6,[0.0,0.8125,0.875,0.90625,0.9375,0.96875,1.0]]]],["BREAKS",[["BREAK_A",7,[0.0,0.125,0.3125,0.375,0.625,0.8125,0.875,1.0]],["BREAK_B",5,[0.0,0.375,0.5625,0.8125,0.9375,1.0]],["SHUFFLE",10,[0.0,0.125,0.1875,0.3125,0.4375,0.5,0.625,0.6875,0.8125,0.9375,1.0]],["CHOP",10,[0.0,0.125,0.3125,0.4375,0.5,0.625,0.8125,0.875,0.9375,0.96875,1.0]],["JUNGLE",10,[0.0,0.375,0.40625,0.4375,0.46875,0.5,0.875,0.90625,0.9375,0.96875,1.0]],["STUTTER",9,[0.0,0.5,0.53125,0.5625,0.59375,0.625,0.65625,0.6875,0.71875,1.0]],["HALFTIME",4,[0.0,0.625,0.875,0.9375,1.0]],["EDIT_32",16,[0.0,0.03125,0.125,0.15625,0.3125,0.34375,0.4375,0.46875,0.5,0.53125,0.625,0.65625,0.875,0.90625,0.9375,0.96875,1.0]]]],["GARAGE",[["SHUF_58",16,[0.0,0.0725,0.125,0.1975,0.25,0.3225,0.375,0.4475,0.5,0.5725,0.625,0.6975,0.75,0.8225,0.875,0.9475,1.0]],["SHUF_66",16,[0.0,0.0825,0.125,0.2075,0.25,0.3325,0.375,0.4575,0.5,0.5825,0.625,0.7075,0.75,0.8325,0.875,0.9575,1.0]],["2STEP_A",4,[0.0,0.375,0.625,0.9525,1.0]],["2STEP_B",6,[0.0,0.2025,0.375,0.5,0.8275,0.875,1.0]],["SKIP",10,[0.0,0.125,0.2,0.325,0.375,0.5,0.625,0.7,0.825,0.875,1.0]],["SWING_8",8,[0.0,0.165,0.25,0.415,0.5,0.665,0.75,0.915,1.0]],["BOUNCE",12,[0.0,0.125,0.2,0.25,0.325,0.45,0.5,0.625,0.7,0.75,0.825,0.95,1.0]],["LAZY",6,[0.0,0.25,0.455,0.625,0.83,0.955,1.0]]]],["TRIPLET",[["TRIP_12",12,[0.0,0.083333,0.166667,0.25,0.333333,0.416667,0.5,0.583333,0.666667,0.75,0.833333,0.916667,1.0]],["TRIP_GAL",8,[0.0,0.083333,0.166667,0.25,0.5,0.583333,0.666667,0.75,1.0]],["TRIP_ROLL",10,[0.0,0.5,0.583333,0.666667,0.75,0.791667,0.833333,0.875,0.916667,0.958333,1.0]],["QUINT_5",5,[0.0,0.2,0.4,0.6,0.8,1.0]],["SEPT_7",7,[0.0,0.142857,0.285714,0.428571,0.571429,0.714286,0.857143,1.0]],["NONUP_9",9,[0.0,0.111111,0.222222,0.333333,0.444444,0.555556,0.666667,0.777778,0.888889,1.0]],["POLY_3V4",6,[0.0,0.25,0.333333,0.5,0.666667,0.75,1.0]],["POLY_3V8",10,[0.0,0.125,0.25,0.333333,0.375,0.5,0.625,0.666667,0.75,0.875,1.0]]]],["EUCLID",[["E3_16",3,[0.0,0.375,0.6875,1.0]],["E5_16",5,[0.0,0.25,0.4375,0.625,0.8125,1.0]],["E7_16",7,[0.0,0.1875,0.3125,0.4375,0.625,0.75,0.875,1.0]],["E9_16",9,[0.0,0.125,0.25,0.375,0.5,0.5625,0.6875,0.8125,0.9375,1.0]],["E11_16",11,[0.0,0.125,0.1875,0.3125,0.375,0.5,0.5625,0.6875,0.75,0.875,0.9375,1.0]],["E13_16",13,[0.0,0.125,0.1875,0.25,0.3125,0.4375,0.5,0.5625,0.625,0.75,0.8125,0.875,0.9375,1.0]],["E5_12",5,[0.0,0.25,0.416667,0.666667,0.833333,1.0]],["E7_12",7,[0.0,0.166667,0.333333,0.5,0.583333,0.75,0.916667,1.0]]]],["RATCHET",[["ACCEL_8",8,[0.0,0.192369,0.3689,0.52858,0.670123,0.791815,0.891181,0.964103,1.0]],["ACCEL_12",12,[0.0,0.122358,0.239274,0.350481,0.455669,0.554472,0.646447,0.731043,0.80755,0.875,0.931959,0.975944,1.0]],["ACCEL_16",16,[0.0,0.080477,0.159359,0.236568,0.312014,0.385595,0.457195,0.526675,0.593874,0.658594,0.720591,0.779553,0.835062,0.886525,0.933014,0.972795,1.0]],["DECEL_8",8,[0.0,0.035897,0.108819,0.208185,0.329877,0.47142,0.6311,0.807631,1.0]],["DECEL_12",12,[0.0,0.024056,0.068041,0.125,0.19245,0.268957,0.353553,0.445528,0.544331,0.649519,0.760726,0.877642,1.0]],["BOUNCE_BL",12,[0.0,0.174874,0.323518,0.449865,0.557259,0.648545,0.726138,0.792091,0.848152,0.895804,0.936308,0.970736,1.0]],["GOLDEN",8,[0.0,0.09017,0.236068,0.326238,0.472136,0.618034,0.708204,0.854102,1.0]],["CLUSTER",10,[0.0,0.170534,0.314127,0.414127,0.470534,0.5,0.529466,0.585873,0.685873,0.829466,1.0]]]],["FOOTWORK",[["JUKE_A",6,[0.0,0.125,0.25,0.375,0.5,0.75,1.0]],["JUKE_B",7,[0.0,0.166667,0.333333,0.5,0.666667,0.833333,0.916667,1.0]],["JUKE_C",9,[0.0,0.083333,0.25,0.416667,0.5,0.583333,0.75,0.875,0.916667,1.0]],["TRIP_KICK",11,[0.0,0.125,0.25,0.375,0.5,0.625,0.75,0.791667,0.875,0.916667,0.958333,1.0]],["STUT_2",14,[0.0,0.25,0.28125,0.3125,0.34375,0.5,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["HALF_JUKE",7,[0.0,0.25,0.375,0.75,0.875,0.916667,0.958333,1.0]],["BLAST",6,[0.0,0.041667,0.083333,0.125,0.166667,0.208333,1.0]],["CALL_RESP",9,[0.0,0.083333,0.166667,0.5,0.583333,0.666667,0.75,0.791667,0.833333,1.0]]]]];
 
 /* ---------- Tabs (hash routed) ---------- */
-const views = { signal: "view-signal", fills: "view-fills", euclid: "view-euclid", releases: "view-releases" };
+const views = { signal: "view-signal", fills: "view-fills", euclid: "view-euclid", song: "view-song", releases: "view-releases" };
 function route() {
   const name = (location.hash || "#signal").slice(1);
   const v = views[name] ? name : "signal";
@@ -445,6 +495,7 @@ function route() {
   }
   if (v !== "fills") stop();
   if (v !== "euclid") euStop();
+  if (v !== "song") sgStop();
 }
 window.addEventListener("hashchange", route);
 
@@ -1218,8 +1269,112 @@ function ptPlay() {
   });
 }
 
+/* ---------- Song mode (port of SongChain.h) ---------- */
+const BANKCOL = ["#2346d4", "#c86a00", "#1a8a5a", "#9b3fb5", "#c23a2c"];
+const BANKHZ = [110, 165, 220, 293.7, 392];
+const sg = { steps: [{ bank: 0, rep: 4 }, { bank: 1, rep: 2 }, { bank: 0, rep: 4 }, { bank: 2, rep: 1 }], loop: true, sel: 0, step: 0, done: 0, bpm: 140, playing: false, loopIdx: 0, ended: false };
+function chainLoopEndJS() {  // returns next bank, -1 keep, -2 stop
+  const before = sg.steps[sg.step].bank;
+  sg.done++;
+  if (sg.done < sg.steps[sg.step].rep) return -1;
+  sg.done = 0;
+  if (sg.step + 1 < sg.steps.length) sg.step++;
+  else if (sg.loop) sg.step = 0;
+  else { sg.step = 0; return -2; }
+  const next = sg.steps[sg.step].bank;
+  return next === before ? -1 : next;
+}
+function sgSequence(maxLoops) {  // the banks of the coming loops, for the strip
+  const save = { step: sg.step, done: sg.done };
+  const out = [];
+  for (let i = 0; i < maxLoops; i++) {
+    out.push({ bank: sg.steps[sg.step].bank, step: sg.step });
+    if (chainLoopEndJS() === -2) { out.push({ end: true }); break; }
+  }
+  sg.step = save.step; sg.done = save.done;
+  return out;
+}
+function sgRender() {
+  const list = document.getElementById("sg-list");
+  list.innerHTML = sg.steps.map((s, i) => `<div class="crow${i === sg.sel ? " sel" : ""}${sg.playing && i === sg.step ? " now" : ""}" data-i="${i}">
+    <span class="n">${i + 1}</span>
+    <select aria-label="Step ${i + 1} bank" data-k="bank">${[0, 1, 2, 3, 4].map(b => `<option value="${b}"${b === s.bank ? " selected" : ""}>Bank ${b + 1}</option>`).join("")}</select>
+    <select aria-label="Step ${i + 1} repeats" data-k="rep">${Array.from({ length: 16 }, (_, r) => `<option value="${r + 1}"${r + 1 === s.rep ? " selected" : ""}>${r + 1}×</option>`).join("")}</select>
+    <button aria-label="Remove step ${i + 1}" data-k="del"${sg.steps.length < 2 ? " disabled" : ""}>×</button></div>`).join("");
+  list.querySelectorAll(".crow").forEach(row => {
+    const i = +row.dataset.i;
+    row.addEventListener("click", ev => { if (ev.target.tagName !== "SELECT" && ev.target.tagName !== "BUTTON") { sg.sel = i; sgRender(); } });
+    row.querySelectorAll("select").forEach(sel => sel.addEventListener("change", () => { sg.steps[i][sel.dataset.k] = +sel.value; sg.sel = i; sgRender(); }));
+    row.querySelector("button").addEventListener("click", () => { sg.steps.splice(i, 1); if (sg.step >= sg.steps.length) { sg.step = 0; sg.done = 0; } sg.sel = Math.min(sg.sel, sg.steps.length - 1); sgRender(); });
+  });
+  document.getElementById("sg-add").disabled = sg.steps.length >= 16;
+  syncSeg("sg-end", sg.loop ? 0 : 1);
+  document.getElementById("sg-bpm-v").textContent = sg.bpm + " BPM";
+  const total = sg.steps.reduce((a, s) => a + s.rep, 0);
+  document.getElementById("sg-note").textContent = `${sg.steps.length} steps · ${total} loops per pass · ${(total * 4 * 60 / sg.bpm).toFixed(1)} s`;
+  const seq = sgSequence(48);
+  document.getElementById("sg-loops").innerHTML = seq.map((x, i) => x.end ? `<span class="end">END</span>` : `<span class="${i === 0 && sg.playing ? "now" : ""}" style="background:${BANKCOL[x.bank]}" title="Step ${x.step + 1}">${x.bank + 1}</span>`).join("");
+  // Device: SONG page (lcd_drawSongMenu / lcd_drawSongOverview)
+  const st = sg.steps[sg.sel];
+  const t = (h, v) => `<div class="tab"><span class="h">${h}</span><span class="v">${v}</span><span class="g">&nbsp;</span></div>`;
+  const cells = sg.steps.map((s, i) => { const txt = `${s.bank + 1}x${s.rep}`.padEnd(5, " "); const cls = sg.playing && i === sg.step ? "y" : i === sg.sel ? "c" : ""; return (cls ? `<span class="${cls}">${txt}</span>` : txt) + (i % 7 === 6 ? "\n" : ""); }).join("");
+  const rows = cells.split("\n").length;
+  const now = sg.steps[sg.step];
+  const status = `STEP ${sg.step + 1}/${sg.steps.length}  LOOP ${sg.done + 1}/${now.rep}  BANK ${now.bank + 1}`;
+  const ov = cells.replace(/\n$/, "") + "\n".repeat(Math.max(1, 5 - rows)) + `<span class="c">${status}</span>`;
+  document.getElementById("sg-device").innerHTML = t("STEP", `${sg.sel + 1} OF ${sg.steps.length}`) + t("BANK", st.bank + 1) + `<div class="ov">${ov}</div>` + t("REPEATS", st.rep + "x") + t("LENGTH", sg.steps.length) + t("END", sg.loop ? "LOOP" : "STOP") + t("CHAIN", "ON");
+}
+let sgTimer = null, sgNext = 0, sgLoopEnd = 0;
+function sgScheduleLoop(t0) {
+  const beat = 60 / sg.bpm, bank = sg.steps[sg.step].bank;
+  for (let b = 0; b < 4; b++) {
+    const t = t0 + b * beat;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = "triangle"; o.frequency.value = BANKHZ[bank] * (b === 0 ? 2 : 1);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(b === 0 ? 0.5 : 0.3, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    o.connect(g); g.connect(out); o.start(t); o.stop(t + 0.3);
+  }
+  return t0 + 4 * beat;
+}
+function sgTick() {
+  if (!sg.playing) return;
+  if (ctx.currentTime >= sgLoopEnd - 0.05) {  // a loop ends: the chain decides
+    const r = chainLoopEndJS();
+    if (r === -2) { sgStop(); sgRender(); return; }
+    sgLoopEnd = sgScheduleLoop(sgLoopEnd);
+    sgRender();
+  }
+}
+function sgStart() {
+  initAudio(); if (ctx.state === "suspended") ctx.resume();
+  sg.playing = true;
+  sgLoopEnd = sgScheduleLoop(ctx.currentTime + 0.06);
+  sgTimer = setInterval(sgTick, 20);
+  const b = document.getElementById("sg-play"); b.textContent = "Stop"; b.setAttribute("aria-pressed", "true");
+  sgRender();
+}
+function sgStop() {
+  sg.playing = false; clearInterval(sgTimer);
+  const b = document.getElementById("sg-play"); if (!b) return;
+  b.textContent = "Play"; b.setAttribute("aria-pressed", "false");
+}
+function sgSetup() {
+  const g = document.getElementById("sg-end");
+  ["Loop", "Stop"].forEach((lab, i) => { const b = document.createElement("button"); b.textContent = lab; b.id = "sg-end-" + i; b.addEventListener("click", () => { sg.loop = i === 0; sgRender(); }); g.appendChild(b); });
+  document.getElementById("sg-add").addEventListener("click", () => { if (sg.steps.length < 16) { sg.steps.push({ ...sg.steps[sg.steps.length - 1] }); sg.sel = sg.steps.length - 1; sgRender(); } });
+  document.getElementById("sg-bpm").addEventListener("input", e => { sg.bpm = +e.target.value; sgRender(); });
+  document.getElementById("sg-play").addEventListener("click", () => { sg.playing ? (sgStop(), sgRender()) : sgStart(); });
+  document.getElementById("sg-reset").addEventListener("click", () => { sg.step = 0; sg.done = 0; if (sg.playing) sgLoopEnd = ctx.currentTime; sgRender(); });
+  sgRender();
+}
+
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
+  { v: "V1.12", date: "2026-11-02", status: "Testing, not published",
+    nw: ["Song mode: chain the 5 banks (up to 16 steps, 1–16 loops each), looping or stopping at the end; SONG page by tapping the SONG key",
+         "A bank picked by hand while the chain plays jumps the chain to that step; STOP keeps the position, RESET goes to step 1",
+         "The chain is saved with the song; older firmware ignores it"],
+    fix: [] },
   { v: "V1.11", date: "2026-11-02", status: "Tested · release pending",
     nw: ["Pitch in semitones, −24 to +24; a fast turn jumps by octaves; older kits keep their exact pitch until changed",
          "Sample preview: turning SAMPLE plays it from the SD card (no loading, no length limit); the pad replays it; PREVIEW and PREV LEVEL on the Metronome page",
@@ -1284,7 +1439,7 @@ function setup() {
   });
   document.getElementById("snd").addEventListener("change", e => { st.snd = e.target.value; });
   document.getElementById("play").addEventListener("click", () => playing ? stop() : start());
-  euSetup(); drawReleases();
+  euSetup(); sgSetup(); drawReleases();
   document.getElementById("pt").addEventListener("input", ptRender);
   document.getElementById("pt-play").addEventListener("click", ptPlay);
   ptRender();

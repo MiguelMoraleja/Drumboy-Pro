@@ -365,6 +365,9 @@ void Controller::update() {
         // Push buffered graphical changes to the LCD.
         lcd_update();
 
+        // Stream the sample preview from the SD card (Preview.h).
+        preview_update();
+
 #ifdef DSP_PROFILE
         lcd_drawDspProfile();
 #endif
@@ -827,6 +830,12 @@ void Controller::loadSystemPreset() {
                         metro_setVolume(dataSystemPreset[15]);
                         routing_setMetroOut(routeUnpackMetro((uint8_t)dataSystemPreset[11]));
 
+                        // Sample preview: only in files written by V1.11 or later (23 bytes).
+                        if (sd.byteswritten >= kSystemPresetDataSize) {
+                            preview_setOn((bool)dataSystemPreset[21]);
+                            preview_setLevel((uint8_t)dataSystemPreset[22]);
+                        }
+
                         // 6. I/O & SYNC PARAMETER APPLY
                         // Apply persisted sync and MIDI routing parameters.
                         io_setSyncIn(dataSystemPreset[16]);
@@ -891,6 +900,10 @@ void Controller::saveSystemPreset() {
             dataSystemPreset[18] = (uint8_t)((io.midiIn << 4) | io.midiInChannel);
             dataSystemPreset[19] = (uint8_t)((io.midiOut << 4) | io.midiOutChannel);
             dataSystemPreset[20] = (uint8_t)((io.syncInPpqn << 4) | io.syncOutPpqn);
+
+            // Sample preview (V1.11)
+            dataSystemPreset[21] = (uint8_t)previewOn;
+            dataSystemPreset[22] = previewLevel;
 
             // 4. SD CARD WRITE
             // Seek payload offset and write serialized preset data.
@@ -1585,6 +1598,8 @@ void Controller::keyboard_action() {
                             ledLayerPlayMode = false;
                             ledLayerSelectFlag = true;
                             ledLayerSelectData = 0x03 << (selectedEncoderBank * 2);
+                        } else if (preview_padReplay(layerNum)) {
+                            // Browsing samples: the pad replays the preview, not the loaded sample.
                         } else {
                             Layer& layer = layerLibrary[layerNum];
                             if ((!layer.mute) && (layer.samplePlay)) layer_playBeat(layerNum, 1.0f);
@@ -3520,6 +3535,14 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             if (metronome.volume < kMaxMetroVolume) metro_setVolume(metronome.volume + 1);
             break;
 
+        case ENC_METRO_PREVIEW:
+            preview_setOn(!previewOn);
+            break;
+
+        case ENC_METRO_PREVIEW_LEVEL:
+            if (previewLevel < 100) preview_setLevel(previewLevel + 1);
+            break;
+
             // Filter 0 functions
 
         case ENC_FILTER_0_ACTIVE:
@@ -3852,7 +3875,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_INST_1_SAMPLE:
         case ENC_INST_2_SAMPLE:
             if ((layerLibrary[selectedLayerNum].instSelected != -1) && (sampleLibrarySize[layerLibrary[selectedLayerNum].instSelected] > 0))
+            {
                 (layerLibrary[selectedLayerNum].sampleSelected < (sampleLibrarySize[layerLibrary[selectedLayerNum].instSelected] - 1)) ? layerInst_setSampleSelected(selectedLayerNum, layerLibrary[selectedLayerNum].sampleSelected + 1) : layerInst_setSampleSelected(selectedLayerNum, 0);
+                preview_request(selectedLayerNum, false);
+            }
             break;
 
         case ENC_INST_0_LEVEL:
@@ -4110,6 +4136,14 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_METRO_VOLUME:
             if (metronome.volume > kMinMetroVolume)
                 metro_setVolume(metronome.volume - 1);
+            break;
+
+        case ENC_METRO_PREVIEW:
+            preview_setOn(!previewOn);
+            break;
+
+        case ENC_METRO_PREVIEW_LEVEL:
+            if (previewLevel > 0) preview_setLevel(previewLevel - 1);
             break;
 
             // Filter 0 functions
@@ -4414,7 +4448,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_INST_1_SAMPLE:
         case ENC_INST_2_SAMPLE:
             if ((layerLibrary[selectedLayerNum].instSelected != -1) && (sampleLibrarySize[layerLibrary[selectedLayerNum].instSelected] > 0))
+            {
                 (layerLibrary[selectedLayerNum].sampleSelected > 0) ? layerInst_setSampleSelected(selectedLayerNum, layerLibrary[selectedLayerNum].sampleSelected - 1) : layerInst_setSampleSelected(selectedLayerNum, sampleLibrarySize[layerLibrary[selectedLayerNum].instSelected] - 1);
+                preview_request(selectedLayerNum, false);
+            }
             break;
 
         case ENC_INST_0_LEVEL:
@@ -10133,6 +10170,8 @@ void Controller::lcd_drawMetroMenu() {
     lcd.drawText(kHeaderPrecount, kMenuHeaderTextSize, kMenuHeaderX[1], kMenuHeaderY[1]);
     lcd.drawText(kHeaderSample, kMenuHeaderTextSize, kMenuHeaderX[2], kMenuHeaderY[2]);
     lcd.drawText(kHeaderVolume, kMenuHeaderTextSize, kMenuHeaderX[3], kMenuHeaderY[3]);
+    lcd.drawText(kHeaderPreview, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
+    lcd.drawText(kHeaderPreviewLevel, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
 
     // 4. SIGN/UNIT DRAW
     // Draw unit/sign text for each parameter slot.
@@ -10141,6 +10180,8 @@ void Controller::lcd_drawMetroMenu() {
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[1], kMenuSignBoxY[1]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[2], kMenuSignBoxY[2]);
     lcd.drawText("  %", kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
+    lcd.drawText("  %", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
 
     // 5. DATA DRAW
     // Draw metronome parameter values.
@@ -10148,6 +10189,20 @@ void Controller::lcd_drawMetroMenu() {
     lcd_drawMetro_PrecountData();
     lcd_drawMetro_SampleData();
     lcd_drawMetro_VolumeData();
+    lcd_drawMetro_PreviewData();
+    lcd_drawMetro_PreviewLevelData();
+}
+
+void Controller::lcd_drawMetro_PreviewData() {
+    /// @brief Draws the sample preview on/off field (tab 4).
+    lcd_setMenuDataState(WHITE);
+    lcd.drawText(previewOn ? kDataOn : kDataOff, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
+}
+
+void Controller::lcd_drawMetro_PreviewLevelData() {
+    /// @brief Draws the sample preview level field (tab 5).
+    lcd_setMenuDataState(WHITE);
+    lcd.drawText(kNumberDataLibrary[previewLevel].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
 }
 
 void Controller::lcd_drawMetro_ActiveData() {
@@ -14776,6 +14831,8 @@ void Controller::metro_reset() {
     metro_setPrecount(kInitialMetroPrecount);
     metro_setSample(kInitialMetroSample);
     metro_setVolume(kInitialMetroVolume);
+    preview_setOn(true);
+    preview_setLevel(70);
 }
 
 void Controller::metro_menuRight() {
@@ -14784,7 +14841,8 @@ void Controller::metro_menuRight() {
     // 1. TAB STATE UPDATE
     // Advance tab index and wrap to first tab at upper boundary.
     preMenuTab = menuTab;
-    menuTab = (menuTab < kMaxMenu4Tab) ? (menuTab + 1) : kMinMenu4Tab;
+    // Tabs 0-3 metronome, 4-5 sample preview.
+    menuTab = (menuTab < 5) ? (menuTab + 1) : kMinMenu4Tab;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation for tab change.
@@ -14797,7 +14855,7 @@ void Controller::metro_menuLeft() {
     // 1. TAB STATE UPDATE
     // Decrement tab index and wrap to last tab at lower boundary.
     preMenuTab = menuTab;
-    menuTab = (menuTab > kMinMenu4Tab) ? (menuTab - 1) : kMaxMenu4Tab;
+    menuTab = (menuTab > kMinMenu4Tab) ? (menuTab - 1) : 5;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation for tab change.
@@ -14825,6 +14883,14 @@ void Controller::metro_menuUp() {
         case 3:
             if (metronome.volume < kMaxMetroVolume) metro_setVolume(metronome.volume + 1);
             break;
+
+        case 4:
+            preview_setOn(!previewOn);
+            break;
+
+        case 5:
+            if (previewLevel < 100) preview_setLevel(previewLevel + 1);
+            break;
     }
 }
 
@@ -14848,6 +14914,14 @@ void Controller::metro_menuDown() {
 
         case 3:
             if (metronome.volume > kMinMetroVolume) metro_setVolume(metronome.volume - 1);
+            break;
+
+        case 4:
+            preview_setOn(!previewOn);
+            break;
+
+        case 5:
+            if (previewLevel > 0) preview_setLevel(previewLevel - 1);
             break;
     }
 }
@@ -19736,7 +19810,10 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
     /// Handles metadata copy, sector allocation, PCM conversion, normalization, and UI refresh.
 
     // 1. FATFS PRE-CLEANUP
-    // Force-close any previous file handle to start from clean FatFs state.
+    // Force-close any previous file handle to start from clean FatFs state. A running sample
+    // preview fades out (it is the sample being loaded, or one the user moved away from).
+    if (previewVoice.state == PREVIEW_PLAY) previewVoice.state = PREVIEW_STOP;
+    previewPending = false;
     f_close(&sd.file);
     Layer& layer = layerLibrary[layerNum_];
     const int16_t prevSampleLoaded = layer.sampleLoaded;
@@ -20561,6 +20638,133 @@ void Controller::routing_select() {
         // 3. ENCODER CONTEXT UPDATE
         encoder_update();
     }
+}
+
+void Controller::preview_setOn(bool on_) {
+    /// @brief Sample preview on/off (Metronome page, saved in the system preset).
+    previewOn = on_;
+    if (!previewOn) {
+        if (previewVoice.state == PREVIEW_PLAY) previewVoice.state = PREVIEW_STOP;
+        previewPending = false;
+    }
+    if (menu == METRO_MENU) lcd_drawMetro_PreviewData();
+    if (systemPresetSaveActive) {
+        stopSystemPresetTimer();
+        startSystemPresetTimer();
+    }
+}
+
+void Controller::preview_setLevel(uint8_t level_) {
+    /// @brief Sample preview level 0-100 (cubed like the other levels).
+    if (level_ > 100) return;
+    previewLevel = level_;
+    if (menu == METRO_MENU) lcd_drawMetro_PreviewLevelData();
+    if (systemPresetSaveActive) {
+        stopSystemPresetTimer();
+        startSystemPresetTimer();
+    }
+}
+
+void Controller::preview_request(uint8_t layerNum_, bool now_) {
+    /// @brief Asks for the layer's selected sample to be previewed: when the SAMPLE knob has rested
+    /// for 250 ms (now_ = false), or at once (the layer pad). A preview already playing fades out
+    /// first; preview_update() starts the new one when the voice is idle.
+    if (!previewOn) return;
+    if (previewVoice.state == PREVIEW_PLAY) previewVoice.state = PREVIEW_STOP;
+    previewPending = true;
+    previewLayer = static_cast<int8_t>(layerNum_);
+    previewRequestTick = now_ ? (HAL_GetTick() - 250) : HAL_GetTick();
+}
+
+bool Controller::preview_padReplay(uint8_t layerNum_) {
+    /// @brief On an instrument page, the selected layer's pad replays the preview while the selected
+    /// sample is not the loaded one. Not while recording.
+    if (!previewOn || recordActive || (static_cast<int16_t>(layerNum_) != selectedLayerNum)) return false;
+    if ((menu != LAYER_INST_0_MENU) && (menu != LAYER_INST_1_MENU) && (menu != LAYER_INST_2_MENU)) return false;
+    const Layer& layer = layerLibrary[layerNum_];
+    if ((layer.sampleSelected == -1) || layer.sampleSelectedReadError || layer.sampleSelectedTypeError) return false;
+    if ((layer.instSelected == layer.instLoaded) && (layer.sampleSelected == layer.sampleLoaded)) return false;
+    preview_request(layerNum_, true);
+    return true;
+}
+
+void Controller::preview_start(uint8_t layerNum_) {
+    /// @brief Opens the layer's selected sample and starts streaming it. The voice must be idle.
+    Layer& layer = layerLibrary[layerNum_];
+    if ((layer.sampleSelected == -1) || layer.sampleSelectedReadError || layer.sampleSelectedTypeError) return;
+    if (previewFileOpen) {
+        f_close(&previewFile);
+        previewFileOpen = false;
+    }
+    if (f_open(&previewFile, layer.sampleSelectedData.fileName, FA_READ) != FR_OK) return;
+    if (f_lseek(&previewFile, layer.wavSelectedData.data_chunk.chunkStartByte + 8) != FR_OK) {
+        f_close(&previewFile);
+        return;
+    }
+    previewFileOpen = true;
+    previewFormat.bits = static_cast<uint8_t>(layer.wavSelectedData.fmt_chunk.bitPerSample);
+    previewFormat.channels = static_cast<uint8_t>(layer.wavSelectedData.fmt_chunk.nbrChannels);
+    previewFormat.rate = layer.wavSelectedData.fmt_chunk.sampleRate;
+    previewBytesLeft = layer.sampleSelectedData.sampleByteSize;
+    const uint32_t rest = static_cast<uint32_t>(f_size(&previewFile) - f_tell(&previewFile));
+    if (previewBytesLeft > rest) previewBytesLeft = rest;
+
+    // The voice is idle, so the audio interrupt does not touch the ring now.
+    previewRing.read = 0;
+    previewRing.write = 0;
+    previewVoice.sourceDone = false;
+    previewVoice.ramp = 0.0f;
+    previewVoice.last = 0.0f;
+    previewVoice.starved = false;
+    for (uint8_t i = 0; i < 4; i++) preview_service();  // a head start before playing
+    __DMB();
+    previewVoice.state = PREVIEW_PLAY;
+}
+
+void Controller::preview_service() {
+    /// @brief Main loop: reads one chunk of the preview file into the ring when there is room.
+    static uint8_t raw[4096];
+    if (!previewFileOpen) return;
+    const uint32_t step = previewFrameBytes(previewFormat);
+    const uint8_t repeat = previewRepeat(previewFormat);
+    uint32_t chunk = (step == 0) ? 0 : (sizeof(raw) / step) * step;
+    if (step && (chunk > previewBytesLeft)) chunk = previewBytesLeft - (previewBytesLeft % step);
+    bool done = (chunk == 0);
+    if (!done) {
+        if (previewRingFree(previewRing) < (chunk / step) * repeat) return;  // not enough room yet
+        UINT got = 0;
+        if ((f_read(&previewFile, raw, chunk, &got) != FR_OK) || (got == 0)) {
+            done = true;
+        } else {
+            previewConvert(previewRing, raw, got - (got % step), previewFormat);
+            previewBytesLeft -= got;
+            done = (previewBytesLeft < step);
+        }
+    }
+    if (done) {
+        previewVoice.sourceDone = true;
+        f_close(&previewFile);
+        previewFileOpen = false;
+    }
+}
+
+void Controller::preview_update() {
+    /// @brief Main loop: stops the preview off the instrument pages, starts a requested one when the
+    /// voice is idle and the knob has rested, and keeps the ring filled.
+    const bool instPage = (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU);
+    if (!instPage || !previewOn || (previewLayer != selectedLayerNum)) {
+        if (previewVoice.state == PREVIEW_PLAY) previewVoice.state = PREVIEW_STOP;
+        previewPending = false;
+    }
+    if (previewPending && (previewVoice.state == PREVIEW_IDLE) && ((HAL_GetTick() - previewRequestTick) >= 250)) {
+        previewPending = false;
+        if (previewLayer == selectedLayerNum) preview_start(static_cast<uint8_t>(previewLayer));
+    }
+    if ((previewVoice.state == PREVIEW_IDLE) && previewFileOpen && !previewPending) {
+        f_close(&previewFile);
+        previewFileOpen = false;
+    }
+    preview_service();
 }
 
 bool Controller::layerPageMenu() const {
@@ -23024,9 +23228,14 @@ void Controller::processAudioSend(uint32_t* outputBuffer) {
     const float ceiling = kMixerLimiterDataLibrary[limiter].data;
     const float invCeiling = 1.0f / ceiling;
     const bool limit = (ceiling < 1.0f);
+
+    // Sample preview (Preview.h): mono, added to both sides before master volume.
+    float previewBlock[I2S_BLOCK_SIZE];
+    previewRender(previewRing, previewVoice, previewBlock, I2S_BLOCK_SIZE, kLayerVolumeCoef * kNumberDataLibrary[(previewLevel <= 100) ? previewLevel : 100].powMultiplier);
+
     for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-        float outL = audioSend_L[i];
-        float outR = audioSend_R[i];
+        float outL = audioSend_L[i] + previewBlock[i];
+        float outR = audioSend_R[i] + previewBlock[i];
 
         // Apply master volume gains
         outL *= mixer.volumeLeftFloat;

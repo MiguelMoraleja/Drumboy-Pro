@@ -5,7 +5,7 @@ Fork: MiguelMoraleja/Drumboy-Pro. Firmware: `02 Software/Drumboy-Pro-App-H723`. 
 ## Before pushing firmware changes
 
 - `make -C "02 Software/Drumboy-Pro-App-H723" WERROR=1` (our code builds with zero warnings)
-- `make -C "02 Software/tests"` (host tests: fills, routing, beat list, Euclid)
+- `make -C "02 Software/tests"` (host tests: fills, routing, beat list, Euclid, pitch, preview, MIDI in)
 - Put hardware-free logic in `Core/Library/Global/*.h` with a host test.
 - Test builds for the owner's device: `make package`; the file must reach the SD card at its exact size (the bootloader shows SIZE-CHECK otherwise).
 

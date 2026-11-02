@@ -250,7 +250,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.11 (testing)</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.11</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -1220,12 +1220,12 @@ function ptPlay() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
-  { v: "V1.11", date: "2026-11-02", status: "Testing, not published",
+  { v: "V1.11", date: "2026-11-02", status: "Tested · release pending",
     nw: ["Pitch in semitones, −24 to +24; a fast turn jumps by octaves; older kits keep their exact pitch until changed",
          "Sample preview: turning SAMPLE plays it from the SD card (no loading, no length limit); the pad replays it; PREVIEW and PREV LEVEL on the Metronome page",
          "EUCLID ACCENTS: a second Euclidean spread over the hits; the rest become ghost notes",
          "Kit and song files carry a format version; files from newer firmware are refused without touching the current song"],
-    fix: ["Backward and ping playback cut their end fade short above 1× speed"] },
+    fix: ["Backward and ping playback cut their end fade short above 1× speed", "Preview of 48 kHz 24-bit files fluttered (SD reads could not keep up)", "EUCLID ghost hits now shown as + (the screen font has no lowercase)"] },
   { v: "V1.10", date: "2026-11-01", status: "GitHub release v1.10 · tested", pub: true,
     nw: ["EUCLID page: STEPS, HITS, ROTATE, GRID, MODE (REPLACE/MERGE), applied live; CLEAR restores the layer",
          "Song page beat editing: MOVE past neighbours keeping the fill (position as bar.beat.16th), SHIFT ALL, short ADD inserts a beat",

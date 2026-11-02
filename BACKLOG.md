@@ -38,7 +38,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 5. ✅ [8](#8-limiter-setting-does-nothing) LIMITER.
 6. ✅ Reproducible release builds (from [10](#10-housekeeping)), before tagging V1.10.
 
-**Sprint 2, V1.11 "Formats and sound"** (built, waiting for the hardware test): ✅ [14](#14-euclid-velocity-and-variance) part A ACCENTS, ✅ [9](#9-songkit-file-format-version) file format version, ✅ [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones, ✅ [13](#13-sample-preview-while-browsing) sample preview.
+**Sprint 2, V1.11 "Formats and sound"** (done, tested on hardware): ✅ [14](#14-euclid-velocity-and-variance) part A ACCENTS, ✅ [9](#9-songkit-file-format-version) file format version, ✅ [2](#2-instrument-pitch-should-step-in-semitones-and-octaves) pitch in semitones, ✅ [13](#13-sample-preview-while-browsing) sample preview.
 
 **Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
 

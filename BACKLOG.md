@@ -24,6 +24,7 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 14 | [EUCLID: velocity and variance](#14-euclid-velocity-and-variance) | Feature | S–M |
 | 15 | [Song mode: chain the banks](#15-song-mode-chain-the-banks) | Feature | M–L |
 | 16 | [Kids firmware](#16-kids-firmware) | Feature, on hold | L |
+| 17 | [Sample rate conversion (48 kHz and others)](#17-sample-rate-conversion-48-khz-and-others) | Bug | M |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -261,3 +262,26 @@ Kit and song files have a signature but no format version. Several items above c
 **Still open.** Which kits ship with it, and whether 9–11-year-olds want more than one effect knob (try the POC with a child first).
 
 **Done when.** To be defined once the shape is chosen; a first milestone could be a kids build with pads, kit knob, volume cap and a one-button loop.
+
+### 17. Sample rate conversion (48 kHz and others)
+
+**What happens.** The device plays at 44.1 kHz, but samples at several common rates are not converted, only repeated or thinned out by whole frames, so they play about 8.8% slow (roughly 1.5 semitones low, and 9% longer):
+
+| File rate | What the loader does | Plays as |
+|---|---|---|
+| 8, 16, 24 kHz | repeats each frame 6, 3, 2 times | 48 kHz content at 44.1 kHz: 8.8% slow |
+| 48 kHz | as is | 8.8% slow |
+| 96, 192 kHz | keeps every 2nd / 4th frame, no filter | 8.8% slow, and can alias |
+| 11.025, 22.05 kHz | repeats 4, 2 times | correct (but stair-stepped, no smoothing) |
+| 44.1, 88.2, 176.4 kHz | as is / every 2nd / every 4th | correct (the last two can alias) |
+
+Same rule in the layer loader (`layerInst_setSampleLoaded()`) and the sample preview (`Preview.h`, which copies it on purpose so the preview sounds like the loaded sample).
+
+**Proposal.**
+- A hardware-free `Resample.h`: convert any accepted rate to 44.1 kHz with a fractional step (ratio = file rate / 44100) and interpolation (linear at least; a short windowed-sinc or polyphase filter for downsampling 88.2–192 kHz so it doesn't alias). Used by both the loader and the preview, streaming-friendly (keeps its phase between chunks).
+- Check the cost: the loader converts once at load (fine); the preview converts in the main loop per chunk (measure, it must still keep up; see the V1.11 throughput fix).
+- The 5.44 s limit (`kSampleSize`) then counts in 44.1 kHz samples, so a 48 kHz file holds 8.8% less of its length than today; document it.
+- **Compatibility to decide:** kits made with 48 kHz samples were tuned by ear to the slow playback and will sound about 1.5 semitones higher after the fix. Options: accept it (it's the correct pitch), or for files saved before the change (format version 1 or older, `FileFormat.h`) add -1.5 semitones back. Semitone pitch can't express that exactly, so an old-file flag would be needed.
+- Related, optional: stereo files use only the left channel today; mixing to mono would keep both sides.
+
+**Done when.** A 48 kHz and a 44.1 kHz recording of the same sound play at the same pitch and length, loaded and previewed; 96/192 kHz files don't alias; host tests for the converter (pitch of a sine at each rate, no clicks at chunk boundaries); the preview still never underruns on 48 kHz 24-bit stereo.

@@ -23,6 +23,7 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 13 | [Sample preview while browsing](#13-sample-preview-while-browsing) | Feature | L |
 | 14 | [EUCLID: velocity and variance](#14-euclid-velocity-and-variance) | Feature | S–M |
 | 15 | [Song mode: chain the banks](#15-song-mode-chain-the-banks) | Feature | M–L |
+| 16 | [Kids firmware](#16-kids-firmware) | Idea | L |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -41,6 +42,8 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 **Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
 
 **To schedule after sprint 2:** [15](#15-song-mode-chain-the-banks) song mode (needs 9, which sprint 2 delivers).
+
+**Idea, to shape first:** [16](#16-kids-firmware) kids firmware.
 
 **Later:** [3](#3-lfos-cant-modulate-filters-or-effects) (needs 9), [6](#6-routing-extra-effect-slots) (needs CPU measurement), the rest of [10](#10-housekeeping) alongside other work.
 
@@ -231,3 +234,24 @@ Kit and song files have a signature but no format version. Several items above c
 - Put the chain stepping (count, advance, END, jump) in a hardware-free header with host tests.
 
 **Done when.** A chain such as `1×4, 2×2, 3×1` plays back by itself with bank changes exactly on loop ends, survives save/load, RESET restarts it, manual bank presses behave as decided, and songs without a chain play as before.
+
+### 16. Kids firmware
+
+**Idea (open, "we will see").** A separate, much simpler firmware for children on the same hardware: few pages, big obvious actions, nothing that can break a kit or song, safe volume.
+
+**Approach to decide first.**
+- **A build variant of this firmware** (e.g. `make KIDS=1`), sharing the audio engine, sample player, sequencer, files and bootloader, with a different, reduced UI layer. Recommended: every engine fix reaches both, and the hardware-free headers (`Fill.h`, `BeatList.h`, `Euclid.h`, `Pitch.h`, `Preview.h`) are reused as they are.
+- **Or a KIDS MODE inside the normal firmware** (a locked mode entered with a key combination). Simpler to ship (one file), but the full UI code stays reachable, and every new feature has to be hidden from it.
+- **Or a firmware written from scratch.** Most freedom, most work; only worth it if the kids version shares little.
+- The update file must still match the bootloader's `Drumboy_Pro_Fw?*.bin` pattern and stay within 31 characters (e.g. `Drumboy_Pro_Fw_01_11_kids.bin`, 29). Switching between the normal and the kids firmware is then just flashing the other file.
+
+**First ideas for what it does** (to try with a child before building much):
+- Pads play sounds straight away; a fixed set of kits (animals, instruments, voices) chosen with one knob, no instrument/sample browsing.
+- A simple loop: press record, play the pads, it repeats; CLEAR erases the loop (with a confirm). Maybe the EUCLID idea as one "make a rhythm" knob.
+- One knob each for tempo, volume, and one fun effect (e.g. pitch in octaves, echo).
+- Big, colourful screen; no numbers or menus deeper than one level.
+- **Safety:** a hard cap on master and headphone volume (`kMaxMixerHpVolume` is 20 steps today), no file deletion, no firmware or SD maintenance actions, settings that can't get stuck.
+
+**Questions to answer before speccing.** Age range? Which of the ideas above matter most? One firmware with a mode, or a separate file? Should a kid's loop be savable, and loadable on the normal firmware?
+
+**Done when.** To be defined once the shape is chosen; a first milestone could be a kids build with pads, kit knob, volume cap and a one-button loop.

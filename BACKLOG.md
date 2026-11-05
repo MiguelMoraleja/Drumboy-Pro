@@ -25,6 +25,18 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 15 | [Song mode: chain the banks](#15-song-mode-chain-the-banks) | Feature | M–L |
 | 16 | [Kids firmware](#16-kids-firmware) | Feature, on hold | L |
 | 17 | [Sample rate conversion (48 kHz and others)](#17-sample-rate-conversion-48-khz-and-others) | Bug | M |
+| 18 | [Swing / shuffle (LXR)](#18-swing--shuffle-lxr) | Feature | S–M |
+| 19 | [Choke groups (LXR)](#19-choke-groups-lxr) | Feature | S |
+| 20 | [Parameter locks per beat (LXR)](#20-parameter-locks-per-beat-lxr) | Feature | L |
+| 21 | [Probability per beat (LXR)](#21-probability-per-beat-lxr) | Feature | M |
+| 22 | [Live roll (LXR)](#22-live-roll-lxr) | Feature | S–M |
+| 23 | [Per-layer length (polymeter) (LXR)](#23-per-layer-length-polymeter-lxr) | Feature | L |
+| 24 | [Velocity modulates a parameter (LXR)](#24-velocity-modulates-a-parameter-lxr) | Feature | M |
+| 25 | [LFO retrigger and free-running (LXR)](#25-lfo-retrigger-and-free-running-lxr) | Feature | S |
+| 26 | [Random step in the song chain (LXR)](#26-random-step-in-the-song-chain-lxr) | Feature | S |
+| 27 | [Erase while recording (LXR)](#27-erase-while-recording-lxr) | Feature | S |
+| 28 | [Undo for bank edits (LXR)](#28-undo-for-bank-edits-lxr) | Feature | S–M |
+| 29 | [New effects: ring modulator, tilt EQ, master saturation (LXR)](#29-new-effects-ring-modulator-tilt-eq-master-saturation-lxr) | Feature | M each |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -43,6 +55,8 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 **Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
 
 **V1.12 "Song mode"** (built, waiting for the hardware test): ✅ [15](#15-song-mode-chain-the-banks) song mode.
+
+**Suggested next sprint (ideas from the LXR firmware):** [18](#18-swing--shuffle-lxr) swing, [19](#19-choke-groups-lxr) choke groups, [22](#22-live-roll-lxr) live roll, [25](#25-lfo-retrigger-and-free-running-lxr) LFO retrigger, [27](#27-erase-while-recording-lxr) erase while recording. Later, together with [14](#14-euclid-velocity-and-variance) part B (they share one per-beat data extension and one file format bump): [20](#20-parameter-locks-per-beat-lxr), [21](#21-probability-per-beat-lxr), [24](#24-velocity-modulates-a-parameter-lxr).
 
 **On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
@@ -287,3 +301,57 @@ Same rule in the layer loader (`layerInst_setSampleLoaded()`) and the sample pre
 - Related, optional: stereo files use only the left channel today; mixing to mono would keep both sides.
 
 **Done when.** A 48 kHz and a 44.1 kHz recording of the same sound play at the same pitch and length, loaded and previewed; 96/192 kHz files don't alias; host tests for the converter (pitch of a sine at each rate, no clicks at chunk boundaries); the preview still never underruns on 48 kHz 24-bit stereo.
+
+---
+
+## Ideas from the LXR firmware (items 18–29)
+
+Reviewed from the owner's fork of the Erica Synths LXR V2 desktop firmware (MiguelMoraleja/lxr-desktop-app, 2026-11-05). **Licence:** that firmware is GPL-3.0 and Drumboy-Pro is MIT, so its code must not be copied here (it would put the Drumboy firmware under the GPL), and "LXR" / "Erica Synths" are trademarks. Take the ideas only and write our own code. Not taken: the LXR's synthesised drum voices (the Drumboy is sample-based), its second stereo output (no such hardware), a kit per pattern (the Drumboy keeps one kit per song).
+
+### 18. Swing / shuffle (LXR)
+
+**LXR:** one shuffle amount per pattern that delays the off-beat steps. **Today:** only the SWING fill type, inside one beat; nothing swings the whole groove. **Proposal:** a SWING amount per song (or per bank) on the RHYTHM page that delays beats on off-beat 16ths (or 8ths) by a fraction of a step at playback time, without moving the stored beats, so it can be changed live and saved. Applies to fills' micro-hits too. Host tests for the timing.
+
+### 19. Choke groups (LXR)
+
+**LXR:** the open hi-hat track chokes the closed hi-hat. **Today:** every layer rings over the others. **Proposal:** a CHOKE group per layer (OFF, 1–4) on an instrument page; a hit fades out (a few ms, no click) any other layer in the same group still sounding. Saved per kit (needs a spare byte; see item 9).
+
+### 20. Parameter locks per beat (LXR)
+
+**LXR:** each step can set up to 2 parameters (e.g. pitch, decay), recorded by turning a knob while recording. **Today:** parameters only per layer or through an LFO. **Proposal:** up to 2 locks per beat (parameter + value) applied at the hit like the LFO values in `layer_playBeat()`; set by turning an instrument knob while a beat is selected (or while recording). Needs per-beat storage beyond `Beat` (16-bit data is full): extend the song section with item 9; plan together with 21, 24 and 14B.
+
+### 21. Probability per beat (LXR)
+
+**LXR:** a 0–100% probability per step. **Today:** one PROB per layer. **Proposal:** a probability per beat (and per fill micro-hit?) on the song page, rolled at each hit. Same per-beat storage as 20.
+
+### 22. Live roll (LXR)
+
+**LXR:** hold ROLL and a pad: the pad repeats at a set rate. **Today:** rolls only as fill types. **Proposal:** a roll modifier (key combination to choose) + pad repeats the layer at a rate (1/8, 1/16, 1/32, triplets) locked to the tempo while held; while recording, the repeats are written as beats (or as one beat with a ROLL fill).
+
+### 23. Per-layer length / polymeter (LXR)
+
+**LXR:** each track has its own length (e.g. 5 steps against 16). **Today:** every layer loops over the song length. **Proposal:** a LENGTH per layer and bank (in 16ths, up to the song length); the layer's beats wrap at its own length. Larger change for the free-placement beat model (playback pointers per layer, drawing the lane); host-test the wrap.
+
+### 24. Velocity modulates a parameter (LXR)
+
+**LXR:** each voice has a velocity → parameter amount. **Today:** velocity only changes volume. **Proposal:** per layer, a VELO → destination (pitch, start, filter, ...) and amount, applied at the hit. Needs per-beat velocity (14B).
+
+### 25. LFO retrigger and free-running (LXR)
+
+**LXR:** an LFO can restart when a chosen voice is hit, and can run synced or free. **Today:** LFOs are tempo-synced and never restart. **Proposal:** per LFO a RETRIG source (OFF or a layer): a hit on that layer resets the LFO phase; optionally a FREE mode in Hz. Small; Lfo.h + `layer_playBeat()`.
+
+### 26. Random step in the song chain (LXR)
+
+**LXR:** the next pattern can be random (among all, or among the previous ones). **Today:** song mode is a fixed chain (item 15). **Proposal:** a step's BANK can be RANDOM (any bank, or not the same as the last); `SongChain.h` with a seeded random for tests; file block version 2.
+
+### 27. Erase while recording (LXR)
+
+**LXR:** while recording, hold a key and the hits that pass the play position are erased. **Today:** only CLEAR (one beat or the whole layer). **Proposal:** while recording, hold CLEAR + a layer pad: beats of that layer under the play position are removed as it passes.
+
+### 28. Undo for bank edits (LXR)
+
+**LXR:** a backup buffer to return a pattern to how it was. **Today:** only EUCLID CLEAR. **Proposal:** one level of undo per bank for destructive edits (paste, EUCLID apply, CLEAR all, SHIFT ALL): snapshot before, a key combination to swap back. The SDRAM gap has room (one bank of 10 layers is ~28 KB, like the bank clipboard).
+
+### 29. New effects: ring modulator, tilt EQ, master saturation (LXR)
+
+**LXR:** ring modulator and compressor on the FX bus, a tilt EQ, and a tube-style saturation on the master. **Today:** 9 effect types in the two effect slots (no ring mod), a 6-band EQ, a soft-knee clip at the LIMITER ceiling. **Proposal:** ring modulator as a 10th effect type; a TILT control (one knob, dark ↔ bright) on the mixer; an optional warm saturation before the output clip. Measure DSP load for each (`make PROFILE=1`).

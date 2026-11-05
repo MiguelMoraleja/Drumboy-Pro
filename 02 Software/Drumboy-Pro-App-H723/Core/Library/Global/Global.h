@@ -12,6 +12,7 @@
 #include "Metronome.h"
 #include "Pitch.h"
 #include "Preview.h"
+#include "SongChain.h"
 #include "fatfs.h"
 #include "main.h"
 #include "sdmmc.h"
@@ -368,6 +369,9 @@ const uint32_t kChorusByteSize                      = kChorusSize * 4;
 #define RAM_PREVIEW_ADDRESS                         0xC0EA6000
 const uint32_t kPreviewRingSize                     = 65536;
 static_assert(0xC0EA6000u + kPreviewRingSize * 4u <= 0xC0FB9640u, "preview ring must end before the images");
+
+// Whole-bank clipboard (SONG page COPY/PASTE): one Bank per layer, right after the preview ring.
+#define RAM_BANK_CLIPBOARD_ADDRESS                  (0xC0EA6000u + kPreviewRingSize * 4u)
 
 #define RAM_IMAGE_LOGO_ADDRESS                      0xC0FB9640                  // 170px * 170px
 #define RAM_IMAGE_LOGO_PALETTE_ADDRESS              0xC0FB9640                  // 128 bytes
@@ -1231,6 +1235,13 @@ typedef enum {
     ENC_METRO_PREVIEW                               = 0x71,  // sample preview on/off (Metronome tab 4)
     ENC_METRO_PREVIEW_LEVEL                         = 0x72,  // sample preview level (Metronome tab 5)
 
+    ENC_CHAIN_STEP                                  = 0x73,  // song mode (SONG page)
+    ENC_CHAIN_BANK                                  = 0x74,
+    ENC_CHAIN_REPEATS                               = 0x75,
+    ENC_CHAIN_LENGTH                                = 0x76,
+    ENC_CHAIN_END                                   = 0x77,
+    ENC_CHAIN_PLAY                                  = 0x78,
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1281,7 +1292,10 @@ const EncoderFunc encoderLocalFunction[][8] = {
     {ENC_ROUTE_EQ_OUT, ENC_ROUTE_F1_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_ROUTE_F2_OUT, ENC_ROUTE_FX1_OUT, ENC_ROUTE_FX2_OUT, ENC_ROUTE_METRO_OUT},
     // EUCLID_MENU = 0x15
     // Tabs 2-3 show the pattern.
-    {ENC_EUC_STEPS, ENC_EUC_HITS, ENC_FNC_NONE, ENC_FNC_NONE, ENC_EUC_ROTATE, ENC_EUC_GRID, ENC_EUC_MODE, ENC_EUC_ACCENTS}};
+    {ENC_EUC_STEPS, ENC_EUC_HITS, ENC_FNC_NONE, ENC_FNC_NONE, ENC_EUC_ROTATE, ENC_EUC_GRID, ENC_EUC_MODE, ENC_EUC_ACCENTS},
+    // SONG_MENU = 0x16
+    // Tabs 2-3 show the chain.
+    {ENC_CHAIN_STEP, ENC_CHAIN_BANK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_CHAIN_REPEATS, ENC_CHAIN_LENGTH, ENC_CHAIN_END, ENC_CHAIN_PLAY}};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1428,7 +1442,14 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_EUC_ACCENTS,         ENC_RES_M, "ACCENTS   ", "EUCLID", "   ", false},
 
     {ENC_METRO_PREVIEW,       ENC_RES_S, "PREVIEW   ", "METRO ", "   ", false},
-    {ENC_METRO_PREVIEW_LEVEL, ENC_RES_F, "PREV LEVEL", "METRO ", "  %", false}
+    {ENC_METRO_PREVIEW_LEVEL, ENC_RES_F, "PREV LEVEL", "METRO ", "  %", false},
+
+    {ENC_CHAIN_STEP,          ENC_RES_M, "STEP      ", "SONG  ", "   ", false},
+    {ENC_CHAIN_BANK,          ENC_RES_M, "BANK      ", "SONG  ", "   ", false},
+    {ENC_CHAIN_REPEATS,       ENC_RES_M, "REPEATS   ", "SONG  ", "   ", false},
+    {ENC_CHAIN_LENGTH,        ENC_RES_M, "LENGTH    ", "SONG  ", "   ", false},
+    {ENC_CHAIN_END,           ENC_RES_S, "END       ", "SONG  ", "   ", false},
+    {ENC_CHAIN_PLAY,          ENC_RES_S, "CHAIN     ", "SONG  ", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -1554,7 +1575,8 @@ typedef enum {
     LAYER_SONG_MENU                                 = 0x12,
     TEST_MENU                                       = 0x13,
     ROUTING_MENU                                    = 0x14,  // MIXER pressed again
-    EUCLID_MENU                                     = 0x15   // LAYER SONG tapped on the Layer Song page
+    EUCLID_MENU                                     = 0x15,  // LAYER SONG tapped on the Layer Song page
+    SONG_MENU                                       = 0x16   // song mode: the SONG key tapped on its own
 } Menu;
 
 typedef enum {

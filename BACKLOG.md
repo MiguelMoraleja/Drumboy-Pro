@@ -25,6 +25,20 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 15 | [Song mode: chain the banks](#15-song-mode-chain-the-banks) | Feature | M–L |
 | 16 | [Kids firmware](#16-kids-firmware) | Feature, on hold | L |
 | 17 | [Sample rate conversion (48 kHz and others)](#17-sample-rate-conversion-48-khz-and-others) | Bug | M |
+| 18 | [Swing / shuffle (LXR)](#18-swing--shuffle-lxr) | Feature | S–M |
+| 19 | [Choke groups (LXR)](#19-choke-groups-lxr) | Feature | S |
+| 20 | [Parameter locks per beat (LXR)](#20-parameter-locks-per-beat-lxr) | Feature | L |
+| 21 | [Probability per beat (LXR)](#21-probability-per-beat-lxr) | Feature | M |
+| 22 | [Live roll (LXR)](#22-live-roll-lxr) | Feature | S–M |
+| 23 | [Per-layer length (polymeter) (LXR)](#23-per-layer-length-polymeter-lxr) | Feature | L |
+| 24 | [Velocity modulates a parameter (LXR)](#24-velocity-modulates-a-parameter-lxr) | Feature | M |
+| 25 | [LFO retrigger and free-running (LXR)](#25-lfo-retrigger-and-free-running-lxr) | Feature | S |
+| 26 | [Random step in the song chain (LXR)](#26-random-step-in-the-song-chain-lxr) | Feature | S |
+| 27 | [Erase while recording (LXR)](#27-erase-while-recording-lxr) | Feature | S |
+| 28 | [Undo for bank edits (LXR)](#28-undo-for-bank-edits-lxr) | Feature | S–M |
+| 29 | [New effects: ring modulator, tilt EQ, master saturation (LXR)](#29-new-effects-ring-modulator-tilt-eq-master-saturation-lxr) | Feature | M each |
+| 30 | [MIDI in/out: velocity, running status, note queue, CC](#30-midi-inout-velocity-running-status-note-queue-cc) | Bug + feature | S (CC: M) |
+| 31 | [Kit morph (LXR)](#31-kit-morph-lxr) | Feature | M |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -42,7 +56,9 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 **Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
 
-**To schedule after sprint 2:** [15](#15-song-mode-chain-the-banks) song mode (needs 9, which sprint 2 delivers).
+**V1.12 "Song mode"** (done, tested on hardware): ✅ [15](#15-song-mode-chain-the-banks) song mode.
+
+**Suggested next sprint (ideas from the LXR firmware):** [30](#30-midi-inout-velocity-running-status-note-queue-cc) MIDI in/out fixes first (they matter for the owner's Loopy Pro → Scarlett setup), then [18](#18-swing--shuffle-lxr) swing, [19](#19-choke-groups-lxr) choke groups, [22](#22-live-roll-lxr) live roll, [25](#25-lfo-retrigger-and-free-running-lxr) LFO retrigger, [27](#27-erase-while-recording-lxr) erase while recording. Later, together with [14](#14-euclid-velocity-and-variance) part B (they share one per-beat data extension and one file format bump): [20](#20-parameter-locks-per-beat-lxr), [21](#21-probability-per-beat-lxr), [24](#24-velocity-modulates-a-parameter-lxr).
 
 **On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
@@ -224,6 +240,8 @@ Kit and song files have a signature but no format version. Several items above c
 
 ### 15. Song mode: chain the banks
 
+**Status: done in V1.12** (`SongChain.h`, `test_songchain`). SONG page: tap the SONG key (the one held to pick banks); fields STEP, BANK, REPEATS, LENGTH, END (LOOP/STOP), CHAIN. Decided: a manual bank pick jumps the chain to the step using that bank (a bank not in the chain turns chain play off); STOP keeps the position, RESET goes to step 1. The chain is saved after the song file's EOF (marker `CHN`), so older firmware ignores it and no format version change was needed. Also in V1.12: whole-bank copy/paste on the SONG page (long COPY / PASTE, all 10 layers; clipboard in SDRAM after the preview ring).
+
 **Today.** Each layer has 5 song banks (`kBankLibrarySize`), and the active bank (`activeSongBank`) is the same for all layers. Holding the SONG key and pressing a pair of layer pads picks a bank (pads 1–2 = bank 1 … 9–10 = bank 5). While playing, `layerSong_triggerBank()` arms the change (`bankShiftFlag`, `targetSongBank`) and the sequencer switches at the next loop end; when stopped it switches at once (`layerSong_selectBank()`). Nothing plays the banks in sequence: every change is by hand.
 
 **Proposal.**
@@ -285,3 +303,80 @@ Same rule in the layer loader (`layerInst_setSampleLoaded()`) and the sample pre
 - Related, optional: stereo files use only the left channel today; mixing to mono would keep both sides.
 
 **Done when.** A 48 kHz and a 44.1 kHz recording of the same sound play at the same pitch and length, loaded and previewed; 96/192 kHz files don't alias; host tests for the converter (pitch of a sine at each rate, no clicks at chunk boundaries); the preview still never underruns on 48 kHz 24-bit stereo.
+
+---
+
+## Ideas from the LXR firmware (items 18–29)
+
+Reviewed from the owner's fork of the Erica Synths LXR V2 desktop firmware (MiguelMoraleja/lxr-desktop-app, 2026-11-05). **Licence:** that firmware is GPL-3.0 and Drumboy-Pro is MIT, so its code must not be copied here (it would put the Drumboy firmware under the GPL), and "LXR" / "Erica Synths" are trademarks. Take the ideas only and write our own code. Not taken: the LXR's synthesised drum voices (the Drumboy is sample-based), its second stereo output (no such hardware), a kit per pattern (the Drumboy keeps one kit per song).
+
+### 18. Swing / shuffle (LXR)
+
+**LXR:** one shuffle amount per pattern that delays the off-beat steps. **Today:** only the SWING fill type, inside one beat; nothing swings the whole groove. **Proposal:** a SWING amount per song (or per bank) on the RHYTHM page that delays beats on off-beat 16ths (or 8ths) by a fraction of a step at playback time, without moving the stored beats, so it can be changed live and saved. Applies to fills' micro-hits too. Host tests for the timing.
+
+### 19. Choke groups (LXR)
+
+**LXR:** open and closed hi-hats cut each other off. **Today:** every layer rings over the others; cheap to add per layer. **Proposal:** a CHOKE group per layer (OFF, 1–4) on an instrument page; a hit fades out (a few ms, no click) any other layer in the same group still sounding. Saved per kit (needs a spare byte; see item 9).
+
+### 20. Parameter locks per beat (LXR)
+
+**LXR:** each step can set up to 2 parameters (e.g. pitch, decay), recorded by turning a knob while recording. The biggest creative gain of the list. On the Drumboy it is per beat, built on the beat list (`BeatList.h`, item 12), and needs a format version bump (item 9 makes that possible). **Today:** parameters only per layer or through an LFO. **Proposal:** up to 2 locks per beat (parameter + value) applied at the hit like the LFO values in `layer_playBeat()`; set by turning an instrument knob while a beat is selected (or while recording). Needs per-beat storage beyond `Beat` (16-bit data is full): extend the song section with item 9; plan together with 21, 24 and 14B.
+
+### 21. Probability per beat (LXR)
+
+**LXR:** a 0–100% probability per step. **Today:** one PROB per layer. **Proposal:** a probability per beat (and per fill micro-hit?) on the song page, rolled at each hit. Same per-beat storage as 20.
+
+### 22. Live roll (LXR)
+
+**LXR:** hold ROLL and a pad: the pad repeats at a set rate (1/16, 1/32, …) in time with the sequencer, with the step probability applied. **Today:** rolls only as fill types. A performance feature that sits next to fills; apply the layer's PROB to each repeat. **Proposal:** a roll modifier (key combination to choose) + pad repeats the layer at a rate (1/8, 1/16, 1/32, triplets) locked to the tempo while held; while recording, the repeats are written as beats (or as one beat with a ROLL fill).
+
+### 23. Per-layer length / polymeter (LXR)
+
+**LXR:** each track has its own length (e.g. 5 steps against 16). **Today:** every layer loops over the song length. **Proposal:** a LENGTH per layer and bank (in 16ths, up to the song length); the layer's beats wrap at its own length. Larger change for the free-placement beat model (playback pointers per layer, drawing the lane); host-test the wrap.
+
+### 24. Velocity modulates a parameter (LXR)
+
+**LXR:** `modulationNode` sends each hit's velocity to any parameter. **Today:** velocity only changes volume. Pairs with the MIDI velocity fix in 30 (incoming velocity becomes a real value) and is a cheaper first step toward 3 (LFO → filters/FX): the same "modulate a module parameter per hit" plumbing. **Proposal:** per layer, a VELO → destination (pitch, start, filter, ...) and amount, applied at the hit. Needs per-beat velocity (14B).
+
+### 25. LFO retrigger and free-running (LXR)
+
+**LXR:** an LFO can restart on each note of a chosen voice, can run synced or free, and has exponential up/down shapes. **Today:** LFOs are tempo-synced, never restart, and have SIN, TRI, SAW, SQR, RND. **Proposal:** per LFO a RETRIG source (OFF or a layer): a hit on that layer resets the LFO phase; optionally a FREE mode in Hz; add EXP UP and EXP DOWN shapes (`kLfoDataLibrary`, Lfo.h). Small; Lfo.h + `layer_playBeat()`.
+
+### 26. Random step in the song chain (LXR)
+
+**LXR:** each pattern says which pattern comes next, including "random among the previous ones", and switches every N bars. **Today:** song mode is a fixed chain (item 15) whose REPEATS already cover "every N bars". Adding RANDOM as a step type costs almost nothing. **Proposal:** a step's BANK can be RANDOM (any bank, or not the same as the last); `SongChain.h` with a seeded random for tests; file block version 2.
+
+### 27. Erase while recording (LXR)
+
+**LXR:** while recording, hold a key and the hits that pass the play position are erased. **Today:** only CLEAR (one beat or the whole layer). **Proposal:** while recording, hold CLEAR + a layer pad: beats of that layer under the play position are removed as it passes.
+
+### 28. Undo for bank edits (LXR)
+
+**LXR:** a backup buffer to return a pattern to how it was. **Today:** only EUCLID CLEAR. **Proposal:** one level of undo per bank for destructive edits (paste, EUCLID apply, CLEAR all, SHIFT ALL): snapshot before, a key combination to swap back. The SDRAM gap has room (one bank of 10 layers is ~28 KB, like the bank clipboard).
+
+### 29. New effects: ring modulator, tilt EQ, master saturation (LXR)
+
+**LXR:** ring modulator and compressor on the FX bus, a tilt EQ, and a tube-style saturation on the master. **Today:** 9 effect types in the two effect slots (no ring mod), a 6-band EQ, a soft-knee clip at the LIMITER ceiling. **Proposal:** ring modulator as a 10th effect type; a TILT control (one knob, dark ↔ bright) on the mixer; an optional warm saturation before the output clip. Measure DSP load for each (`make PROFILE=1`).
+
+### 30. MIDI in/out: velocity, running status, note queue, CC
+
+Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). Checked in the code (`Controller.cpp`: the MIDI byte parser and the inbound processing in the main loop):
+
+- **Velocity ignored:** the parser stores the note-on velocity, but the main loop plays every received note at full level (`layer_playBeat(layerNum, 1.0f)`) and records it as a FLAT beat.
+- **Note On with velocity 0** (sent by many controllers instead of Note Off) plays a hit at full level.
+- **No running status:** each note must start with its own status byte (`rxNoteOnReadStage` only leaves stage 0 on a status byte), so when a controller omits repeated status bytes, the second and later notes of a run are dropped.
+- **One pending note:** a single slot (`rxNoteOnKey` / `rxNoteOnWriteFlag`); a second note arriving before the main loop handles the first overwrites it, so two notes landing together lose one.
+- **MIDI out velocity** is always 100 (0x64) in Note On and Note Off.
+- **No CC input** at all (the LXR maps its parameters to CC and NRPN).
+
+**Proposal.**
+- A hardware-free MIDI parser (e.g. `MidiParser.h`) with running status (data bytes reuse the last channel status; real-time bytes 0xF8–0xFF don't cancel it, other system messages do), note-on velocity 0 = note off, and a small queue (e.g. 16 events) between the UART interrupt and the main loop. Host tests with byte streams: running status runs, interleaved clock bytes, chords, velocity 0.
+- Play received notes at their velocity (cubed like the other levels, or as is; decide by ear), and record them with it once per-beat velocity exists (14B); until then, map low velocities to GHOST.
+- MIDI out sends the velocity the hit actually played with (fill level × FLAT/GHOST).
+- CC input (M): a fixed CC map for the main per-layer parameters (level, pitch, start, end, …) and the mixer, on the receive channel; learn mode later. NRPN not needed at first.
+
+**Done when.** From Loopy Pro: soft and hard notes play at different levels, a fast run with running status plays every note, two simultaneous notes both play, velocity-0 notes are silent, and the MIDI monitor shows the real velocity on MIDI out.
+
+### 31. Kit morph (LXR)
+
+**LXR:** one knob crossfades every sound parameter of the kit toward a second kit; the interpolation is spread over audio ticks, one parameter per tick, so it never spikes the CPU; routing is excluded. **Today:** nothing; a kit is loaded whole. **Proposal:** load a second kit as the morph target (parameters only, not samples: a layer whose sample differs keeps its own), a MORPH knob 0–100% that interpolates level, pitch, start/end, filter, EQ, effect and reverb parameters, updated a few parameters per audio block; routing (OUT and the ROUTING page) and samples stay as they are, which matches the routing design. Host-test the interpolation (endpoints exact, no parameter left half-updated across a full sweep).

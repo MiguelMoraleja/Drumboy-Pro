@@ -488,6 +488,16 @@ void Controller::update() {
             layerSong_resetAllBeats(selectedLayerNum, activeSongBank);
         }
 
+        // Whole-bank copy/paste (SONG page).
+        if (bankCopyActionFlag) {
+            bankCopyActionFlag = false;
+            song_copyBank();
+        }
+        if (bankPasteActionFlag) {
+            bankPasteActionFlag = false;
+            song_pasteBank();
+        }
+
         // 11. SECONDARY NAVIGATION
         // Execute long-press navigation handlers.
         if (keyboard.upActionFlag) {
@@ -1588,6 +1598,8 @@ void Controller::keyboard_action() {
                             layerSong_select(layerNum, activeSongBank);
                         } else if ((keyboard.bankKeyPress) && (!alertFlag)) {
                             uint8_t selectedSongBank = layerNum / 2;
+                            songKeyUsed = true;
+                            song_manualBank(selectedSongBank);
                             (playActive) ? layerSong_triggerBank(selectedSongBank) : layerSong_selectBank(selectedSongBank);
                             ledLayerPlayMode = false;
                             ledLayerSelectFlag = true;
@@ -2289,6 +2301,11 @@ void Controller::keyboard_action() {
                                         startLongKeyTimer();
                                         break;
 
+                                    case SONG_MENU:
+                                        bankCopyKeyFlag = true;
+                                        startLongKeyTimer();
+                                        break;
+
                                     case LFO_MENU:
                                         lfoCopyKeyFlag = true;
                                         startLongKeyTimer();
@@ -2312,6 +2329,11 @@ void Controller::keyboard_action() {
                                     case LAYER_SONG_MENU:
                                         layerFillPasteKeyFlag = true;
                                         layerSongPasteKeyFlag = true;
+                                        startLongKeyTimer();
+                                        break;
+
+                                    case SONG_MENU:
+                                        bankPasteKeyFlag = true;
                                         startLongKeyTimer();
                                         break;
 
@@ -2444,6 +2466,11 @@ void Controller::keyboard_action() {
                                     keyboard.longKeyCounter = 0;
                                     lfoCopyKeyFlag = false;
                                 }
+                                if (bankCopyKeyFlag) {
+                                    stopLongKeyTimer();
+                                    keyboard.longKeyCounter = 0;
+                                    bankCopyKeyFlag = false;
+                                }
                                 break;
 
                             case KEY_PASTE:
@@ -2469,6 +2496,11 @@ void Controller::keyboard_action() {
                                     stopLongKeyTimer();
                                     keyboard.longKeyCounter = 0;
                                     lfoPasteKeyFlag = false;
+                                }
+                                if (bankPasteKeyFlag) {
+                                    stopLongKeyTimer();
+                                    keyboard.longKeyCounter = 0;
+                                    bankPasteKeyFlag = false;
                                 }
                                 break;
 
@@ -2597,6 +2629,7 @@ void Controller::keyboard_action() {
 
                             case KEY_SONG:
                                 keyboard.bankKeyPress = true;
+                                songKeyUsed = false;
                                 ledLayerPlayMode = false;
                                 ledLayerSelectFlag = true;
                                 ledLayerSelectData = 0x03 << (activeSongBank * 2);
@@ -2654,6 +2687,11 @@ void Controller::keyboard_action() {
                                         ledLayerSelectFlag = true;
                                         ledLayerSelectData = 0x00;
                                         break;
+                                }
+                                // Tapped on its own (no pad pressed while held): the SONG page; on
+                                // the SONG page a tap turns chain play on or off.
+                                if (!songKeyUsed && !alertFlag) {
+                                    (menu == SONG_MENU) ? song_setActive(!songChain.active) : song_select();
                                 }
                                 break;
 
@@ -3233,7 +3271,7 @@ void Controller::encoder_update() {
 
     if (activeEncoderBank >= kEncoderBankSize) activeEncoderBank = kMinEncoderGlobalTab;
     const uint8_t encoderFuncCount = sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]);
-    const Menu menuSafe = ((menu >= INIT_MENU) && (menu <= EUCLID_MENU)) ? menu : INIT_MENU;
+    const Menu menuSafe = ((menu >= INIT_MENU) && (menu <= SONG_MENU)) ? menu : INIT_MENU;
 
     // 1. MODE/FUNCTION BINDING
     // Bind each encoder to global or local function map based on active menu.
@@ -3994,6 +4032,15 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             euclid_step(encoder[encoderNum_].function, true);
             break;
 
+        case ENC_CHAIN_STEP:
+        case ENC_CHAIN_BANK:
+        case ENC_CHAIN_REPEATS:
+        case ENC_CHAIN_LENGTH:
+        case ENC_CHAIN_END:
+        case ENC_CHAIN_PLAY:
+            song_step(encoder[encoderNum_].function, true);
+            break;
+
         default:
             break;
     }
@@ -4565,6 +4612,15 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_EUC_MODE:
         case ENC_EUC_ACCENTS:
             euclid_step(encoder[encoderNum_].function, false);
+            break;
+
+        case ENC_CHAIN_STEP:
+        case ENC_CHAIN_BANK:
+        case ENC_CHAIN_REPEATS:
+        case ENC_CHAIN_LENGTH:
+        case ENC_CHAIN_END:
+        case ENC_CHAIN_PLAY:
+            song_step(encoder[encoderNum_].function, false);
             break;
 
         default:
@@ -5955,6 +6011,22 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
         }
         f_close(&sd.file);
 
+        // Song mode chain (SongChain.h): stored after the song's "EOF". Files without it get the
+        // default chain (off), so they play bank by bank as before.
+        {
+            uint8_t chainData[kChainFileSize] = {0};
+            UINT got = 0;
+            if (f_open(&sd.file, fileName, FA_READ) == FR_OK) {
+                if (f_lseek(&sd.file, strlen(kFileRef) + kFileByteSize + 3) == FR_OK) f_read(&sd.file, chainData, kChainFileSize, &got);
+                f_close(&sd.file);
+            }
+            chainRead(songChain, chainData, static_cast<uint16_t>(got));
+            chainRestart(songChain, chainPlay);
+            songStepSel = 0;
+            if (songChain.active) layerSong_selectBank(chainCurrentBank(songChain, chainPlay));
+            chainActionFlag = true;
+        }
+
         // 7. POST-LOAD VALIDATION
         // Raise alert if any instrument/sample reference cannot be resolved.
         uint8_t missingSample = 0;
@@ -6246,7 +6318,10 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
                 // Commit EOF marker only when all previous writes succeeded.
                 if (errorCount == 0) {
                     if (f_write(&sd.file, eof, strlen(eof), &sd.byteswritten) == FR_OK) {
-                        result = SD_OK;
+                        // Song mode chain after "EOF" (older firmware stops reading at "EOF").
+                        uint8_t chainData[kChainFileSize];
+                        chainWrite(songChain, chainData);
+                        if (f_write(&sd.file, chainData, kChainFileSize, &sd.byteswritten) == FR_OK) result = SD_OK;
                     }
                 }
             }
@@ -7607,6 +7682,15 @@ void Controller::lcd_update() {
     // LFO-modulated values on the instrument page.
     lcd_drawLayerInstLfoValues();
 
+    // Song mode: the chain moved (loop end, reset, load).
+    if (chainActionFlag) {
+        chainActionFlag = false;
+        if (menu == SONG_MENU) {
+            lcd_drawSong_Data();
+            lcd_drawSongOverview();
+        }
+    }
+
     // 4. LIMIT ALERT UPDATE
     // Refresh on-screen limit warning state.
     lcd_drawLimitAlert();
@@ -8258,6 +8342,10 @@ void Controller::lcd_drawMenuIcon(Menu menu_) {
                 iconStr = "EU";
                 break;
 
+            case SONG_MENU:
+                iconStr = "SG";
+                break;
+
             case METRO_MENU:
                 iconStr = "ME";
                 break;
@@ -8512,6 +8600,7 @@ void Controller::lcd_transitionMenu() {
 
         case ROUTING_MENU:
         case EUCLID_MENU:
+        case SONG_MENU:
             // Remove the chain overview / pattern and restore the tab divider it covered.
             lcd.setBackColor(BLACK);
             lcd.setForeColor(GRAY_50);
@@ -8589,6 +8678,12 @@ void Controller::lcd_transitionMenu() {
 
         case EUCLID_MENU:
             // Tabs 2-3 hold the pattern.
+            lcd.setBackColor(BLACK);
+            lcd.clearRect(493, 29, 325, 60);
+            break;
+
+        case SONG_MENU:
+            // Tabs 2-3 hold the chain.
             lcd.setBackColor(BLACK);
             lcd.clearRect(493, 29, 325, 60);
             break;
@@ -13249,6 +13344,9 @@ void Controller::file_newAction() {
     // 2. TRANSPORT RESET
     // Reset song transport and playback runtime state.
     reset();
+    chainClear(songChain);
+    chainRestart(songChain, chainPlay);
+    songStepSel = 0;
 
     // 3. BANK STATE RESET
     // Return active song bank to default and redraw bank tab indicator.
@@ -20774,6 +20872,199 @@ void Controller::preview_update() {
     preview_service();
 }
 
+void Controller::song_select() {
+    /// @brief Opens the SONG page (song mode): the SONG key tapped on its own.
+    if (menu == SONG_MENU) return;
+    preMenu = menu;
+    preMenuTab = menuTab;
+    menuTab = -1;  // every field has its own encoder
+    menu = SONG_MENU;
+    preMenuLayerClear();
+    if (songStepSel >= songChain.count) songStepSel = 0;
+    lcd_transitionMenu();
+    lcd_transitionSelect();
+    lcd_drawSongMenu();
+    encoder_update();
+}
+
+void Controller::song_toStartBank() {
+    /// @brief Switches to the bank of the chain's current step (from play() and when chain play is
+    /// turned on while stopped). Without drawing: the main loop redraws on bankActionFlag.
+    const uint8_t bank = chainCurrentBank(songChain, chainPlay);
+    if (bank == activeSongBank) return;
+    activeSongBank = bank;
+    targetSongBank = bank;
+    bankShiftFlag = false;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) layerSong_calculatePlayBeatNum(i, activeSongBank, playInterval);
+    bankActionFlag = true;
+}
+
+// Whole-bank clipboard in SDRAM (RAM_BANK_CLIPBOARD_ADDRESS): one Bank per layer.
+static Bank* const bankClipboard = reinterpret_cast<Bank*>(RAM_BANK_CLIPBOARD_ADDRESS);
+static_assert(RAM_BANK_CLIPBOARD_ADDRESS + kLayerLibrarySize * sizeof(Bank) <= 0xC0FB9640u, "bank clipboard must end before the images");
+
+void Controller::song_copyBank() {
+    /// @brief SONG page, long COPY: copies the active bank of every layer (beats and fills).
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        memcpy(static_cast<void*>(&bankClipboard[i]), static_cast<const void*>(&layerLibrary[i].bankLibrary[activeSongBank]), sizeof(Bank));
+    }
+    bankCopyActive = true;
+    bankCopySource = activeSongBank;
+    if (menu == SONG_MENU) lcd_drawSongOverview();
+}
+
+void Controller::song_pasteBank() {
+    /// @brief SONG page, long PASTE: replaces the active bank of every layer with the copy. Each
+    /// layer is swapped in with the sequencer interrupt held off (as layerSong_commitBank does),
+    /// so pasting while playing is safe. Beats past the song end (the song got shorter since the
+    /// copy) are dropped.
+    if (!bankCopyActive) return;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        memcpy(static_cast<void*>(&layerSongScratch), static_cast<const void*>(&bankClipboard[i]), sizeof(Bank));
+        for (uint8_t b = 0; b < kBeatLibrarySize; b++) {
+            if (layerSongScratch.beatLibrary[b].getActive() && (layerSongScratch.beatLibrary[b].getStartInterval() >= songInterval)) layerSongScratch.resetBeat(b);
+        }
+        beatListRebuild(layerSongScratch, songInterval);
+        Bank& bank = layerLibrary[i].bankLibrary[activeSongBank];
+        __disable_irq();
+        bank = layerSongScratch;
+        layerSong_calculatePlayBeatNum(i, activeSongBank, playInterval);
+        __enable_irq();
+        lcd_drawSong(i, activeSongBank);
+    }
+    if (menu == SONG_MENU) lcd_drawSongOverview();
+}
+
+void Controller::song_setActive(bool active_) {
+    /// @brief Chain play on/off. Turned on while playing, the chain continues from the step that uses
+    /// the bank playing now (or from step 1); while stopped, it starts from its current step.
+    __disable_irq();
+    songChain.active = active_;
+    if (active_ && playActive && (chainJumpToBank(songChain, chainPlay, activeSongBank) < 0)) chainRestart(songChain, chainPlay);
+    __enable_irq();
+    if (active_ && !playActive) song_toStartBank();
+    chainActionFlag = true;
+}
+
+void Controller::song_manualBank(uint8_t bank_) {
+    /// @brief A bank picked by hand (SONG + pads) while the chain is on: the chain jumps to the step
+    /// that uses that bank; a bank the chain doesn't use turns chain play off.
+    chainActionFlag = true;  // the SONG page shows the active bank (copy hint)
+    if (!songChain.active) return;
+    __disable_irq();
+    const int8_t step = chainJumpToBank(songChain, chainPlay, bank_);
+    if (step < 0) songChain.active = false;
+    __enable_irq();
+    if (step >= 0) songStepSel = static_cast<uint8_t>(step);
+    chainActionFlag = true;
+}
+
+void Controller::song_step(EncoderFunc function_, bool up_) {
+    /// @brief Steps one SONG page field. Edits are made with the sequencer interrupt held off, as the
+    /// chain is read at every loop end.
+    __disable_irq();
+    ChainStep& st = songChain.steps[(songStepSel < songChain.count) ? songStepSel : 0];
+    switch (function_) {
+        case ENC_CHAIN_STEP:
+            songStepSel = up_ ? ((songStepSel + 1 < songChain.count) ? songStepSel + 1 : 0) : ((songStepSel > 0) ? songStepSel - 1 : songChain.count - 1);
+            break;
+        case ENC_CHAIN_BANK:
+            chainSetStep(songChain, songStepSel, up_ ? ((st.bank + 1) % kChainBanks) : ((st.bank + kChainBanks - 1) % kChainBanks), st.repeats);
+            break;
+        case ENC_CHAIN_REPEATS:
+            chainSetStep(songChain, songStepSel, st.bank, up_ ? st.repeats + 1 : st.repeats - 1);
+            break;
+        case ENC_CHAIN_LENGTH:
+            chainSetCount(songChain, chainPlay, up_ ? songChain.count + 1 : songChain.count - 1);
+            if (songStepSel >= songChain.count) songStepSel = songChain.count - 1;
+            if (up_) songStepSel = songChain.count - 1;  // show the new step
+            break;
+        case ENC_CHAIN_END:
+            songChain.loop = !songChain.loop;
+            break;
+        default:
+            break;
+    }
+    __enable_irq();
+    if (function_ == ENC_CHAIN_PLAY) {
+        song_setActive(!songChain.active);
+        return;
+    }
+    lcd_drawSong_Data();
+    lcd_drawSongOverview();
+}
+
+// SONG page fields (index -> tab): STEP, BANK | chain | REPEATS, LENGTH, END, CHAIN.
+static const uint8_t kSongTab[6] = {0, 1, 4, 5, 6, 7};
+
+void Controller::lcd_drawSongMenu() {
+    /// @brief Draws the SONG page: the selected step's settings, the chain and where it is.
+    lcd_drawMenuIcon(SONG_MENU);
+    lcd_setMenuHeaderState(CYAN);
+    lcd.clearRect(kMenuNumX, kMenuNumY, 7, 9);
+    for (uint8_t f = 0; f < 6; f++) {
+        const uint8_t tab = kSongTab[f];
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_CHAIN_STEP + f].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[tab], kMenuHeaderY[tab]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[tab], kMenuSignBoxY[tab]);
+    }
+    lcd_drawSong_Data();
+    lcd_drawSongOverview();
+}
+
+void Controller::lcd_drawSong_Data() {
+    /// @brief Draws the SONG page field values.
+    if (songStepSel >= songChain.count) songStepSel = 0;
+    const ChainStep& st = songChain.steps[songStepSel];
+    char text[6][24];
+    snprintf(text[0], sizeof(text[0]), "%4u OF %2u", static_cast<unsigned>(songStepSel + 1), static_cast<unsigned>(songChain.count));
+    snprintf(text[1], sizeof(text[1]), "%10u", static_cast<unsigned>(st.bank + 1));
+    snprintf(text[2], sizeof(text[2]), "%9ux", static_cast<unsigned>(st.repeats));
+    snprintf(text[3], sizeof(text[3]), "%10u", static_cast<unsigned>(songChain.count));
+    snprintf(text[4], sizeof(text[4]), "%s", songChain.loop ? "      LOOP" : "      STOP");
+    snprintf(text[5], sizeof(text[5]), "%s", songChain.active ? kDataOn : kDataOff);
+    lcd_setMenuDataState(WHITE);
+    for (uint8_t f = 0; f < 6; f++) {
+        lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[kSongTab[f]], kMenuDataY[kSongTab[f]]);
+    }
+}
+
+void Controller::lcd_drawSongOverview() {
+    /// @brief Draws the chain in the top-right area: up to 7 steps per line as BANKxREPEATS, the
+    /// selected step in cyan and the step playing now in yellow, and the position below.
+    const uint16_t kX = 494, kY = 32, kLineStep = 11, kAreaX = 493, kAreaY = 30, kAreaW = 325, kAreaH = 60;
+    const uint16_t kCell = 5 * 9;  // 5 characters of the 7x9 font
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(kAreaX, kAreaY, kAreaW, kAreaH);
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(LEFT);
+    const bool live = songChain.active && playActive;
+    char cell[16];
+    for (uint8_t i = 0; i < songChain.count; i++) {
+        const int len = snprintf(cell, sizeof(cell), "%ux%u", static_cast<unsigned>(songChain.steps[i].bank + 1), static_cast<unsigned>(songChain.steps[i].repeats));
+        lcd.setForeColor((live && (i == chainPlay.step)) ? YELLOW : ((i == songStepSel) ? CYAN : WHITE));
+        if (len > 0) lcd.drawText(cell, static_cast<uint16_t>(len), kX + (i % 7) * kCell, kY + (i / 7) * kLineStep);
+    }
+    char line[48];
+    int len;
+    if (!songChain.active) {
+        len = snprintf(line, sizeof(line), "CHAIN OFF  %u LOOPS  %s", static_cast<unsigned>(chainTotalLoops(songChain)), songChain.loop ? "LOOP" : "STOP AT END");
+    } else {
+        const ChainStep& now = songChain.steps[(chainPlay.step < songChain.count) ? chainPlay.step : 0];
+        len = snprintf(line, sizeof(line), "STEP %u/%u  LOOP %u/%u  BANK %u", static_cast<unsigned>(chainPlay.step + 1), static_cast<unsigned>(songChain.count),
+                       static_cast<unsigned>(chainPlay.loopsDone + 1), static_cast<unsigned>(now.repeats), static_cast<unsigned>(now.bank + 1));
+    }
+    lcd.setForeColor(songChain.active ? CYAN : GRAY_75);
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 4 * kLineStep);
+
+    // Whole-bank clipboard (long COPY / PASTE on this page).
+    len = bankCopyActive ? snprintf(line, sizeof(line), "COPIED BANK %u  PASTE: HOLD PASTE", static_cast<unsigned>(bankCopySource + 1))
+                         : snprintf(line, sizeof(line), "HOLD COPY: COPY BANK %u", static_cast<unsigned>(activeSongBank + 1));
+    lcd.setForeColor(GRAY_75);
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 3 * kLineStep);
+}
+
 bool Controller::layerPageMenu() const {
     /// @brief True on a page of one layer: instrument pages 1-3, song, EUCLID.
     return (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU) || (menu == LAYER_SONG_MENU) || (menu == EUCLID_MENU);
@@ -22356,6 +22647,9 @@ void Controller::play() {
 
     // 3. TRANSPORT STATE UPDATE
     // Set playback flags and transport icons for running state.
+    // Song mode: playing from the top starts on the chain's current step.
+    if (songChain.active && (playInterval == 0)) song_toStartBank();
+
     stopFlag = false;
     resetFlag = false;
     playActive = true;
@@ -22462,6 +22756,10 @@ void Controller::reset() {
 
     // 3. RESET CONDITION VALIDATION
     // Continue only when play head moved or precount is active.
+    // Song mode: RESET goes back to the first step of the chain.
+    chainRestart(songChain, chainPlay);
+    chainActionFlag = true;
+
     if ((playInterval != 0) || (metronome.precountState)) {
         // 3. PRECOUNT STATE RESET
         // Clear metronome precount counters and hide countdown UI.
@@ -24250,10 +24548,29 @@ void Controller::interruptPlay() {
                 io.sync.txPulseCounter = 0;
 
                 // Handle Bank Shifting at the end of the loop cycle
+                // A manual bank change wins (song_manualBank already moved the chain); otherwise
+                // song mode says which bank comes next (SongChain.h).
+                bool chainEnded = false;
                 if (bankShiftFlag) {
                     bankShiftFlag = false;
                     activeSongBank = targetSongBank;
                     bankActionFlag = true;
+                } else if (songChain.active) {
+                    const int8_t next = chainLoopEnd(songChain, chainPlay);
+                    if (next == kChainStop) {
+                        chainEnded = true;
+                        const uint8_t first = chainCurrentBank(songChain, chainPlay);
+                        if (first != activeSongBank) {
+                            activeSongBank = first;
+                            targetSongBank = first;
+                            bankActionFlag = true;
+                        }
+                    } else if ((next >= 0) && (next != activeSongBank)) {
+                        activeSongBank = static_cast<uint8_t>(next);
+                        targetSongBank = activeSongBank;
+                        bankActionFlag = true;
+                    }
+                    chainActionFlag = true;
                 }
 
                 // Reset all layer playback pointers for the new loop
@@ -24269,6 +24586,7 @@ void Controller::interruptPlay() {
                     }
                 }
                 lcd_restartPlay();
+                if (chainEnded) stop();  // song mode: the chain's END step is done
             }
         }
     }
@@ -25483,6 +25801,23 @@ void Controller::interruptLongKeyRead() {
             keyboard.longKeyCounter = 0;
             layerInstResetKeyFlag = false;
             layerInstResetActionFlag = true;
+        }
+
+        // SONG PAGE: WHOLE-BANK COPY / PASTE
+        else if (bankCopyKeyFlag) {
+            stopLongKeyTimer();
+            keyboard.longKeyCounter = 0;
+            bankCopyKeyFlag = false;
+            bankCopyActionFlag = true;
+            textCopyFlag = true;
+        } else if (bankPasteKeyFlag) {
+            stopLongKeyTimer();
+            keyboard.longKeyCounter = 0;
+            bankPasteKeyFlag = false;
+            if (bankCopyActive) {
+                bankPasteActionFlag = true;
+                textPasteFlag = true;
+            }
         }
 
         // LAYER SONG ACTIONS

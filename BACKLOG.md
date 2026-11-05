@@ -56,7 +56,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 **Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
 
-**V1.12 "Song mode"** (done, tested on hardware): ✅ [15](#15-song-mode-chain-the-banks) song mode.
+**V1.12 "Song mode"** (done, tested on hardware, released as v1.12): ✅ [15](#15-song-mode-chain-the-banks) song mode.
 
 **Suggested next sprint (ideas from the LXR firmware):** [30](#30-midi-inout-velocity-running-status-note-queue-cc) MIDI in/out fixes first (they matter for the owner's Loopy Pro → Scarlett setup), then [18](#18-swing--shuffle-lxr) swing, [19](#19-choke-groups-lxr) choke groups, [22](#22-live-roll-lxr) live roll, [25](#25-lfo-retrigger-and-free-running-lxr) LFO retrigger, [27](#27-erase-while-recording-lxr) erase while recording. Later, together with [14](#14-euclid-velocity-and-variance) part B (they share one per-beat data extension and one file format bump): [20](#20-parameter-locks-per-beat-lxr), [21](#21-probability-per-beat-lxr), [24](#24-velocity-modulates-a-parameter-lxr).
 

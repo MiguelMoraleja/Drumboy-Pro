@@ -30,7 +30,7 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 20 | [Parameter locks per beat (LXR)](#20-parameter-locks-per-beat-lxr) | Feature | L |
 | 21 | [Probability per beat (LXR)](#21-probability-per-beat-lxr) | Feature | M |
 | 22 | [Live roll (LXR)](#22-live-roll-lxr) | Feature | S–M |
-| 23 | [Per-layer length (polymeter) (LXR)](#23-per-layer-length-polymeter-lxr) | Feature | L |
+| 23 | [Per-layer length (polymeter) (LXR)](#23-per-layer-length--polymeter-lxr) | Feature | L |
 | 24 | [Velocity modulates a parameter (LXR)](#24-velocity-modulates-a-parameter-lxr) | Feature | M |
 | 25 | [LFO retrigger and free-running (LXR)](#25-lfo-retrigger-and-free-running-lxr) | Feature | S |
 | 26 | [Random step in the song chain (LXR)](#26-random-step-in-the-song-chain-lxr) | Feature | S |
@@ -61,9 +61,27 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 **V1.12 "Song mode"** (done, tested on hardware, released as v1.12): ✅ [15](#15-song-mode-chain-the-banks) song mode.
 
-**Owner's priorities (2026-11-07):** [34](#34-midi-clock-slave-drift-and-200-bpm-runaway) MIDI clock slave drift (with 30, same setup), [32](#32-autosave) autosave (work gets lost today) and [33](#33-per-note-editing-velocity-probability-and-more) per-note velocity and probability (it absorbs 14 part B and 21, and gives 30's incoming velocity somewhere to go).
+**Owner's priorities (2026-11-07), planned in sprint 4 below:** [34](#34-midi-clock-slave-drift-and-200-bpm-runaway) MIDI clock slave drift (with 30, same setup), [32](#32-autosave) autosave (work gets lost today) and [33](#33-per-note-editing-velocity-probability-and-more) per-note velocity and probability (it absorbs 14 part B and 21, and gives 30's incoming velocity somewhere to go).
 
-**Suggested next sprint (ideas from the LXR firmware):** [30](#30-midi-inout-velocity-running-status-note-queue-cc) MIDI in/out fixes first (they matter for the owner's Loopy Pro → Scarlett setup), then [18](#18-swing--shuffle-lxr) swing, [19](#19-choke-groups-lxr) choke groups, [22](#22-live-roll-lxr) live roll, [25](#25-lfo-retrigger-and-free-running-lxr) LFO retrigger, [27](#27-erase-while-recording-lxr) erase while recording. Later, together with [14](#14-euclid-velocity-and-variance) part B (they share one per-beat data extension and one file format bump): [20](#20-parameter-locks-per-beat-lxr), [21](#21-probability-per-beat-lxr), [24](#24-velocity-modulates-a-parameter-lxr).
+**Sprint 4, "MIDI, autosave and notes" (proposed 2026-11-07).** Two releases, so the MIDI fix and the safety net reach the device first.
+
+*V1.13 "MIDI and autosave"*
+1. MIDI IN that loses nothing: USART1 RX FIFO or a circular DMA ring, an overrun counter shown on the test page, and a hardware-free parser (`MidiParser.h`) with running status, Note On velocity 0 = Note Off, and a 16-event queue. From [30](#30-midi-inout-velocity-running-status-note-queue-cc); CC input stays for later. (S–M)
+2. Incoming notes play at their velocity; MIDI out sends the velocity that played. From [30](#30-midi-inout-velocity-running-status-note-queue-cc). (S)
+3. Clock slave locked to the incoming ticks (`MidiClock.h`): the playhead never runs ahead of the clock, microsecond tempo measurement, fractional tempo inside; no independent clock out while slaved (forward the incoming ticks or none), doubled ticks rejected. [34](#34-midi-clock-slave-drift-and-200-bpm-runaway). (M)
+4. Autosave, part A: checksum-based change detection, AUTOSAVE OFF/2/5/10/20 min, two alternating reserved files written via rename, `RESTORE AUTOSAVE?` at power-on, autosave before LOAD over unsaved work. [32](#32-autosave). (M)
+5. Hardware test with Loopy Pro → Scarlett: 30 minutes at a fractional tempo in time, no runaway with a MIDI loop set up on purpose, overrun counter at 0 with clock and dense notes, power pulled mid-session restores the autosave. Then package, app (MIDI and autosave explained in their tabs), release.
+
+*V1.14 "Notes"*
+6. Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)
+7. NOTE page with VEL and PROB; MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
+8. COND (`A:B`, `!A:B`, `1ST`, `PRE`, `FILL` and negations) with the FILL performance key. (M)
+9. NUDGE. (S)
+10. Hardware test, package, app (a Notes tab to try VEL/PROB/COND on a pattern), release.
+
+Every step keeps the rules: hardware-free logic in `Core/Library/Global/*.h` with host tests, `make WERROR=1` clean, and songs from V1.12 load unchanged. Left for after sprint 4: phase B of 33 (PITCH, DECAY per beat), 14 part B (EUCLID VELOCITY, now just a way to fill VEL), CC input from 30, autosave history (32 B).
+
+**After sprint 4 (ideas from the LXR firmware):** [18](#18-swing--shuffle-lxr) swing, [19](#19-choke-groups-lxr) choke groups, [22](#22-live-roll-lxr) live roll, [25](#25-lfo-retrigger-and-free-running-lxr) LFO retrigger, [27](#27-erase-while-recording-lxr) erase while recording. Later, together with [14](#14-euclid-velocity-and-variance) part B (they share one per-beat data extension and one file format bump): [20](#20-parameter-locks-per-beat-lxr), [21](#21-probability-per-beat-lxr), [24](#24-velocity-modulates-a-parameter-lxr).
 
 **On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
@@ -409,16 +427,26 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 
 **Proposal.** One per-beat extension that several items need, done once:
 
-- **Data:** two extra bytes per beat: VELOCITY (0–127, or 1–100 to match the other levels) and PROBABILITY (0–100%), plus room for the extras below. In memory next to `beatLibrary`; in the file as a block after the song's "EOF" with its own marker (e.g. `BTX`), the same trick as the song chain: older firmware stops at "EOF" and ignores it, and a file without the block loads with velocity from FLAT/GHOST/MUTED and probability 100%. About 6.4 KB per song for 10 layers × 5 banks × 64 beats × 2 bytes. Bank copy/paste, the bank clipboard, BeatList moves and rebuilds, EUCLID and record must carry the new fields along with the beat.
-- **Editing on the device:** on Layer Song, with a beat selected (the MOVE cursor from 12), a NOTE tab with VEL and PROB fields for that beat; ADD + turning the encoder changes all beats of the bank at once (relative), for quick humanising. The pattern line can show low-probability beats differently (the font has no lowercase, like the `+` ghost hits).
+- **Data:** four extra bytes per beat: VELOCITY (0–127), PROBABILITY (0–100%), CONDITION (7 bits, see phase A) and NUDGE (signed ticks), with PITCH in a fifth byte when phase B starts; reserve the room now so the block version only changes once. In memory next to `beatLibrary`; in the file as a block after the song's "EOF" with its own marker (e.g. `BTX`), the same trick as the song chain: older firmware stops at "EOF" and ignores it, and a file without the block loads with velocity from FLAT/GHOST/MUTED and probability 100%. About 13–16 KB per song for 10 layers × 5 banks × 64 beats × 4–5 bytes. Bank copy/paste, the bank clipboard, BeatList moves and rebuilds, EUCLID and record must carry the new fields along with the beat.
+- **Editing on the device:** on Layer Song, with a beat selected (the MOVE cursor from 12), a NOTE page with tabs VEL, PROB, COND, NUDGE (later PITCH) for that beat; ADD + turning the encoder changes all beats of the bank at once (relative), for quick humanising. The pattern line can show low-probability beats differently (the font has no lowercase, like the `+` ghost hits).
 - **Playback:** the sequencer plays a plain beat at its stored velocity, rolls its probability at each loop (combined with the layer's PROB), and MIDI out sends the velocity actually played.
 - **Recording:** live and MIDI-in recording store the velocity that came in (needs 30's velocity fix); pads record at FLAT.
-- **More, per beat, in the same block (pick after A works):** a play condition (every loop, only loop 1 of N, every 2nd, first time only, not the first time, Elektron-style "A:B" trig conditions); a semitone offset (a first, small step toward the parameter locks of [20](#20-parameter-locks-per-beat-lxr)); a micro-timing nudge finer than the quantize step; a ratchet count (repeat the hit 2–4 times inside the beat, like a small fill).
+- **What the Elektron step sequencer (Digitakt / Digitakt II) offers, compared** (researched 2026-11-07; Elektron's names, used here only as reference):
+  - Per-step velocity, probability (1–100%), trig conditions, micro timing, retrig, note/pitch, note length, parameter locks, trigless lock trigs, slide (Digitakt II), sample/sound locks, per-track length and speed, swing, a Euclidean generator per track, and a FILL performance mode.
+  - The Drumboy already has: retrig and more (the fills: ROLL, RATCHET with ACCEL/DECEL, TRIPLET…, with VELOCITY modes DESCEND/ASCEND/RANDOM), a muted step (MUTED), Euclid (11), coarse beat moves (12).
+  - Elsewhere in this backlog: parameter locks, trigless locks and slide → [20](#20-parameter-locks-per-beat-lxr); per-layer length → [23](#23-per-layer-length--polymeter-lxr); swing → [18](#18-swing--shuffle-lxr).
+  - Left out for now: sample lock (each layer holds one sample in SDRAM), the NEI condition (neighbour track).
+- **Phase A, the core (this item):**
+  1. **VEL** 0–127.
+  2. **PROB** 0–100%, combined with the layer's PROB.
+  3. **COND:** `A:B` (plays on loop A of every B, up to 8:8) and its negation `!A:B`, `1ST` / `!1ST` (first time the bank plays since START or a bank change), `PRE` / `!PRE` (the previous conditioned beat of this layer played / did not), `FILL` / `!FILL` (plays only while a FILL key is held / only while it is not). FILL needs a performance key: hold a key combination (e.g. ADD + PLAY) while playing. The loop counter per layer and bank resets on START and on a bank change (song chain steps included).
+  4. **NUDGE:** micro timing, a signed offset of up to ± half a quantize step applied at playback. The beat keeps its place in the beat list, so moves, Euclid and copy/paste are unaffected. Resolution: the sequencer tick (800 per quarter, 200 per 16th), finer than Elektron's 1/384 of a step.
+- **Phase B, toward parameter locks (after A is tested):** **PITCH** per beat in semitones (reusing `Pitch.h`), then **DECAY / LENGTH** per beat, then the full parameter locks of [20](#20-parameter-locks-per-beat-lxr).
 - **Ties to other items:** this is the storage that [14](#14-euclid-velocity-and-variance) part B (EUCLID VELOCITY / RANDOM spread) and [21](#21-probability-per-beat-lxr) (probability per beat) were waiting for, and the base of [20](#20-parameter-locks-per-beat-lxr) (parameter locks). EUCLID can then fill VEL and PROB with its own patterns.
 - Hardware-free code (`BeatExt.h` or inside `BeatList.h`): the block's read/write with checks, carrying the fields through move/rebuild/copy, the probability roll and the condition logic, with host tests (old file without the block, round trip, a move keeps each beat's velocity, probability 0/100 exact, condition "1:4" plays exactly once in four loops).
 - The app gets a tab to try velocity and probability on a pattern before building.
 
-**Done when.** On the device a single beat can be set to velocity 30 and probability 50%, it plays softly about half the time, its settings survive move, copy/paste and save/load, MIDI recording keeps the played velocity, and the same song still loads (and plays at FLAT/100%) on V1.12.
+**Done when.** On the device a single beat can be set to velocity 30 and probability 50%, it plays softly about half the time, a beat with `1:4` plays exactly once every 4 loops and one with `FILL` only while the FILL key is held, a nudged beat plays measurably early/late, its settings survive move, copy/paste and save/load, MIDI recording keeps the played velocity, and the same song still loads (and plays at FLAT/100%) on V1.12.
 
 ### 34. MIDI clock slave: drift and 200 BPM runaway
 

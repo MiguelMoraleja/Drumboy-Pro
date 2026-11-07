@@ -266,12 +266,13 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.12</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.13 (testing)</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
       <a href="#euclid" id="tab-euclid" role="tab" aria-selected="false" aria-controls="view-euclid">Euclid</a>
       <a href="#song" id="tab-song" role="tab" aria-selected="false" aria-controls="view-song">Song</a>
+      <a href="#midi" id="tab-midi" role="tab" aria-selected="false" aria-controls="view-midi">MIDI &amp; autosave</a>
       <a href="#releases" id="tab-releases" role="tab" aria-selected="false" aria-controls="view-releases">Releases</a>
     </nav>
   </header>
@@ -469,6 +470,43 @@ table.rel td.new { min-width: 280px; }
     </div>
   </section>
 
+  <!-- MIDI & AUTOSAVE -->
+  <section id="view-midi" role="tabpanel" aria-labelledby="tab-midi" hidden>
+    <div class="lab">
+      <div class="panel controls">
+        <h2>Following a MIDI clock</h2>
+        <p class="muted" style="font-size:.85rem">Set the master's tempo (Loopy Pro often has decimals, because it comes from the length of the first loop) and compare how far the Drumboy drifts. V1.13.</p>
+        <div class="field"><div class="field-row"><label class="label" for="md-bpm">Master tempo</label><span class="mono" id="md-bpm-v"></span></div><input type="range" id="md-bpm" min="60" max="200" step="0.01" value="97.43"></div>
+        <div class="field"><div class="field-row"><label class="label" for="md-min">Minutes playing</label><span class="mono" id="md-min-v"></span></div><input type="range" id="md-min" min="1" max="30" step="1" value="10"></div>
+        <div class="field"><span class="label">Velocity, in and out</span>
+          <div class="tablewrap"><table class="rel" id="md-vel"></table></div>
+        </div>
+      </div>
+      <div class="stagecol">
+        <div class="panel" style="display:grid; gap:12px">
+          <div class="field"><span class="label">How far behind or ahead of the master (milliseconds)</span>
+            <svg id="md-chart" viewBox="0 0 600 220" role="img" aria-label="Drift over time, before and since V1.13" style="width:100%; height:auto"></svg>
+          </div>
+          <p id="md-sum" style="margin:0"></p>
+        </div>
+        <div class="panel keys">
+          <h3>On the device</h3>
+          <div class="k"><span class="keycap">⏱</span><div><b>MIDI IN with clock</b> (I/O page): the Drumboy plays only as far as each incoming clock allows and restarts its own timer on it. It can't run ahead, it is at most 1/24 of a beat behind, and nothing adds up over time. Before V1.13 it only copied the tempo (rounded to whole BPM) and then ran on its own.</div></div>
+          <div class="k"><span class="keycap">⟲</span><div><b>No MIDI loops:</b> while it follows a clock it sends no clock and no start/stop of its own on MIDI OUT. Before, a setup that echoed MIDI OUT back to MIDI IN doubled the tempo and ran away to 200 BPM. The sync jack follows the incoming clock.</div></div>
+          <div class="k"><span class="keycap">♪</span><div><b>Notes</b> play at their velocity; chords and fast runs (running status) all play; a note with velocity 0 is silent. Recording keeps soft notes (velocity below 64) as GHOST. MIDI OUT sends each hit's real velocity: FLAT 127, GHOST 64, fills as they play.</div></div>
+          <div class="k"><span class="keycap">!</span><div><b>ERR nnnn</b> instead of SLAVE on the Rhythm page counts MIDI bytes lost on the way in. It should stay at SLAVE.</div></div>
+        </div>
+        <div class="panel keys">
+          <h3>Autosave</h3>
+          <div class="k"><span class="keycap">⏲</span><div><b>AUTOSAVE</b> on the Metronome page (last field): OFF, 2, 5, 10 (default) or 20 minutes. When that time has passed and the song changed, it is written to the SD card: when stopped, or at a loop end while playing. With MIDI notes coming in it waits for STOP, so a note is never held back. It also waits while you turn knobs or press keys.</div></div>
+          <div class="k"><span class="keycap">⏻</span><div><b>After a power cut or a crash:</b> at power-on the Drumboy asks RESTORE AUTOSAVE?. ADD loads it, CLEAR throws it away. Then save it into a slot as usual.</div></div>
+          <div class="k"><span class="keycap">⇄</span><div><b>LOAD and NEW</b> autosave unsaved work first, so a wrong LOAD can be undone at the next power-on. <b>SAVE</b> into a slot removes the autosave files (the work is safe in the slot).</div></div>
+          <div class="k"><span class="keycap">✓</span><div><b>Two files</b> (<span class="mono">System/File/Autosave_A.rwf</span> and <span class="mono">_B</span>) are written in turn and sealed with a checksum, so pulling the power in the middle of a write still leaves the previous copy. Your numbered slots are never touched.</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- RELEASES -->
   <section id="view-releases" role="tabpanel" aria-labelledby="tab-releases" class="stagecol" hidden>
     <div class="panel intro">
@@ -479,14 +517,14 @@ table.rel td.new { min-width: 280px; }
     <div class="panel"><div class="tablewrap"><table class="rel" id="rel"></table></div></div>
   </section>
 
-  <footer>Built from the Drumboy Pro firmware source (<span class="mono">Controller.cpp</span>, <span class="mono">Global.h</span>): fill tables, level rules, the routing patch (<span class="mono">Routing.h</span>), Euclidean patterns, accents and beat editing (<span class="mono">Euclid.h</span>, <span class="mono">BeatList.h</span>), pitch (<span class="mono">Pitch.h</span>), song mode (<span class="mono">SongChain.h</span>) and volume math match the code. The test sounds are synthesized in the browser; the device plays your samples.</footer>
+  <footer>Built from the Drumboy Pro firmware source (<span class="mono">Controller.cpp</span>, <span class="mono">Global.h</span>): fill tables, level rules, the routing patch (<span class="mono">Routing.h</span>), Euclidean patterns, accents and beat editing (<span class="mono">Euclid.h</span>, <span class="mono">BeatList.h</span>), pitch (<span class="mono">Pitch.h</span>), song mode (<span class="mono">SongChain.h</span>), MIDI clock and velocity (<span class="mono">MidiClock.h</span>, <span class="mono">MidiParser.h</span>), autosave (<span class="mono">Autosave.h</span>) and volume math match the code. The test sounds are synthesized in the browser; the device plays your samples.</footer>
 </div>
 
 <script>
 const FILLS=[["BASIC",[["FLAT",1,[0.0,0.0]],["GHOST",1,[0.0,0.0]],["MUTED",1,[0.0,0.0]],["BASIC_2",2,[0.0,0.5,1.0]],["BASIC_3",3,[0.0,0.333333,0.666666,1.0]],["BASIC_4",4,[0.0,0.25,0.5,0.75,1.0]],["BASIC_6",6,[0.0,0.166666,0.333333,0.5,0.666666,0.833333,1.0]],["BASIC_8",8,[0.0,0.125,0.25,0.375,0.5,0.625,0.75,0.875,1.0]]]],["WAVE",[["WAVE_A",12,[0.0,0.0625,0.125,0.1875,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["WAVE_B",12,[0.0,0.125,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]],["WAVE_C",9,[0.0,0.083333,0.166666,0.25,0.333333,0.416666,0.5,0.666666,0.833333,1.0]],["WAVE_D",9,[0.0,0.166666,0.333333,0.5,0.583333,0.666666,0.75,0.833333,0.916666,1.0]],["WAVE_E",11,[0.0,0.0625,0.125,0.1875,0.25,0.3125,0.375,0.4375,0.5,0.666666,0.833333,1.0]],["WAVE_F",10,[0.0,0.125,0.25,0.375,0.5,0.583333,0.666666,0.75,0.833333,0.916666,1.0]],["WAVE_G",10,[0.0,0.083333,0.166666,0.25,0.333333,0.416666,0.5,0.625,0.75,0.875,1.0]],["WAVE_H",11,[0.0,0.166666,0.333333,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]]]],["TRAP-A",[["TRAP_A1",5,[0.0,0.25,0.5,0.625,0.75,1.0]],["TRAP_A2",5,[0.0,0.125,0.25,0.5,0.75,1.0]],["TRAP_A3",7,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.75,1.0]],["TRAP_A4",7,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.75,1.0]],["TRAP_A5",7,[0.0,0.25,0.3125,0.375,0.5,0.75,0.875,1.0]],["TRAP_A6",7,[0.0,0.25,0.5,0.5625,0.625,0.6875,0.75,1.0]],["TRAP_A7",8,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.666666,0.833333,1.0]],["TRAP_A8",9,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.75,0.833333,0.916666,1.0]]]],["TRAP-B",[["TRAP_B1",8,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.75,0.875,1.0]],["TRAP_B2",8,[0.0,0.25,0.5,0.5625,0.625,0.6875,0.75,0.875,1.0]],["TRAP_B3",7,[0.0,0.25,0.5,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_B4",9,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["TRAP_B5",10,[0.0,0.125,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["TRAP_B6",10,[0.0,0.041666,0.083333,0.125,0.166666,0.25,0.333333,0.5,0.666666,0.833333,1.0]],["TRAP_B7",10,[0.0,0.166667,0.333333,0.5,0.541666,0.583333,0.625,0.666666,0.75,0.833333,1.0]],["TRAP_B8",11,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.625,0.75,0.8125,0.875,0.9375,1.0]]]],["TRAP-C",[["TRAP_C1",11,[0.0,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_C2",12,[0.0,0.0625,0.125,0.1875,0.25,0.375,0.5,0.625,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_C3",11,[0.0,0.0625,0.125,0.25,0.3125,0.375,0.5,0.625,0.75,0.8125,0.875,1.0]],["TRAP_C4",12,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.5,0.666666,0.833333,1.0]],["TRAP_C5",14,[0.0,0.166666,0.333333,0.5,0.53125,0.5625,0.59375,0.625,0.65625,0.6875,0.71875,0.75,0.8125,0.875,1.0]],["TRAP_C6",10,[0.0,0.0625,0.125,0.1875,0.25,0.5,0.75,0.8125,0.875,0.9375,1.0]],["TRAP_C7",11,[0.0,0.125,0.25,0.3125,0.375,0.4375,0.5,0.5625,0.625,0.75,0.875,1.0]],["TRAP_C8",13,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.375,0.5,0.75,0.875,1.0]]]],["TRAP-D",[["TRAP_D1",13,[0.0,0.125,0.25,0.28125,0.3125,0.34375,0.375,0.40625,0.4375,0.46875,0.5,0.625,0.75,1.0]],["TRAP_D2",13,[0.0,0.125,0.1875,0.25,0.375,0.40625,0.4375,0.46875,0.5,0.625,0.75,0.8125,0.875,1.0]],["TRAP_D3",15,[0.0,0.125,0.25,0.3125,0.375,0.5,0.625,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["TRAP_D4",16,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.875,1.0]],["TRAP_D5",15,[0.0,0.125,0.25,0.28125,0.3125,0.34375,0.375,0.5,0.53125,0.5625,0.59375,0.625,0.75,0.8125,0.875,1.0]],["TRAP_D6",15,[0.0,0.125,0.25,0.28125,0.3125,0.34375,0.375,0.40625,0.4375,0.46875,0.5,0.53125,0.625,0.75,0.875,1.0]],["TRAP_D7",16,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,0.875,1.0]],["TRAP_D8",15,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.375,0.5,0.5625,0.625,0.75,0.875,1.0]]]],["SWING",[["SWING_A",3,[0.0,0.5,0.875,1.0]],["SWING_B",4,[0.0,0.25,0.5,0.875,1.0]],["SWING_C",7,[0.0,0.25,0.3125,0.375,0.4375,0.5,0.875,1.0]],["SWING_D",5,[0.0,0.166666,0.333333,0.5,0.875,1.0]],["SWING_E",6,[0.0,0.125,0.25,0.375,0.5,0.875,1.0]],["SWING_F",4,[0.0,0.375,0.5,0.875,1.0]],["SWING_G",4,[0.0,0.0625,0.125,0.875,1.0]],["SWING_H",5,[0.0,0.333333,0.666666,0.75,0.875,1.0]]]],["ROLL",[["ROLL_DBL",15,[0.0,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_TRIP",12,[0.0,0.25,0.375,0.5,0.583333,0.666667,0.75,0.791667,0.833333,0.875,0.916667,0.958333,1.0]],["ROLL_EVEN",15,[0.0,0.125,0.25,0.333333,0.416667,0.5,0.5625,0.625,0.6875,0.75,0.791667,0.833333,0.875,0.916667,0.958333,1.0]],["ROLL_LONG",15,[0.0,0.125,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.791667,0.833333,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_STEP",16,[0.0,0.125,0.25,0.375,0.5,0.5625,0.625,0.6875,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_LATE",13,[0.0,0.5,0.5625,0.625,0.6875,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["ROLL_BRAKE",15,[0.0,0.03125,0.0625,0.09375,0.125,0.15625,0.1875,0.21875,0.25,0.3125,0.375,0.4375,0.5,0.625,0.75,1.0]],["ROLL_32",16,[0.0,0.0625,0.125,0.1875,0.25,0.3125,0.375,0.4375,0.5,0.5625,0.625,0.6875,0.75,0.8125,0.875,0.9375,1.0]]]],["TECHNO",[["GALLOP",12,[0.0,0.125,0.1875,0.25,0.375,0.4375,0.5,0.625,0.6875,0.75,0.875,0.9375,1.0]],["GALLOP_R",12,[0.0,0.0625,0.1875,0.25,0.3125,0.4375,0.5,0.5625,0.6875,0.75,0.8125,0.9375,1.0]],["ROLLING",12,[0.0,0.0625,0.125,0.25,0.3125,0.375,0.5,0.5625,0.625,0.75,0.8125,0.875,1.0]],["TRESILLO",6,[0.0,0.1875,0.375,0.5,0.6875,0.875,1.0]],["DOTTED_8",6,[0.0,0.1875,0.375,0.5625,0.75,0.9375,1.0]],["EVERY_5",4,[0.0,0.3125,0.625,0.9375,1.0]],["RUMBLE",8,[0.0,0.25,0.375,0.4375,0.5,0.75,0.875,0.9375,1.0]],["PICKUP",6,[0.0,0.8125,0.875,0.90625,0.9375,0.96875,1.0]]]],["BREAKS",[["BREAK_A",7,[0.0,0.125,0.3125,0.375,0.625,0.8125,0.875,1.0]],["BREAK_B",5,[0.0,0.375,0.5625,0.8125,0.9375,1.0]],["SHUFFLE",10,[0.0,0.125,0.1875,0.3125,0.4375,0.5,0.625,0.6875,0.8125,0.9375,1.0]],["CHOP",10,[0.0,0.125,0.3125,0.4375,0.5,0.625,0.8125,0.875,0.9375,0.96875,1.0]],["JUNGLE",10,[0.0,0.375,0.40625,0.4375,0.46875,0.5,0.875,0.90625,0.9375,0.96875,1.0]],["STUTTER",9,[0.0,0.5,0.53125,0.5625,0.59375,0.625,0.65625,0.6875,0.71875,1.0]],["HALFTIME",4,[0.0,0.625,0.875,0.9375,1.0]],["EDIT_32",16,[0.0,0.03125,0.125,0.15625,0.3125,0.34375,0.4375,0.46875,0.5,0.53125,0.625,0.65625,0.875,0.90625,0.9375,0.96875,1.0]]]],["GARAGE",[["SHUF_58",16,[0.0,0.0725,0.125,0.1975,0.25,0.3225,0.375,0.4475,0.5,0.5725,0.625,0.6975,0.75,0.8225,0.875,0.9475,1.0]],["SHUF_66",16,[0.0,0.0825,0.125,0.2075,0.25,0.3325,0.375,0.4575,0.5,0.5825,0.625,0.7075,0.75,0.8325,0.875,0.9575,1.0]],["2STEP_A",4,[0.0,0.375,0.625,0.9525,1.0]],["2STEP_B",6,[0.0,0.2025,0.375,0.5,0.8275,0.875,1.0]],["SKIP",10,[0.0,0.125,0.2,0.325,0.375,0.5,0.625,0.7,0.825,0.875,1.0]],["SWING_8",8,[0.0,0.165,0.25,0.415,0.5,0.665,0.75,0.915,1.0]],["BOUNCE",12,[0.0,0.125,0.2,0.25,0.325,0.45,0.5,0.625,0.7,0.75,0.825,0.95,1.0]],["LAZY",6,[0.0,0.25,0.455,0.625,0.83,0.955,1.0]]]],["TRIPLET",[["TRIP_12",12,[0.0,0.083333,0.166667,0.25,0.333333,0.416667,0.5,0.583333,0.666667,0.75,0.833333,0.916667,1.0]],["TRIP_GAL",8,[0.0,0.083333,0.166667,0.25,0.5,0.583333,0.666667,0.75,1.0]],["TRIP_ROLL",10,[0.0,0.5,0.583333,0.666667,0.75,0.791667,0.833333,0.875,0.916667,0.958333,1.0]],["QUINT_5",5,[0.0,0.2,0.4,0.6,0.8,1.0]],["SEPT_7",7,[0.0,0.142857,0.285714,0.428571,0.571429,0.714286,0.857143,1.0]],["NONUP_9",9,[0.0,0.111111,0.222222,0.333333,0.444444,0.555556,0.666667,0.777778,0.888889,1.0]],["POLY_3V4",6,[0.0,0.25,0.333333,0.5,0.666667,0.75,1.0]],["POLY_3V8",10,[0.0,0.125,0.25,0.333333,0.375,0.5,0.625,0.666667,0.75,0.875,1.0]]]],["EUCLID",[["E3_16",3,[0.0,0.375,0.6875,1.0]],["E5_16",5,[0.0,0.25,0.4375,0.625,0.8125,1.0]],["E7_16",7,[0.0,0.1875,0.3125,0.4375,0.625,0.75,0.875,1.0]],["E9_16",9,[0.0,0.125,0.25,0.375,0.5,0.5625,0.6875,0.8125,0.9375,1.0]],["E11_16",11,[0.0,0.125,0.1875,0.3125,0.375,0.5,0.5625,0.6875,0.75,0.875,0.9375,1.0]],["E13_16",13,[0.0,0.125,0.1875,0.25,0.3125,0.4375,0.5,0.5625,0.625,0.75,0.8125,0.875,0.9375,1.0]],["E5_12",5,[0.0,0.25,0.416667,0.666667,0.833333,1.0]],["E7_12",7,[0.0,0.166667,0.333333,0.5,0.583333,0.75,0.916667,1.0]]]],["RATCHET",[["ACCEL_8",8,[0.0,0.192369,0.3689,0.52858,0.670123,0.791815,0.891181,0.964103,1.0]],["ACCEL_12",12,[0.0,0.122358,0.239274,0.350481,0.455669,0.554472,0.646447,0.731043,0.80755,0.875,0.931959,0.975944,1.0]],["ACCEL_16",16,[0.0,0.080477,0.159359,0.236568,0.312014,0.385595,0.457195,0.526675,0.593874,0.658594,0.720591,0.779553,0.835062,0.886525,0.933014,0.972795,1.0]],["DECEL_8",8,[0.0,0.035897,0.108819,0.208185,0.329877,0.47142,0.6311,0.807631,1.0]],["DECEL_12",12,[0.0,0.024056,0.068041,0.125,0.19245,0.268957,0.353553,0.445528,0.544331,0.649519,0.760726,0.877642,1.0]],["BOUNCE_BL",12,[0.0,0.174874,0.323518,0.449865,0.557259,0.648545,0.726138,0.792091,0.848152,0.895804,0.936308,0.970736,1.0]],["GOLDEN",8,[0.0,0.09017,0.236068,0.326238,0.472136,0.618034,0.708204,0.854102,1.0]],["CLUSTER",10,[0.0,0.170534,0.314127,0.414127,0.470534,0.5,0.529466,0.585873,0.685873,0.829466,1.0]]]],["FOOTWORK",[["JUKE_A",6,[0.0,0.125,0.25,0.375,0.5,0.75,1.0]],["JUKE_B",7,[0.0,0.166667,0.333333,0.5,0.666667,0.833333,0.916667,1.0]],["JUKE_C",9,[0.0,0.083333,0.25,0.416667,0.5,0.583333,0.75,0.875,0.916667,1.0]],["TRIP_KICK",11,[0.0,0.125,0.25,0.375,0.5,0.625,0.75,0.791667,0.875,0.916667,0.958333,1.0]],["STUT_2",14,[0.0,0.25,0.28125,0.3125,0.34375,0.5,0.75,0.78125,0.8125,0.84375,0.875,0.90625,0.9375,0.96875,1.0]],["HALF_JUKE",7,[0.0,0.25,0.375,0.75,0.875,0.916667,0.958333,1.0]],["BLAST",6,[0.0,0.041667,0.083333,0.125,0.166667,0.208333,1.0]],["CALL_RESP",9,[0.0,0.083333,0.166667,0.5,0.583333,0.666667,0.75,0.791667,0.833333,1.0]]]]];
 
 /* ---------- Tabs (hash routed) ---------- */
-const views = { signal: "view-signal", fills: "view-fills", euclid: "view-euclid", song: "view-song", releases: "view-releases" };
+const views = { signal: "view-signal", fills: "view-fills", euclid: "view-euclid", song: "view-song", midi: "view-midi", releases: "view-releases" };
 function route() {
   const name = (location.hash || "#signal").slice(1);
   const v = views[name] ? name : "signal";
@@ -499,6 +537,60 @@ function route() {
   if (v !== "song") sgStop();
 }
 window.addEventListener("hashchange", route);
+
+/* ---------- MIDI & autosave: clock drift before and since V1.13 (MidiClock.h) ---------- */
+const mdBpm = document.getElementById("md-bpm"), mdMin = document.getElementById("md-min");
+function mdOldTempo(bpm) {
+  // Before V1.13: the measured tempo rounded to whole BPM (40-200), then the sequencer timer in whole microseconds.
+  const t = Math.min(200, Math.max(40, Math.round(bpm)));
+  const periodUs = Math.floor(60e6 / (t * 800));
+  return 60e6 / (periodUs * 800);
+}
+function mdDraw() {
+  const bpm = +mdBpm.value, minutes = +mdMin.value;
+  document.getElementById("md-bpm-v").textContent = bpm.toFixed(2) + " BPM";
+  document.getElementById("md-min-v").textContent = minutes + " min";
+  const old = mdOldTempo(bpm);
+  const beatMs = 60000 / bpm, clockMs = beatMs / 24, sixteenthMs = beatMs / 4;
+  const driftMsPerMin = (old - bpm) * beatMs;           // + = ahead
+  const W = 600, H = 220, L = 46, R = 10, T = 12, B = 30;
+  const endDrift = driftMsPerMin * minutes;
+  const span = Math.max(Math.abs(endDrift), clockMs * 2, 5);
+  const x = m => L + (W - L - R) * m / minutes, y = v => T + (H - T - B) * (0.5 - v / (2 * span));
+  const css = getComputedStyle(document.documentElement);
+  const cSig = css.getPropertyValue("--signal").trim(), cHit = css.getPropertyValue("--hit").trim(), cLine = css.getPropertyValue("--line").trim(), cMut = css.getPropertyValue("--muted").trim();
+  let g = `<line x1="${L}" y1="${y(0)}" x2="${W - R}" y2="${y(0)}" stroke="${cLine}"/>`;
+  for (const v of [span, -span]) g += `<text x="${L - 6}" y="${y(v) + 4}" font-size="11" text-anchor="end" fill="${cMut}">${v > 0 ? "+" : ""}${v.toFixed(0)}</text>`;
+  g += `<text x="${L - 6}" y="${y(0) + 4}" font-size="11" text-anchor="end" fill="${cMut}">0</text>`;
+  for (let m = 0; m <= minutes; m += Math.max(1, Math.round(minutes / 5))) g += `<text x="${x(m)}" y="${H - 10}" font-size="11" text-anchor="middle" fill="${cMut}">${m}′</text>`;
+  // the 16th-note band: drift past it is audible as a flam
+  g += `<rect x="${L}" y="${y(Math.min(sixteenthMs, span))}" width="${W - L - R}" height="${y(-Math.min(sixteenthMs, span)) - y(Math.min(sixteenthMs, span))}" fill="${cLine}" opacity=".25"/>`;
+  g += `<path d="M${x(0)},${y(0)} L${x(minutes)},${y(endDrift)}" stroke="${cHit}" stroke-width="2.5" fill="none"/>`;
+  let saw = `M${x(0)},${y(0)}`;  // since V1.13: within one clock behind, never accumulating
+  const steps = 60;
+  for (let i = 1; i <= steps; i++) saw += ` L${x(minutes * i / steps)},${y(-clockMs * (i % 2 ? 0.6 : 0.1))}`;
+  g += `<path d="${saw}" stroke="${cSig}" stroke-width="2.5" fill="none"/>`;
+  g += `<text x="${W - R}" y="${T + 10}" font-size="12" text-anchor="end" fill="${cHit}">before V1.13</text><text x="${W - R}" y="${T + 26}" font-size="12" text-anchor="end" fill="${cSig}">V1.13 (locked)</text>`;
+  document.getElementById("md-chart").innerHTML = g;
+  const toSixteenth = Math.abs(driftMsPerMin) > 1e-6 ? sixteenthMs / Math.abs(driftMsPerMin) : Infinity;
+  document.getElementById("md-sum").innerHTML = Math.abs(driftMsPerMin) < 0.05
+    ? `At ${bpm.toFixed(2)} BPM the old firmware happened to run almost exactly (${old.toFixed(3)} BPM). V1.13 stays within one clock (${clockMs.toFixed(1)} ms) at any tempo.`
+    : `Before V1.13 the Drumboy ran at <b class="mono">${old.toFixed(3)} BPM</b>: ${Math.abs(driftMsPerMin).toFixed(1)} ms ${driftMsPerMin > 0 ? "ahead" : "behind"} per minute, a 16th note (${sixteenthMs.toFixed(0)} ms) off after <b>${toSixteenth < 1 ? Math.round(toSixteenth * 60) + " s" : toSixteenth.toFixed(1) + " min"}</b>, ${Math.abs(endDrift).toFixed(0)} ms after ${minutes} min. Since V1.13: never more than one clock (<b class="mono">${clockMs.toFixed(1)} ms</b>) behind, however long it plays.`;
+}
+function mdVelocity() {
+  const rows = [[127, "FLAT"], [100, ""], [64, "GHOST"], [40, ""], [1, ""]];
+  const lvl = v => Math.max(1, Math.round(v * 100 / 127));
+  let h = "<tr><th>Note in</th><th>Level</th><th>Volume</th><th>Records as</th><th>MIDI out</th></tr>";
+  for (const [v] of rows) {
+    const l = lvl(v), out = Math.round(l * 127 / 100), db = 20 * Math.log10(Math.pow(l / 100, 3));
+    h += `<tr><td class="mono">${v}</td><td class="mono">${l}</td><td class="mono">${db.toFixed(1)} dB</td><td>${v < 64 ? "GHOST" : "FLAT"}</td><td class="mono">${out}</td></tr>`;
+  }
+  document.getElementById("md-vel").innerHTML = h;
+}
+mdBpm.addEventListener("input", mdDraw);
+mdMin.addEventListener("input", mdDraw);
+mdDraw();
+mdVelocity();
 
 /* ---------- Signal path: routing patch (port of Routing.h) ---------- */
 const NODE_NAMES = ["EQ", "FILTER-1", "FILTER-2", "EFFECT-1", "EFFECT-2", "REVERB", "MASTER"];
@@ -1371,6 +1463,15 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
+  { v: "V1.13", date: "2026-11-07", status: "Testing, not published",
+    nw: ["Locked to an incoming MIDI clock: the Drumboy plays only as far as each clock allows, so fractional tempos (Loopy Pro) no longer drift",
+         "No own MIDI clock or start/stop on MIDI OUT while following one, so a MIDI loop can't run away to 200 BPM; the sync jack follows the incoming clock",
+         "MIDI notes play at their velocity; running status and chords; velocity 0 is silent; soft notes record as GHOST",
+         "MIDI OUT sends each hit's real velocity (FLAT 127, GHOST 64, fills as played)",
+         "Autosave every 2–20 min (AUTOSAVE on the Metronome page), RESTORE AUTOSAVE? at power-on; LOAD and NEW autosave unsaved work first"],
+    fix: ["MIDI IN dropped notes that arrived together (single slot) and notes sent with running status",
+          "MIDI receive bytes could be lost while the audio and SD interrupts ran: receive FIFO on, receive interrupts above the sequencer",
+          "A tempo change could occasionally stall the sequencer for up to 65 ms (the new timer period now takes effect at the next tick)"] },
   { v: "V1.12", date: "2026-11-02", status: "GitHub release v1.12 · tested", pub: true,
     nw: ["Song mode: chain the 5 banks (up to 16 steps, 1–16 loops each), looping or stopping at the end; SONG page by tapping the SONG key",
          "A bank picked by hand while the chain plays jumps the chain to that step; STOP keeps the position, RESET goes to step 1",

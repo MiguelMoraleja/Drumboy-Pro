@@ -41,6 +41,7 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 31 | [Kit morph (LXR)](#31-kit-morph-lxr) | Feature | M |
 | 32 | [Autosave](#32-autosave) | Feature | A: M, B: M–L |
 | 33 | [Per-note editing: velocity, probability and more](#33-per-note-editing-velocity-probability-and-more) | Feature | M–L |
+| 34 | [MIDI clock slave: drift and 200 BPM runaway](#34-midi-clock-slave-drift-and-200-bpm-runaway) | Bug | M |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -60,7 +61,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 **V1.12 "Song mode"** (done, tested on hardware, released as v1.12): ✅ [15](#15-song-mode-chain-the-banks) song mode.
 
-**Owner's priorities (2026-11-07):** [32](#32-autosave) autosave (work gets lost today) and [33](#33-per-note-editing-velocity-probability-and-more) per-note velocity and probability (it absorbs 14 part B and 21, and gives 30's incoming velocity somewhere to go).
+**Owner's priorities (2026-11-07):** [34](#34-midi-clock-slave-drift-and-200-bpm-runaway) MIDI clock slave drift (with 30, same setup), [32](#32-autosave) autosave (work gets lost today) and [33](#33-per-note-editing-velocity-probability-and-more) per-note velocity and probability (it absorbs 14 part B and 21, and gives 30's incoming velocity somewhere to go).
 
 **Suggested next sprint (ideas from the LXR firmware):** [30](#30-midi-inout-velocity-running-status-note-queue-cc) MIDI in/out fixes first (they matter for the owner's Loopy Pro → Scarlett setup), then [18](#18-swing--shuffle-lxr) swing, [19](#19-choke-groups-lxr) choke groups, [22](#22-live-roll-lxr) live roll, [25](#25-lfo-retrigger-and-free-running-lxr) LFO retrigger, [27](#27-erase-while-recording-lxr) erase while recording. Later, together with [14](#14-euclid-velocity-and-variance) part B (they share one per-beat data extension and one file format bump): [20](#20-parameter-locks-per-beat-lxr), [21](#21-probability-per-beat-lxr), [24](#24-velocity-modulates-a-parameter-lxr).
 
@@ -418,3 +419,24 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 - The app gets a tab to try velocity and probability on a pattern before building.
 
 **Done when.** On the device a single beat can be set to velocity 30 and probability 50%, it plays softly about half the time, its settings survive move, copy/paste and save/load, MIDI recording keeps the played velocity, and the same song still loads (and plays at FLAT/100%) on V1.12.
+
+### 34. MIDI clock slave: drift and 200 BPM runaway
+
+**Reported (V1.12).** Setup: Loopy Pro → Scarlett → MIDI IN, sending clock, transport and notes. (1) The Drumboy ran away at 200 BPM; the owner traced it to a MIDI loop sending signals back into the system. (2) Even without the loop it slowly drifts out of sync, "as if the signal did not arrive continuously".
+
+**What the code does (checked).**
+- **The clock only sets the tempo; it never steers the playhead.** On 0xF8 the UART handler (`receiveMidiCommand()`) counts 48 ticks, measures them with `HAL_GetTick()` (1 ms) and computes an **integer** BPM (`rxClockBpm`). The main loop applies it with `rhythm_setTempo()`, which only changes the period of the sequencer timer TIM15. After START the sequencer runs free on its own timer; the incoming ticks never move the play position again (`rxClockTickPhase` is only used to start on a beat). So any difference between the two tempos accumulates until the next STOP/START.
+- **Integer tempo.** `rhythm.tempo` is a `uint8_t`. Loopy Pro's tempo is often fractional (it comes from the length of the first loop, e.g. 97.43 BPM). Running at 97 instead of 97.43 is 0.44% slow: a 16th note behind after about 57 beats, well under a minute. When the real tempo sits near .5, the measurement flips between two values every 2 beats.
+- **Timer rounding.** `playTimerPeriod = 60,000,000 / (tempo × 800)` in whole microseconds (TIM15 at 1 MHz): exact at 120 or 125 BPM, but e.g. 133 BPM gives 563 µs instead of 563.9 (0.16% fast). This adds to the drift even when the master's tempo is a whole number.
+- **Lost clock bytes would make it worse.** MIDI IN (USART1) receives one byte per DMA transfer and re-arms in the completion callback, with the UART FIFO disabled. That interrupt has the same priority as the sequencer timer (preempt 2) and below audio and SD (preempt 0). If it is held off for longer than about two byte times (640 µs), the UART overruns and bytes are lost; `HAL_UART_ErrorCallback` re-arms it, so it recovers silently. Lost 0xF8 bytes read as a slower tempo; lost note bytes drop notes. Not confirmed on the device yet. Count the overruns to check: add a counter in the error callback and show it on the test page.
+- **Clock out while slaved enables the loop.** MIDI OUT clock (`txClock`, TIM4 at the Drumboy's own tempo) is independent of MIDI IN clock (`rxClock`), so a slaved Drumboy keeps sending its own clock. If anything echoes MIDI OUT back to MIDI IN (MIDI thru in Loopy Pro or the interface routing), the input sees roughly twice the ticks, measures about twice the tempo, clamps at `kMaxTempo` = 200 and sends 200 BPM clock back: the runaway.
+
+**Proposal.**
+1. **Lock the playhead to the incoming clock (the real fix).** While slaved to MIDI clock, the sequencer may advance only as far as the clock allows: tick k since START corresponds to position k × 800 / 24 sequencer ticks (33⅓, so keep the fraction). The timer runs about 1% faster than the measured tempo and waits at the allowed position until the next 0xF8. It can never get ahead, and it is never more than one clock tick (1/24 beat) behind. A clock tick that arrives early lets it catch up at once. Song position after CONTINUE: keep the counter. Measure the tempo with microsecond timestamps (DWT cycle counter or a free-running timer) averaged over 24–48 ticks. Keep a fractional tempo internally for the timer, the delay effects and the LFOs; the screen can still show whole BPM.
+2. **No echo loop.** While MIDI IN clock is on, MIDI OUT clock either forwards the incoming ticks (true thru) or is off. It never sends a second, independent clock. Ignore 0xF8 that arrive impossibly fast (more than 2× the measured rate) as a safety net.
+3. **Robust MIDI IN.** Enable the USART1 RX FIFO, or move to a circular DMA ring read by the parser (this fits the parser and queue planned in 30), so no byte is lost while higher-priority interrupts run. Count overruns for diagnostics.
+4. Hardware-free logic (`MidiClock.h`): tempo estimation from timestamps, the allowed-position rule, start/stop/continue, rejection of doubled ticks. Host tests: a fractional tempo (97.43 BPM) for 10 minutes stays within 1/24 beat; jittered ticks (±1 ms); one dropped tick; doubled ticks from an echo; tempo changes.
+
+**Done when.** Slaved to Loopy Pro at a fractional tempo for 30 minutes, the Drumboy stays in time (by ear and on a recording, against a click from Loopy). With a MIDI loop deliberately set up, it neither runs away nor doubles its tempo. The overrun counter stays at 0 with clock and dense notes coming in together.
+
+**Workarounds until then.** Turn the Drumboy's MIDI OUT clock off while it is slaved (or turn MIDI thru off in Loopy Pro) to avoid the loop. Set Loopy Pro to a whole-number tempo, preferably one that divides evenly into the timer (120, 125, 100, 150…); this reduces the drift but does not remove it. STOP/START from Loopy realigns it.

@@ -337,6 +337,12 @@ void Controller::initialize() {
         menu = GLOBAL_MENU;
         startPlayTimer();       // Start the main Sequencer Heartbeat
         startMidiClockTimer();  // Start the midi Sequencer Heartbeat
+
+        // 6. Autosave: the empty song is the clean state; offer unsaved work from last time.
+        autosave_markClean();
+        autosaveTiming.lastCheckMs = HAL_GetTick();
+        lastInputMs = HAL_GetTick();
+        autosave_offerRestore();
     }
 }
 
@@ -351,6 +357,7 @@ void Controller::update() {
     } else {
         // 2. INPUT PROCESSING
         // Read keyboard and encoder sources, then dispatch actions.
+        if (keyboard.keyLayer.readFlag || keyboard.keyLeft.readFlag || keyboard.keyRight.readFlag) lastInputMs = HAL_GetTick();
         keyboard_read();
         keyboard_action();
 
@@ -367,6 +374,9 @@ void Controller::update() {
 
         // Stream the sample preview from the SD card (Preview.h).
         preview_update();
+
+        // Write the song to the autosave files when due and safe (Autosave.h).
+        autosave_update();
 
 #ifdef DSP_PROFILE
         lcd_drawDspProfile();
@@ -843,10 +853,12 @@ void Controller::loadSystemPreset() {
                         routing_setMetroOut(routeUnpackMetro((uint8_t)dataSystemPreset[11]));
 
                         // Sample preview: only in files written by V1.11 or later (23 bytes).
-                        if (sd.byteswritten >= kSystemPresetDataSize) {
+                        if (sd.byteswritten >= kSystemPresetDataSizeV111) {
                             preview_setOn((bool)dataSystemPreset[21]);
                             preview_setLevel((uint8_t)dataSystemPreset[22]);
                         }
+                        // Autosave interval: V1.13 or later (24 bytes); older files keep the default.
+                        if (sd.byteswritten >= kSystemPresetDataSize) autosave_setInterval((uint8_t)dataSystemPreset[23]);
 
                         // 6. I/O & SYNC PARAMETER APPLY
                         // Apply persisted sync and MIDI routing parameters.
@@ -916,6 +928,9 @@ void Controller::saveSystemPreset() {
             // Sample preview (V1.11)
             dataSystemPreset[21] = (uint8_t)previewOn;
             dataSystemPreset[22] = previewLevel;
+
+            // Autosave (V1.13)
+            dataSystemPreset[23] = autosaveTiming.interval;
 
             // 4. SD CARD WRITE
             // Seek payload offset and write serialized preset data.
@@ -2056,6 +2071,10 @@ void Controller::keyboard_action() {
                                             file_loadAction();
                                             break;
 
+                                        case ALERT_RESTOREAUTOSAVE:
+                                            autosave_restore();
+                                            break;
+
                                         case ALERT_SAVEFILE:
 
                                         case ALERT_OVERWRITEFILE:
@@ -2221,6 +2240,8 @@ void Controller::keyboard_action() {
 
                             case KEY_CLEAR:
                                 if (alertFlag) {
+                                    // Declining the restore: the autosaved work is not wanted.
+                                    if (alertType == ALERT_RESTOREAUTOSAVE) autosave_deleteAll();
                                     lcd_clearAlert();
                                     alertFlag = false;
                                 } else if (keyboard.muteKeyPress) {
@@ -3102,6 +3123,7 @@ void Controller::encoder_read() {
     for (uint8_t i = 0; i < kEncoderSize; i++) {
         Encoder& enc = encoder[i];
         if (!enc.readFlag) continue;
+        lastInputMs = HAL_GetTick();  // autosave waits while the user is turning knobs
 
         // Atomic grab of the captured state from ISR
         uint8_t currentAB = enc.capturedAB;
@@ -3604,6 +3626,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
 
         case ENC_METRO_PREVIEW_LEVEL:
             if (previewLevel < 100) preview_setLevel(previewLevel + 1);
+            break;
+
+        case ENC_METRO_AUTOSAVE:
+            if (autosaveTiming.interval + 1 < kAutosaveIntervalCount) autosave_setInterval(autosaveTiming.interval + 1);
             break;
 
             // Filter 0 functions
@@ -4216,6 +4242,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
 
         case ENC_METRO_PREVIEW_LEVEL:
             if (previewLevel > 0) preview_setLevel(previewLevel - 1);
+            break;
+
+        case ENC_METRO_AUTOSAVE:
+            if (autosaveTiming.interval > 0) autosave_setInterval(autosaveTiming.interval - 1);
             break;
 
             // Filter 0 functions
@@ -5606,6 +5636,7 @@ SdResult Controller::sd_checkFile(uint8_t fileNum_) {
     strcpy(fileName, kFileStart);
     strcat(fileName, fileNum);
     strcat(fileName, kFileEnd);
+    if (fileNameOverride) snprintf(fileName, sizeof fileName, "%s", fileNameOverride);  // autosave files
 
     // 2. FILE ACCESS
     // Attempt to open the file. If it fails, the file is physically missing.
@@ -5669,6 +5700,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
     strcpy(fileName, kFileStart);
     strcat(fileName, fileNum);
     strcat(fileName, kFileEnd);
+    if (fileNameOverride) snprintf(fileName, sizeof fileName, "%s", fileNameOverride);  // autosave files
 
     char instName[kLayerLibrarySize][kFileNameSize + 1];
     uint16_t instNum[kLayerLibrarySize];
@@ -6076,26 +6108,9 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
     return result;
 }
 
-SdResult Controller::sd_saveFile(uint8_t fileNum_) {
-    /// @brief Serializes current project state and writes it to the selected SD slot.
-    /// Encodes drumkit parameters, asset references, song data, and final EOF marker.
-
-    SdResult result = SD_ERROR;
-    char eof[] = "EOF";
-    char fileName[50];
-    char fileNum[4];
-
-    // 1. FILENAME CONSTRUCTION
-    // Generate the 3-digit padded filename (e.g., File_001.rws).
-    sprintf(fileNum, "%03d", (fileNum_ + 1));
-    strcpy(fileName, kFileStart);
-    strcat(fileName, fileNum);
-    strcat(fileName, kFileEnd);
-    uint8_t data[kDrumkitByteSize] = {0x00};
-
-    // 2. PAYLOAD ENCODING
-    // Build the drumkit payload buffer before starting SD write operations.
-
+void Controller::file_encodeKit(uint8_t* data) {
+    /// @brief Encodes the drumkit block of a song file (kDrumkitByteSize bytes): mixer, rhythm,
+    /// metronome, I/O, EQ, filters, effects, reverb, LFOs, layers, routing and sample names.
     // 2.1 SLOT MARKER
     // Mark file as active project slot.
     data[0] = '*';
@@ -6263,6 +6278,252 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
             data[offset + 50] = 'o';
         }
     }
+}
+
+void Controller::file_encodeLayerSong(uint8_t layerNum_, uint8_t* data) {
+    /// @brief Encodes one layer's song block (kSongByteSize bytes, into a kDrumkitByteSize buffer):
+    /// all banks, every beat's packed data and start interval.
+    memset(data, 0x00, kDrumkitByteSize);
+    data[0] = 'l';
+    Layer& layer = layerLibrary[layerNum_];
+
+    // Encode all banks for current layer
+    for (uint8_t b = 0; b < kBankLibrarySize; b++) {
+        Bank& bank = layer.bankLibrary[b];
+        uint16_t offsetBank = 1 + (b * 257);
+        data[offsetBank] = 'b';
+
+        // Encode packed beat data + start interval
+        for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
+            Beat& beat = bank.beatLibrary[k];
+            uint16_t offsetBeat = offsetBank + 1 + (k * 4);
+            uint16_t data_ = beat.getData();
+            data[offsetBeat + 0] = (uint8_t)(data_ >> 8);
+            data[offsetBeat + 1] = (uint8_t)(data_ & 0xFF);
+            uint16_t startInterval = beat.getStartInterval();
+            data[offsetBeat + 2] = (uint8_t)(startInterval >> 8);
+            data[offsetBeat + 3] = (uint8_t)(startInterval & 0xFF);
+        }
+    }
+}
+
+uint32_t Controller::file_stateCrc() {
+    /// @brief CRC-32 of the song exactly as SAVE would write it (Autosave.h): changes mean unsaved work.
+    uint8_t data[kDrumkitByteSize];
+    memset(data, 0x00, sizeof data);
+    file_encodeKit(data);
+    uint32_t crc = autosaveCrc32(0, data, kDrumkitByteSize);
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        file_encodeLayerSong(l, data);
+        crc = autosaveCrc32(crc, data, kSongByteSize);
+    }
+    uint8_t chainData[kChainFileSize];
+    chainWrite(songChain, chainData);
+    return autosaveCrc32(crc, chainData, kChainFileSize);
+}
+
+/* Autosave (Autosave.h) -----------------------------------------------------*/
+
+void Controller::autosave_setInterval(uint8_t interval_) {
+    /// @brief AUTOSAVE on the Metronome page: OFF, 2, 5, 10 or 20 minutes (saved in the system preset).
+    if (interval_ >= kAutosaveIntervalCount) interval_ = kAutosaveDefaultInterval;
+    autosaveTiming.interval = interval_;
+    autosaveTiming.lastCheckMs = HAL_GetTick();
+    if (interval_ == 0) autosavePending = false;
+    if (menu == METRO_MENU) lcd_drawMetro_AutosaveData();
+    systemPresetSaveFlag = true;
+}
+
+void Controller::autosave_markClean() {
+    /// @brief The song as it is now is safe (just loaded, saved, autosaved or new).
+    autosaveCleanCrc = file_stateCrc();
+    autosavePending = false;
+}
+
+void Controller::autosave_scanFile(uint8_t slot_, AutosaveFile& file_) {
+    /// @brief Checks one autosave file: complete, with a trailer whose CRC matches its content.
+    file_ = AutosaveFile();
+    f_close(&sd.file);
+    if (f_open(&sd.file, kAutosavePath[slot_], FA_READ) != FR_OK) return;
+    const uint32_t size = f_size(&sd.file);
+    if (size > static_cast<uint32_t>(kAutosaveTrailerSize + strlen(kFileRef))) {
+        uint8_t buffer[512];
+        uint32_t remaining = size - kAutosaveTrailerSize;
+        uint32_t crc = 0;
+        bool ok = true;
+        while (remaining > 0) {
+            const UINT chunk = (remaining > sizeof buffer) ? sizeof buffer : static_cast<UINT>(remaining);
+            UINT got = 0;
+            if ((f_read(&sd.file, buffer, chunk, &got) != FR_OK) || (got != chunk)) {
+                ok = false;
+                break;
+            }
+            crc = autosaveCrc32(crc, buffer, chunk);
+            remaining -= chunk;
+        }
+        uint8_t trailer[kAutosaveTrailerSize];
+        UINT got = 0;
+        uint32_t sequence = 0, trailerCrc = 0;
+        if (ok && (f_read(&sd.file, trailer, kAutosaveTrailerSize, &got) == FR_OK) && (got == kAutosaveTrailerSize) &&
+            autosaveReadTrailer(trailer, sequence, trailerCrc) && (trailerCrc == crc)) {
+            file_.valid = true;
+            file_.sequence = sequence;
+        }
+    }
+    f_close(&sd.file);
+}
+
+bool Controller::autosave_write() {
+    /// @brief Writes the song to the older of the two autosave files, then seals it with the
+    /// trailer (sequence + CRC of what is actually on the card). A write cut short leaves the
+    /// other file as the good copy.
+    if (!sd.ready) return false;
+    AutosaveFile files[2];
+    autosave_scanFile(0, files[0]);
+    autosave_scanFile(1, files[1]);
+    const uint8_t slot = autosaveNextSlot(files[0], files[1]);
+    const uint32_t sequence = autosaveNextSequence(files[0], files[1]);
+
+    const FileStatus keepStatus = fileStatus;  // the FILE page's slot status is not ours to change
+    fileNameOverride = kAutosavePath[slot];
+    const SdResult saved = sd_saveFile(0);
+    fileNameOverride = nullptr;
+    fileStatus = keepStatus;
+    if (saved != SD_OK) return false;
+
+    bool sealed = false;
+    keyboard_disable();
+    f_close(&sd.file);
+    if (f_open(&sd.file, kAutosavePath[slot], FA_READ) == FR_OK) {
+        const uint32_t size = f_size(&sd.file);
+        uint8_t buffer[512];
+        uint32_t remaining = size, crc = 0;
+        bool ok = true;
+        while (remaining > 0) {
+            const UINT chunk = (remaining > sizeof buffer) ? sizeof buffer : static_cast<UINT>(remaining);
+            UINT got = 0;
+            if ((f_read(&sd.file, buffer, chunk, &got) != FR_OK) || (got != chunk)) {
+                ok = false;
+                break;
+            }
+            crc = autosaveCrc32(crc, buffer, chunk);
+            remaining -= chunk;
+        }
+        f_close(&sd.file);
+        if (ok && (f_open(&sd.file, kAutosavePath[slot], FA_WRITE | FA_OPEN_EXISTING) == FR_OK)) {
+            uint8_t trailer[kAutosaveTrailerSize];
+            autosaveWriteTrailer(trailer, sequence, crc);
+            UINT written = 0;
+            sealed = (f_lseek(&sd.file, size) == FR_OK) && (f_write(&sd.file, trailer, kAutosaveTrailerSize, &written) == FR_OK) &&
+                     (written == kAutosaveTrailerSize);
+            sealed = (f_close(&sd.file) == FR_OK) && sealed;
+        }
+    }
+    f_close(&sd.file);
+    keyboard_enable();
+    return sealed;
+}
+
+void Controller::autosave_deleteAll() {
+    /// @brief The autosaved work is now in a slot (SAVE) or not wanted (restore declined).
+    if (!sd.ready) return;
+    f_close(&sd.file);
+    f_unlink(kAutosavePath[0]);
+    f_unlink(kAutosavePath[1]);
+}
+
+void Controller::autosave_update() {
+    /// @brief Main loop: every AUTOSAVE minutes, if the song changed, write it as soon as that
+    /// can't disturb playing (Autosave.h: autosaveSafeNow).
+    const bool atLoopEnd = loopEndFlag;
+    loopEndFlag = false;
+    if (!sd.ready) return;
+    const uint32_t now = HAL_GetTick();
+    if (!autosavePending) {
+        if (!autosaveDue(autosaveTiming, now)) return;
+        autosaveTiming.lastCheckMs = now;
+        if (file_stateCrc() == autosaveCleanCrc) return;
+        autosavePending = true;
+    }
+    const AutosaveContext context = {playActive,
+                                     recordActive || metronome.precountState,
+                                     io.midi.rxNotes,
+                                     atLoopEnd,
+                                     alertFlag || loadAction || saveAction || (previewVoice.state != PREVIEW_IDLE),
+                                     now - lastInputMs};
+    if (!autosaveSafeNow(context)) return;
+    autosavePending = false;
+    if (autosave_write()) autosave_markClean();
+}
+
+void Controller::autosave_offerRestore() {
+    /// @brief At power-on: an autosave file holds work that was never saved into a slot. Ask.
+    if (!sd.ready) return;
+    AutosaveFile files[2];
+    autosave_scanFile(0, files[0]);
+    autosave_scanFile(1, files[1]);
+    if (autosaveNewest(files[0], files[1]) < 0) return;
+    alertFlag = true;
+    alertType = ALERT_RESTOREAUTOSAVE;
+    lcd_drawAlert();
+}
+
+void Controller::autosave_restore() {
+    /// @brief Loads the newest autosave like a song file (ADD on RESTORE AUTOSAVE?).
+    lcd_clearAlert();
+    AutosaveFile files[2];
+    autosave_scanFile(0, files[0]);
+    autosave_scanFile(1, files[1]);
+    const int8_t newest = autosaveNewest(files[0], files[1]);
+    if (newest < 0) return;
+
+    reset();
+    lcd_resetPlay();
+    loadAction = true;
+    const FileStatus keepStatus = fileStatus;
+    fileNameOverride = kAutosavePath[newest];
+    switch (sd_loadFile(0)) {
+        case SD_OK:
+            alertType = ALERT_LOADSUCCESS;
+            break;
+        case SD_ERROR_DETECT:
+            alertType = ALERT_MISSINGSAMPLE;
+            break;
+        default:
+            alertType = ALERT_LOADERROR;
+            break;
+    }
+    fileNameOverride = nullptr;
+    fileStatus = keepStatus;
+    loadAction = false;
+    lcd_drawAlert();
+    HAL_Delay(1000);
+    lcd_clearAlert();
+    autosave_markClean();  // the files stay until a SAVE: the restored work is still not in a slot
+}
+
+SdResult Controller::sd_saveFile(uint8_t fileNum_) {
+    /// @brief Serializes current project state and writes it to the selected SD slot.
+    /// Encodes drumkit parameters, asset references, song data, and final EOF marker.
+
+    SdResult result = SD_ERROR;
+    char eof[] = "EOF";
+    char fileName[50];
+    char fileNum[4];
+
+    // 1. FILENAME CONSTRUCTION
+    // Generate the 3-digit padded filename (e.g., File_001.rws).
+    sprintf(fileNum, "%03d", (fileNum_ + 1));
+    strcpy(fileName, kFileStart);
+    strcat(fileName, fileNum);
+    strcat(fileName, kFileEnd);
+    if (fileNameOverride) snprintf(fileName, sizeof fileName, "%s", fileNameOverride);  // autosave files
+    uint8_t data[kDrumkitByteSize] = {0x00};
+
+    // 2. PAYLOAD ENCODING
+    // Build the drumkit payload buffer before starting SD write operations.
+
+    file_encodeKit(data);
 
     // 3. INPUT PROTECTION
     // Disable keyboard interrupts during SD write operations.
@@ -6301,28 +6562,7 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
                 // 5.3 SONG ENCODE + WRITE
                 // Encode each layer's banks/beats and write serialized song payload.
                 for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
-                    memset(data, 0x00, sizeof(data));
-                    data[0] = 'l';
-                    Layer& layer = layerLibrary[l];
-
-                    // Encode all banks for current layer
-                    for (uint8_t b = 0; b < kBankLibrarySize; b++) {
-                        Bank& bank = layer.bankLibrary[b];
-                        uint16_t offsetBank = 1 + (b * 257);
-                        data[offsetBank] = 'b';
-
-                        // Encode packed beat data + start interval
-                        for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
-                            Beat& beat = bank.beatLibrary[k];
-                            uint16_t offsetBeat = offsetBank + 1 + (k * 4);
-                            uint16_t data_ = beat.getData();
-                            data[offsetBeat + 0] = (uint8_t)(data_ >> 8);
-                            data[offsetBeat + 1] = (uint8_t)(data_ & 0xFF);
-                            uint16_t startInterval = beat.getStartInterval();
-                            data[offsetBeat + 2] = (uint8_t)(startInterval >> 8);
-                            data[offsetBeat + 3] = (uint8_t)(startInterval & 0xFF);
-                        }
-                    }
+                    file_encodeLayerSong(l, data);
 
                     // Write song payload in 512-byte chunks
                     writeCountTotal = (kSongByteSize / writeByteSize);
@@ -7883,6 +8123,10 @@ void Controller::lcd_drawAlert() {
 
         case ALERT_LOADFILE:
             alertText = kAlertTextLoadFile;
+            break;
+
+        case ALERT_RESTOREAUTOSAVE:
+            alertText = kAlertTextRestoreAutosave;
             break;
 
         case ALERT_SAVEFILE:
@@ -10299,6 +10543,7 @@ void Controller::lcd_drawMetroMenu() {
     lcd.drawText(kHeaderVolume, kMenuHeaderTextSize, kMenuHeaderX[3], kMenuHeaderY[3]);
     lcd.drawText(kHeaderPreview, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
     lcd.drawText(kHeaderPreviewLevel, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
+    lcd.drawText(kHeaderAutosave, kMenuHeaderTextSize, kMenuHeaderX[6], kMenuHeaderY[6]);
 
     // 4. SIGN/UNIT DRAW
     // Draw unit/sign text for each parameter slot.
@@ -10309,6 +10554,7 @@ void Controller::lcd_drawMetroMenu() {
     lcd.drawText("  %", kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
     lcd.drawText("  %", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
+    lcd.drawText("MIN", kMenuSignTextSize, kMenuSignBoxX[6], kMenuSignBoxY[6]);
 
     // 5. DATA DRAW
     // Draw metronome parameter values.
@@ -10318,6 +10564,14 @@ void Controller::lcd_drawMetroMenu() {
     lcd_drawMetro_VolumeData();
     lcd_drawMetro_PreviewData();
     lcd_drawMetro_PreviewLevelData();
+    lcd_drawMetro_AutosaveData();
+}
+
+void Controller::lcd_drawMetro_AutosaveData() {
+    /// @brief Draws the autosave interval field (tab 6): OFF or minutes.
+    lcd_setMenuDataState(WHITE);
+    const uint8_t minutes = kAutosaveMinutes[(autosaveTiming.interval < kAutosaveIntervalCount) ? autosaveTiming.interval : kAutosaveDefaultInterval];
+    lcd.drawText((minutes == 0) ? kDataOff : kNumberDataLibrary[minutes].nameLongR, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
 }
 
 void Controller::lcd_drawMetro_PreviewData() {
@@ -13373,6 +13627,9 @@ void Controller::file_newAction() {
     // Remove pending alert before executing state reset flow.
     lcd_clearAlert();
 
+    // Unsaved work is autosaved first (when AUTOSAVE is on): NEW can be undone at the next power-on.
+    if ((autosaveIntervalMs(autosaveTiming.interval) > 0) && (file_stateCrc() != autosaveCleanCrc)) autosave_write();
+
     // 2. TRANSPORT RESET
     // Reset song transport and playback runtime state.
     reset();
@@ -13409,6 +13666,8 @@ void Controller::file_newAction() {
     effect_reset(0);
     effect_reset(1);
     reverb_reset();
+
+    autosave_markClean();  // an empty song has nothing to autosave
 }
 
 void Controller::file_loadSelect() {
@@ -13434,6 +13693,11 @@ void Controller::file_loadAction() {
     // 1. PRE-LOAD CLEANUP
     // Clear existing alerts and reset runtime playback context.
     lcd_clearAlert();
+
+    // Unsaved work is autosaved first (when AUTOSAVE is on), so a LOAD can be undone by restoring
+    // it at the next power-on.
+    if ((autosaveIntervalMs(autosaveTiming.interval) > 0) && (file_stateCrc() != autosaveCleanCrc)) autosave_write();
+
     reset();
     lcd_resetPlay();
 
@@ -13468,6 +13732,7 @@ void Controller::file_loadAction() {
     // 4. TRANSACTION FLAG RESTORE
     // Release load-in-progress flag after SD transaction completes.
     loadAction = false;
+    if (alertType != ALERT_LOADERROR) autosave_markClean();
 
     // 5. RESULT ALERT PRESENTATION
     // Display result alert and keep it visible for user acknowledgment.
@@ -13509,6 +13774,12 @@ void Controller::file_saveAction() {
     // 3. SD SAVE EXECUTION & RESULT MAPPING
     // Execute SD save and map operation result to alert type.
     (sd_saveFile(fileMenuCounter) == SD_OK) ? alertType = ALERT_SAVESUCCESS : alertType = ALERT_SAVEERROR;
+
+    // The work is in a slot now: the autosave files are no longer needed.
+    if (alertType == ALERT_SAVESUCCESS) {
+        autosave_deleteAll();
+        autosave_markClean();
+    }
 
     // 4. TRANSACTION FLAG RESTORE
     // Release save-in-progress flag after SD transaction completes.
@@ -14971,8 +15242,8 @@ void Controller::metro_menuRight() {
     // 1. TAB STATE UPDATE
     // Advance tab index and wrap to first tab at upper boundary.
     preMenuTab = menuTab;
-    // Tabs 0-3 metronome, 4-5 sample preview.
-    menuTab = (menuTab < 5) ? (menuTab + 1) : kMinMenu4Tab;
+    // Tabs 0-3 metronome, 4-5 sample preview, 6 autosave.
+    menuTab = (menuTab < 6) ? (menuTab + 1) : kMinMenu4Tab;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation for tab change.
@@ -14985,7 +15256,7 @@ void Controller::metro_menuLeft() {
     // 1. TAB STATE UPDATE
     // Decrement tab index and wrap to last tab at lower boundary.
     preMenuTab = menuTab;
-    menuTab = (menuTab > kMinMenu4Tab) ? (menuTab - 1) : 5;
+    menuTab = (menuTab > kMinMenu4Tab) ? (menuTab - 1) : 6;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation for tab change.
@@ -15021,6 +15292,10 @@ void Controller::metro_menuUp() {
         case 5:
             if (previewLevel < 100) preview_setLevel(previewLevel + 1);
             break;
+
+        case 6:
+            if (autosaveTiming.interval + 1 < kAutosaveIntervalCount) autosave_setInterval(autosaveTiming.interval + 1);
+            break;
     }
 }
 
@@ -15052,6 +15327,10 @@ void Controller::metro_menuDown() {
 
         case 5:
             if (previewLevel > 0) preview_setLevel(previewLevel - 1);
+            break;
+
+        case 6:
+            if (autosaveTiming.interval > 0) autosave_setInterval(autosaveTiming.interval - 1);
             break;
     }
 }
@@ -24597,6 +24876,7 @@ void Controller::interruptPlay() {
                 // LOOP END PROCEDURES
                 // Reset play interval and apply end-of-loop bank/play pointer updates.
                 playInterval = 0;
+                loopEndFlag = true;  // autosave may write now (Autosave.h)
                 io.sync.txPulseCounter = 0;
 
                 // Handle Bank Shifting at the end of the loop cycle

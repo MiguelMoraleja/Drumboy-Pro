@@ -288,6 +288,25 @@ class Controller {
     bool previewPending = false;        // start once the voice is idle and the knob has rested
     uint32_t previewRequestTick = 0;
     int8_t previewLayer = -1;
+    // Autosave (Autosave.h): interval on the Metronome page, CRC of the last safe state.
+    AutosaveTiming autosaveTiming;
+    uint32_t autosaveCleanCrc = 0;
+    bool autosavePending = false;           // due and changed: write when safe
+    uint32_t lastInputMs = 0;               // last key or encoder (autosave waits while editing)
+    volatile bool loopEndFlag = false;      // the sequencer wrapped (set in interruptPlay)
+    const char* fileNameOverride = nullptr; // set: sd_checkFile/sd_loadFile/sd_saveFile use this path
+    void file_encodeKit(uint8_t* data);
+    void file_encodeLayerSong(uint8_t layerNum_, uint8_t* data);
+    uint32_t file_stateCrc();
+    void autosave_setInterval(uint8_t interval_);
+    void autosave_markClean();
+    void autosave_scanFile(uint8_t slot_, AutosaveFile& file_);
+    bool autosave_write();
+    void autosave_deleteAll();
+    void autosave_update();
+    void autosave_offerRestore();
+    void autosave_restore();
+
     bool previewOn = true;              // Metronome page, saved in the system preset
     uint8_t previewLevel = 70;
 
@@ -1064,6 +1083,7 @@ class Controller {
     void preview_setLevel(uint8_t level_);
     void lcd_drawMetro_PreviewData();
     void lcd_drawMetro_PreviewLevelData();
+    void lcd_drawMetro_AutosaveData();
     bool layerPageMenu() const;
     void euclid_apply();
     void euclid_clear();

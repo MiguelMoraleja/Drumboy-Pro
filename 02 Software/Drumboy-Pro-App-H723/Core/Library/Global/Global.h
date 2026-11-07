@@ -10,6 +10,8 @@
 #include "Lfo.h"
 #include "MCP23017.h"
 #include "Metronome.h"
+#include "MidiClock.h"
+#include "MidiParser.h"
 #include "Pitch.h"
 #include "Preview.h"
 #include "SongChain.h"
@@ -2154,6 +2156,8 @@ const uint8_t kInitialQuantize                      = 2;
 
 const uint16_t kMeasureInterval                     = 800;
 const uint16_t kMeasureHalfInterval                 = kMeasureInterval / 2;
+const uint32_t kClockLockMinPeriodUs                = 40;      // sequencer timer limits while locked to MIDI clock
+const uint32_t kClockLockMaxPeriodUs                = 60000;   // (TIM15 counts microseconds, 16 bits)
 const uint16_t kMinSongInterval                     = 800;
 const uint16_t kMaxSongInterval                     = 64000;
 const float kQuantizeInterval[]                     = {50, 100, 200, 400, 800, 1600, 3200};
@@ -2375,18 +2379,15 @@ struct Midi {
     uint8_t rxChannel                               = 0;
     uint8_t txChannel                               = 0;
 
-    uint8_t rxNoteOnReadStage                       = 0;
-    uint8_t rxNoteOnWriteFlag                       = 0;
-    uint8_t rxNoteOnKey                             = 0;
-    uint8_t rxNoteOnVelocity                        = 0;
-
-    uint8_t rxNoteOffReadStage                      = 0;
-    uint8_t rxNoteOffWriteFlag                      = 0;
-    uint8_t rxNoteOffKey                            = 0;
-    uint8_t rxNoteOffVelocity                       = 0;
+    // MIDI IN (MidiParser.h): parser state in the UART interrupt, received notes queued for the
+    // main loop, receive errors (UART overrun/framing, full queue) for the diagnostics display.
+    MidiParser rxParser;
+    MidiQueue<16> rxNoteQueue;
+    volatile uint32_t rxErrors                      = 0;
 
     bool txTriggerNoteOn[10]                        = {false};
     bool txTriggerNoteOff[10]                       = {false};
+    volatile uint8_t txVelocity[10]                 = {127, 127, 127, 127, 127, 127, 127, 127, 127, 127};
 
     const uint8_t txData[10]                        = {0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D};
 
@@ -2398,13 +2399,16 @@ struct Midi {
     volatile bool rxTrigResetFlag                   = false;
     volatile bool rxTrigRecordFlag                  = false;
 
-    uint8_t rxSysExStage                            = 0;
-    uint8_t rxSysExCmd                              = 0;
-
-    uint8_t rxClockCount                            = 0;                // 0 = idle; 1–24 = counting within one beat
     volatile uint8_t rxClockTickPhase               = 0;                // 0 = beat boundary, 1-23 = in-between MIDI clocks
-    volatile uint32_t rxClockBeatStart              = 0;                // HAL_GetTick() at the start of beat measurement
-    volatile uint16_t rxClockBpm                    = 0;                // BPM computed from last full 24-clock beat
+    volatile uint16_t rxClockBpm                    = 0;                // measured tempo, rounded, for the display and effects
+    uint8_t rxClockBpmCount                         = 0;                // clocks since the last tempo report
+
+    // Clock slave lock (MidiClock.h): while clockLocked, the sequencer only plays as far as the
+    // incoming clock allows. Engaged on START/CONTINUE or when playing with the clock running.
+    MidiClockLock clockLock;
+    volatile bool clockLocked                       = false;
+    volatile bool clockStartedByMidi                = false;            // START/arm set the lock origin: play() keeps it
+    volatile uint32_t rxLastClockMs                 = 0;                // HAL_GetTick() of the last clock received
     volatile bool rxClockFlag                       = false;            // New BPM value ready for the main loop
     volatile bool rxTransportRunning                = false;
     volatile bool rxStartFlag                       = false;

@@ -193,7 +193,7 @@ class Controller {
     TriggerMode triggerMode = TRIG_BAR;                                 // Quantization setting
     bool playActive;                                                    // Transport status: Playing
     bool recordActive;                                                  // Transport status: Recording
-    bool precountPendingBeat[kLayerLibrarySize];                        // Layer hits during precount, committed to interval 0 when playback starts
+    uint8_t precountPendingBeat[kLayerLibrarySize];                     // Layer hits during precount (0 none, fill pattern + 1), committed when playback starts
     bool playArmed;                                                     // Slave mode: waiting for master START to play
     bool recordArmed;                                                   // Slave mode: waiting for master START to record
     bool ignoreNextMidiStopAfterSpecialCmd;
@@ -371,6 +371,7 @@ class Controller {
     /* State Accessors (Getters) --------------------------------- */
 
     Io     getIo()    { return io; }                                    // Get MIDI/Sync state
+    void   midi_countRxError() { io.midi.rxErrors = io.midi.rxErrors + 1; }  // MIDI IN UART error (diagnostics)
     Mixer  getMixer() { return mixer; }                                 // Get Master audio levels
     Menu   getMenu()  { return menu; }                                  // Get currently active UI screen
 
@@ -395,6 +396,12 @@ class Controller {
     bool enqueueMidiTx(const uint8_t* data, uint8_t len);
     void serviceMidiTx();
     void receiveMidiCommand();
+    void midi_receiveClock(uint32_t nowCycles_);
+    void midi_clockEngage(bool fromMidi_);
+    void midi_clockRelease();
+    bool midi_txTransportOn() const;
+    void midi_clockOnPlayStart();
+    void syncOutClockTick();
 
     /* Song Functions -------------------------------------------- */
 

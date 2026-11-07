@@ -173,6 +173,18 @@ extern "C" void System_Initialize() {
     MX_TIM17_Init();
     MX_TIM23_Init();
     MX_TIM24_Init();
+
+    // MIDI IN (backlog 30/34): the UART's receive FIFO holds bytes while higher-priority interrupts
+    // (audio, SD) run, and the receive interrupts sit above the sequencer timer so each clock
+    // byte is timestamped and handled promptly.
+    HAL_UARTEx_EnableFifoMode(&huart1);
+    HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 1, 0);
+    HAL_NVIC_SetPriority(USART1_IRQn, 1, 0);
+
+    // Sequencer (TIM15) and clock (TIM4) timers: a new period takes effect at the next update, so
+    // shortening it never lets the counter run past the new end (a 65 ms wrap of the 16-bit timer).
+    htim15.Instance->CR1 |= TIM_CR1_ARPE;
+    htim4.Instance->CR1 |= TIM_CR1_ARPE;
 }
 
 extern "C" void Sdram_Initialize() {
@@ -339,6 +351,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart) {
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart) {
     if (huart == &huart1) {
+        controller.midi_countRxError();  // overrun/framing: diagnostics
         HAL_UART_Receive_DMA(&huart1, &midiRxData, 1);
     }
 }

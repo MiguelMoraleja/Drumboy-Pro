@@ -39,6 +39,8 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 29 | [New effects: ring modulator, tilt EQ, master saturation (LXR)](#29-new-effects-ring-modulator-tilt-eq-master-saturation-lxr) | Feature | M each |
 | 30 | [MIDI in/out: velocity, running status, note queue, CC](#30-midi-inout-velocity-running-status-note-queue-cc) | Bug + feature | S (CC: M) |
 | 31 | [Kit morph (LXR)](#31-kit-morph-lxr) | Feature | M |
+| 32 | [Autosave](#32-autosave) | Feature | A: M, B: M–L |
+| 33 | [Per-note editing: velocity, probability and more](#33-per-note-editing-velocity-probability-and-more) | Feature | M–L |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -57,6 +59,8 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 **Sprint 3, "Routing phase 3":** decide [7](#7-routing-open-design-questions), then [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels).
 
 **V1.12 "Song mode"** (done, tested on hardware, released as v1.12): ✅ [15](#15-song-mode-chain-the-banks) song mode.
+
+**Owner's priorities (2026-11-07):** [32](#32-autosave) autosave (work gets lost today) and [33](#33-per-note-editing-velocity-probability-and-more) per-note velocity and probability (it absorbs 14 part B and 21, and gives 30's incoming velocity somewhere to go).
 
 **Suggested next sprint (ideas from the LXR firmware):** [30](#30-midi-inout-velocity-running-status-note-queue-cc) MIDI in/out fixes first (they matter for the owner's Loopy Pro → Scarlett setup), then [18](#18-swing--shuffle-lxr) swing, [19](#19-choke-groups-lxr) choke groups, [22](#22-live-roll-lxr) live roll, [25](#25-lfo-retrigger-and-free-running-lxr) LFO retrigger, [27](#27-erase-while-recording-lxr) erase while recording. Later, together with [14](#14-euclid-velocity-and-variance) part B (they share one per-beat data extension and one file format bump): [20](#20-parameter-locks-per-beat-lxr), [21](#21-probability-per-beat-lxr), [24](#24-velocity-modulates-a-parameter-lxr).
 
@@ -227,7 +231,7 @@ Kit and song files have a signature but no format version. Several items above c
 
 **Today.** Every hit the EUCLID page makes is a plain beat at full velocity (BASIC / FLAT), so the pattern sounds mechanical. Plain beats have only three velocities: FLAT (100), GHOST (50) and MUTED (0), set by the beat's fill PATTERN; the VELOCITY field (FLAT, STEP, DESCEND, ASCEND, RANDOM) only shapes the micro-hits of a complex fill, not single beats. Variance is possible today only indirectly: an LFO on the layer's LEVEL (RANDOM type for humanising) with STYLE on changes each hit, and since V1.10 the instrument page shows the value used.
 
-**Status: part A done in V1.11** (ACCENTS on EUCLID tab 7, `euclidAccents()` in `Euclid.h`). Part B open.
+**Status: part A done in V1.11** (ACCENTS on EUCLID tab 7, `euclidAccents()` in `Euclid.h`). Part B open; its per-beat velocity storage is now planned in [33](#33-per-note-editing-velocity-probability-and-more), and the VELOCITY field here becomes one way to fill it.
 
 **Proposal**, in two parts:
 
@@ -324,7 +328,7 @@ Reviewed from the owner's fork of the Erica Synths LXR V2 desktop firmware (Migu
 
 ### 21. Probability per beat (LXR)
 
-**LXR:** a 0–100% probability per step. **Today:** one PROB per layer. **Proposal:** a probability per beat (and per fill micro-hit?) on the song page, rolled at each hit. Same per-beat storage as 20.
+**LXR:** a 0–100% probability per step. **Today:** one PROB per layer. **Proposal:** a probability per beat (and per fill micro-hit?) on the song page, rolled at each hit. Same per-beat storage as 20. Now part of [33](#33-per-note-editing-velocity-probability-and-more).
 
 ### 22. Live roll (LXR)
 
@@ -380,3 +384,37 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 ### 31. Kit morph (LXR)
 
 **LXR:** one knob crossfades every sound parameter of the kit toward a second kit; the interpolation is spread over audio ticks, one parameter per tick, so it never spikes the CPU; routing is excluded. **Today:** nothing; a kit is loaded whole. **Proposal:** load a second kit as the morph target (parameters only, not samples: a layer whose sample differs keeps its own), a MORPH knob 0–100% that interpolates level, pitch, start/end, filter, EQ, effect and reverb parameters, updated a few parameters per audio block; routing (OUT and the ROUTING page) and samples stay as they are, which matches the routing design. Host-test the interpolation (endpoints exact, no parameter left half-updated across a full sweep).
+
+### 32. Autosave
+
+**Today.** Nothing is saved unless SAVE is used on the FILE page (`file_saveAction()` → `sd_saveFile()`), so a power cut, a crash or loading another song without saving loses the work. A song file is small (kit 1,500 bytes + 10 layers × 1,286 bytes + the 38-byte chain block, about 14 KB) and is written in one go with the keys disabled (`keyboard_disable()`), so a save takes tens of milliseconds. The system and encoder presets already use a "dirty flag, save later" pattern (`systemPresetSaveFlag`).
+
+**Proposal**, in two parts:
+
+- **A. Simple autosave (M).**
+  - **When something changed:** instead of hooking every edit, keep a checksum of the song state (kit block, the song banks, routing, chain) and compare it every minute; the STM32H723 has a hardware CRC unit, and 14 KB takes well under a millisecond. Changed since the last save (manual or auto) = dirty.
+  - **When to write:** an AUTOSAVE setting on the Metronome/system page: OFF, 2, 5, 10 (default), 20 minutes, stored in the system preset (byte 23, growing it to 24 bytes the way the preview bytes did). Write only when dirty and safe: not recording, no precount, no load or save in progress; while playing, at a loop end, so the short SD write never lands in the middle of the user's gesture. Decide on the device whether writing during playback is inaudible (the audio runs in the interrupt, so it should be); if not, autosave only while stopped plus once on STOP.
+  - **Where:** never over the user's numbered slots. A reserved file outside the 1–99 library (e.g. `Song/Autosave/AUTO_A.rwf` and `AUTO_B.rwf`), written alternately, each first to a `.tmp` name and then renamed, so a power cut during the write always leaves the previous good copy. Each file also records the slot it came from and a running sequence number (the board has no battery-backed clock, so no wall-clock time).
+  - **Restore:** at power-on, if the newest autosave is newer than the last manual save, show `RESTORE AUTOSAVE?` (YES loads it like a song file, NO keeps the normal start). It also appears as an AUTOSAVE entry on the FILE page, so it can be loaded and then saved into any slot.
+  - **Safety net for LOAD:** loading another song while the current one is dirty writes an autosave first.
+  - Hardware-free logic (`Autosave.h`): the timer and dirty decision, which of A/B to write, which is newest, the restore decision, with host tests (power cut mid-write simulated by an unrenamed `.tmp`, sequence wraparound, setting OFF).
+- **B. History and branching (M–L), later.** Keep the last N autosaves per song slot (e.g. 8, as a ring in `Song/Autosave/NN/`), browsable on the FILE page with their age in minutes and the slot they belong to. Loading one and saving it into a new slot is the "branch"; the autosave history then follows the new slot. Pairs with [28](#28-undo-for-bank-edits-lxr) (undo inside a session); autosave covers the time between sessions.
+
+**Done when.** With AUTOSAVE 10, editing and then pulling the power loses at most 10 minutes of work; the next power-on offers the restore; pulling the power during an autosave write still leaves a loadable autosave; manual slots are never touched by autosave.
+
+### 33. Per-note editing: velocity, probability and more
+
+**Today.** A beat (a note on Layer Song) has a start, a fill (type, pattern, time, level) and an active flag, stored in 4 bytes per beat in the song file (257 bytes per bank per layer). Plain beats only have FLAT (100), GHOST (50) and MUTED (0). Probability exists only per layer (PROB). Incoming MIDI velocity is ignored ([30](#30-midi-inout-velocity-running-status-note-queue-cc)), and MIDI out always sends 100.
+
+**Proposal.** One per-beat extension that several items need, done once:
+
+- **Data:** two extra bytes per beat: VELOCITY (0–127, or 1–100 to match the other levels) and PROBABILITY (0–100%), plus room for the extras below. In memory next to `beatLibrary`; in the file as a block after the song's "EOF" with its own marker (e.g. `BTX`), the same trick as the song chain: older firmware stops at "EOF" and ignores it, and a file without the block loads with velocity from FLAT/GHOST/MUTED and probability 100%. About 6.4 KB per song for 10 layers × 5 banks × 64 beats × 2 bytes. Bank copy/paste, the bank clipboard, BeatList moves and rebuilds, EUCLID and record must carry the new fields along with the beat.
+- **Editing on the device:** on Layer Song, with a beat selected (the MOVE cursor from 12), a NOTE tab with VEL and PROB fields for that beat; ADD + turning the encoder changes all beats of the bank at once (relative), for quick humanising. The pattern line can show low-probability beats differently (the font has no lowercase, like the `+` ghost hits).
+- **Playback:** the sequencer plays a plain beat at its stored velocity, rolls its probability at each loop (combined with the layer's PROB), and MIDI out sends the velocity actually played.
+- **Recording:** live and MIDI-in recording store the velocity that came in (needs 30's velocity fix); pads record at FLAT.
+- **More, per beat, in the same block (pick after A works):** a play condition (every loop, only loop 1 of N, every 2nd, first time only, not the first time, Elektron-style "A:B" trig conditions); a semitone offset (a first, small step toward the parameter locks of [20](#20-parameter-locks-per-beat-lxr)); a micro-timing nudge finer than the quantize step; a ratchet count (repeat the hit 2–4 times inside the beat, like a small fill).
+- **Ties to other items:** this is the storage that [14](#14-euclid-velocity-and-variance) part B (EUCLID VELOCITY / RANDOM spread) and [21](#21-probability-per-beat-lxr) (probability per beat) were waiting for, and the base of [20](#20-parameter-locks-per-beat-lxr) (parameter locks). EUCLID can then fill VEL and PROB with its own patterns.
+- Hardware-free code (`BeatExt.h` or inside `BeatList.h`): the block's read/write with checks, carrying the fields through move/rebuild/copy, the probability roll and the condition logic, with host tests (old file without the block, round trip, a move keeps each beat's velocity, probability 0/100 exact, condition "1:4" plays exactly once in four loops).
+- The app gets a tab to try velocity and probability on a pattern before building.
+
+**Done when.** On the device a single beat can be set to velocity 30 and probability 50%, it plays softly about half the time, its settings survive move, copy/paste and save/load, MIDI recording keeps the played velocity, and the same song still loads (and plays at FLAT/100%) on V1.12.

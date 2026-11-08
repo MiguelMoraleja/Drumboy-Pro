@@ -42,6 +42,7 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 32 | [Autosave](#32-autosave) | Feature | A: M, B: M–L |
 | 33 | [Per-note editing: velocity, probability and more](#33-per-note-editing-velocity-probability-and-more) | Feature | M–L |
 | 34 | [MIDI clock slave: drift and 200 BPM runaway](#34-midi-clock-slave-drift-and-200-bpm-runaway) | Bug | M |
+| 35 | [LFO destinations for the per-note settings](#35-lfo-destinations-for-the-per-note-settings) | Feature | M |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -85,7 +86,7 @@ Every step keeps the rules: hardware-free logic in `Core/Library/Global/*.h` wit
 
 **On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
-**Later:** [3](#3-lfos-cant-modulate-filters-or-effects) (needs 9), [6](#6-routing-extra-effect-slots) (needs CPU measurement), the rest of [10](#10-housekeeping) alongside other work.
+**Later:** [3](#3-lfos-cant-modulate-filters-or-effects) (needs 9), together with [24](#24-velocity-modulates-a-parameter-lxr) and [35](#35-lfo-destinations-for-the-per-note-settings) (one widening of what modulation can reach), [6](#6-routing-extra-effect-slots) (needs CPU measurement), the rest of [10](#10-housekeeping) alongside other work.
 
 ---
 
@@ -476,3 +477,32 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 **Done when.** Slaved to Loopy Pro at a fractional tempo for 30 minutes, the Drumboy stays in time (by ear and on a recording, against a click from Loopy). With a MIDI loop deliberately set up, it neither runs away nor doubles its tempo. The overrun counter stays at 0 with clock and dense notes coming in together.
 
 **Workarounds until then.** Turn the Drumboy's MIDI OUT clock off while it is slaved (or turn MIDI thru off in Loopy Pro) to avoid the loop. Set Loopy Pro to a whole-number tempo, preferably one that divides evenly into the timer (120, 125, 100, 150…); this reduces the drift but does not remove it. STOP/START from Loopy realigns it.
+
+### 35. LFO destinations for the per-note settings
+
+**Asked by the owner (2026-11-08):** can VELOCITY, CHANCE, CONDITION and NUDGE (NOTE page, [33](#33-per-note-editing-velocity-probability-and-more)) be moved by an LFO?
+
+**Today.** No. They are fixed values stored in each beat. The layer's LFO slots (LEVEL, PITCH, DIRECTION, RESOLUTION, START, END, TIMING, PROB, only while the layer's STYLE is on, sampled at each hit) get close:
+- LFO → LEVEL multiplies with each note's velocity.
+- LFO → PROB is a second roll on top of each note's chance.
+- LFO → TIMING only delays hits.
+
+**Proposal.**
+- **New LFO destinations per layer:**
+  - **NOTE VEL:** an offset to each note's velocity, so accents keep their order and the line breathes.
+  - **CHANCE:** an offset to each note's chance, applied before the roll.
+  - **NUDGE:** an offset in both directions, unlike TIMING, clamped to ±12 % of a 16th like the field.
+- **No CONDITION destination:** conditions are on/off rules per loop, not a scale.
+- **Where the offsets apply:** at playback, in `note_plays` and in the level and due-time computation (`BeatNote.h`). The beats themselves don't change, so turning the LFO off gives the written pattern back.
+- **Applies to:** plain beats and fills alike, like the fields. Only while STYLE is on, like the other LFO slots.
+- **Depth:** the existing LFO DEPTH, mapped to a fixed full-scale range per destination (e.g. ±64 velocity, ±50 % chance, ±12 nudge steps).
+- **Storage:** the layer record in the kit block is full (25 bytes per layer: 0–22 parameters and LFO slots, 23 routing, 24 semitones). The three new LFO slot numbers need a format extension. Either:
+  - a kit block after the song's BTX block (same "older firmware stops before it" trick), or
+  - a format version bump together with [3](#3-lfos-cant-modulate-filters-or-effects) and [24](#24-velocity-modulates-a-parameter-lxr), which also add modulation slots.
+
+  Doing all three at once costs one format change instead of three.
+- **UI:** a fourth layer instrument page (LFO slots for NOTE VEL, CHANCE, NUDGE, and later the [3](#3-lfos-cant-modulate-filters-or-effects) destinations), or extra fields on instrument page 3.
+- **Tests:** hardware-free offset math in `BeatNote.h` with host tests (clamping at 1/127, 0/100 %, ±12; depth 0 = no change; nudge offsets keep neighbours from swapping, so the ±12 limit stays).
+
+**Done when.** A RANDOM LFO on NOTE VEL makes a straight 16th hi-hat vary in loudness while its accents stay louder than the rest; a SINE LFO on CHANCE thins the layer out and fills it back over the LFO's period; with the LFO off or STYLE off the pattern plays exactly as written; songs from V1.14 load unchanged.
+

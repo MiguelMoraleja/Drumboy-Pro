@@ -298,6 +298,11 @@ class Controller {
     void file_encodeKit(uint8_t* data);
     void file_encodeLayerSong(uint8_t layerNum_, uint8_t* data);
     uint32_t file_stateCrc();
+    uint16_t file_noteEntryCount();
+    uint32_t file_noteCrc(uint32_t crc_);
+    bool file_writeNotes();
+    void file_readNotes(const char* fileName_);
+    uint16_t layerSong_quantizeInterval(uint16_t interval_) const;
     void autosave_setInterval(uint8_t interval_);
     void autosave_markClean();
     void autosave_scanFile(uint8_t slot_, AutosaveFile& file_);

@@ -580,8 +580,10 @@ struct Beat {
 
     uint16_t data                                   = 0x0000;
     uint8_t fillTarget                              = NULL_FILL_TARGET;
+    uint8_t velocity                                = 0;                        // BeatNote.h: 0 = from the pattern
     uint16_t startInterval                          = 0;
     uint16_t endInterval                            = 0;
+    uint16_t note                                   = 0;                        // BeatNote.h: chance, condition, nudge
 
     // Bit masks for precise field extraction
 
@@ -603,6 +605,18 @@ struct Beat {
         startInterval = 0;
         endInterval = 0;
         fillTarget = NULL_FILL_TARGET;
+        velocity = 0;
+        note = 0;
+    }
+
+    // Per-note settings (BeatNote.h); all zero = plays as before V1.14.
+    void setVelocity(uint8_t velocity_) noexcept { velocity = (velocity_ > 127) ? 127 : velocity_; }
+    uint8_t getVelocity() const noexcept { return velocity; }
+    void setNote(uint16_t note_) noexcept { note = note_; }
+    uint16_t getNote() const noexcept { return note; }
+    void resetNote() noexcept {
+        velocity = 0;
+        note = 0;
     }
 
     // Active bit logic
@@ -686,6 +700,7 @@ struct Bank {
 
     void setBeat(uint8_t beatNum_, uint16_t startInterval_, uint16_t endInterval_) {
         Beat& beat = beatLibrary[beatNum_];
+        beat.resetNote();  // a new beat: the slot may still hold another beat's note settings
         beat.setActive(true);
         beat.setStartInterval(startInterval_);
         beat.setEndInterval(endInterval_);
@@ -706,6 +721,7 @@ struct Bank {
     void resetBeat(uint8_t beatNum_) {
         Beat& beat = beatLibrary[beatNum_];
         uint8_t oldTarget = beat.getFillTarget();
+        beat.resetNote();
 
         beat.setActive(false);
         beat.setStartInterval(0);

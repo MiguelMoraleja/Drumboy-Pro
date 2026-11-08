@@ -10,6 +10,7 @@
 #include "Lfo.h"
 #include "MCP23017.h"
 #include "Autosave.h"
+#include "BeatNote.h"
 #include "Metronome.h"
 #include "MidiClock.h"
 #include "MidiParser.h"

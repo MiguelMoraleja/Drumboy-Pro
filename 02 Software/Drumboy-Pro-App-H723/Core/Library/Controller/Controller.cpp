@@ -6078,6 +6078,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                 f_close(&sd.file);
             }
             chainRead(songChain, chainData, static_cast<uint16_t>(got));
+            file_readNotes(fileName);  // per-note settings after the chain (BeatNote.h)
             chainRestart(songChain, chainPlay);
             songStepSel = 0;
             if (songChain.active) layerSong_selectBank(chainCurrentBank(songChain, chainPlay));
@@ -6319,7 +6320,7 @@ uint32_t Controller::file_stateCrc() {
     }
     uint8_t chainData[kChainFileSize];
     chainWrite(songChain, chainData);
-    return autosaveCrc32(crc, chainData, kChainFileSize);
+    return file_noteCrc(autosaveCrc32(crc, chainData, kChainFileSize));
 }
 
 /* Autosave (Autosave.h) -----------------------------------------------------*/
@@ -6502,6 +6503,99 @@ void Controller::autosave_restore() {
     autosave_markClean();  // the files stay until a SAVE: the restored work is still not in a slot
 }
 
+uint16_t Controller::file_noteEntryCount() {
+    /// @brief Beats whose note settings are not all default (BeatNote.h): the entries of the BTX block.
+    uint16_t count = 0;
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        for (uint8_t b = 0; b < kBankLibrarySize; b++) {
+            const Bank& bank = layerLibrary[l].bankLibrary[b];
+            for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
+                const Beat& beat = bank.beatLibrary[k];
+                if (beat.getActive() && !noteIsDefault(beat.getVelocity(), beat.getNote())) count++;
+            }
+        }
+    }
+    return count;
+}
+
+uint32_t Controller::file_noteCrc(uint32_t crc_) {
+    /// @brief Feeds the BTX block (as written) into a CRC, so autosave sees note edits.
+    uint8_t header[kNoteHeaderSize];
+    noteWriteHeader(header, file_noteEntryCount());
+    crc_ = autosaveCrc32(crc_, header, kNoteHeaderSize);
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        for (uint8_t b = 0; b < kBankLibrarySize; b++) {
+            const Bank& bank = layerLibrary[l].bankLibrary[b];
+            for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
+                const Beat& beat = bank.beatLibrary[k];
+                if (!beat.getActive() || noteIsDefault(beat.getVelocity(), beat.getNote())) continue;
+                uint8_t entry[kNoteEntrySize];
+                noteWriteEntry(entry, NoteEntry{l, b, beat.getStartInterval(), beat.getVelocity(), beat.getNote()});
+                crc_ = autosaveCrc32(crc_, entry, kNoteEntrySize);
+            }
+        }
+    }
+    return crc_;
+}
+
+bool Controller::file_writeNotes() {
+    /// @brief Writes the BTX block (BeatNote.h) at the current file position: one 7-byte entry
+    /// per beat with note settings. Older firmware stops reading before it.
+    uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
+    noteWriteHeader(buffer, file_noteEntryCount());
+    uint16_t used = kNoteHeaderSize;
+    bool ok = true;
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        for (uint8_t b = 0; b < kBankLibrarySize; b++) {
+            const Bank& bank = layerLibrary[l].bankLibrary[b];
+            for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
+                const Beat& beat = bank.beatLibrary[k];
+                if (!beat.getActive() || noteIsDefault(beat.getVelocity(), beat.getNote())) continue;
+                if (static_cast<size_t>(used + kNoteEntrySize) > sizeof buffer) {
+                    UINT written = 0;
+                    ok = ok && (f_write(&sd.file, buffer, used, &written) == FR_OK) && (written == used);
+                    used = 0;
+                }
+                noteWriteEntry(buffer + used, NoteEntry{l, b, beat.getStartInterval(), beat.getVelocity(), beat.getNote()});
+                used = static_cast<uint16_t>(used + kNoteEntrySize);
+            }
+        }
+    }
+    UINT written = 0;
+    ok = ok && (f_write(&sd.file, buffer, used, &written) == FR_OK) && (written == used);
+    return ok;
+}
+
+void Controller::file_readNotes(const char* fileName_) {
+    /// @brief Applies the BTX block (BeatNote.h) of a song file to the loaded beats, matching each
+    /// entry by layer, bank and start (as the loader quantized it). No block = all default.
+    f_close(&sd.file);
+    if (f_open(&sd.file, fileName_, FA_READ) != FR_OK) return;
+    uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
+    UINT got = 0;
+    if ((f_lseek(&sd.file, strlen(kFileRef) + kFileByteSize + 3 + kChainFileSize) == FR_OK) &&
+        (f_read(&sd.file, buffer, kNoteHeaderSize, &got) == FR_OK)) {
+        int32_t remaining = noteReadHeader(buffer, static_cast<uint16_t>(got));
+        while (remaining > 0) {
+            const uint16_t chunk = static_cast<uint16_t>((remaining > 64) ? 64 : remaining);
+            const UINT want = static_cast<UINT>(chunk * kNoteEntrySize);
+            if ((f_read(&sd.file, buffer, want, &got) != FR_OK) || (got != want)) break;
+            for (uint16_t e = 0; e < chunk; e++) {
+                NoteEntry entry;
+                if (!noteReadEntry(buffer + e * kNoteEntrySize, entry, kLayerLibrarySize, kBankLibrarySize)) continue;
+                Bank& bank = layerLibrary[entry.layer].bankLibrary[entry.bank];
+                int16_t beatNum = beatListFind(bank, entry.start);
+                if (beatNum < 0) beatNum = beatListFind(bank, layerSong_quantizeInterval(entry.start));
+                if (beatNum < 0) continue;
+                bank.beatLibrary[beatNum].setVelocity(entry.velocity);
+                bank.beatLibrary[beatNum].setNote(entry.note);
+            }
+            remaining -= chunk;
+        }
+    }
+    f_close(&sd.file);
+}
+
 SdResult Controller::sd_saveFile(uint8_t fileNum_) {
     /// @brief Serializes current project state and writes it to the selected SD slot.
     /// Encodes drumkit parameters, asset references, song data, and final EOF marker.
@@ -6586,7 +6680,8 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
                         // Song mode chain after "EOF" (older firmware stops reading at "EOF").
                         uint8_t chainData[kChainFileSize];
                         chainWrite(songChain, chainData);
-                        if (f_write(&sd.file, chainData, kChainFileSize, &sd.byteswritten) == FR_OK) result = SD_OK;
+                        // Per-note settings after the chain (BeatNote.h).
+                        if ((f_write(&sd.file, chainData, kChainFileSize, &sd.byteswritten) == FR_OK) && file_writeNotes()) result = SD_OK;
                     }
                 }
             }
@@ -22081,6 +22176,14 @@ void Controller::layerSong_beatLeft() {
     }
 }
 
+uint16_t Controller::layerSong_quantizeInterval(uint16_t interval_) const {
+    /// @brief Nearest grid position at the current QUANTIZE; the end of the song wraps to 0.
+    const uint16_t quantizeInterval = kQuantizeInterval[rhythm.quantize];
+    uint16_t startInterval = ((interval_ / quantizeInterval) + ((interval_ % quantizeInterval) / (quantizeInterval / 2))) * quantizeInterval;
+    if (startInterval == songInterval) startInterval = 0;
+    return startInterval;
+}
+
 void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_) {
     /// @brief Inserts a beat into target bank with quantization, ordering, and UI sync.
 
@@ -22093,15 +22196,9 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
     if (bank.lastActiveBeatNum >= static_cast<int16_t>(kBeatLibrarySize) - 1) {
         textFullFlag = true;
     } else {
-        uint16_t quantizeInterval = kQuantizeInterval[rhythm.quantize];
-
-        // Quantize incoming interval using nearest-grid rounding.
-        uint16_t startInterval = ((interval_ / quantizeInterval) + ((interval_ % quantizeInterval) / (quantizeInterval / 2))) * quantizeInterval;
+        // Quantize incoming interval using nearest-grid rounding; the end of the song is its start.
+        uint16_t startInterval = layerSong_quantizeInterval(interval_);
         uint16_t endInterval;
-
-        // 2. LOOP BOUNDARY NORMALIZATION
-        // Remap end-of-song interval to loop start.
-        if (startInterval == songInterval) startInterval = 0;
 
         // 3. INSERTION INDEX RESOLUTION
         // Detect duplicates and compute sorted insertion index.

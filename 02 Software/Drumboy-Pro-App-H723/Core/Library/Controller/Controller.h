@@ -309,6 +309,7 @@ class Controller {
     bool noteFillSkip[kLayerLibrarySize] = {false};
     bool note_plays(uint8_t layerNum_, uint16_t note_);
     void note_restartLoops();
+    void layerPage_bankChanged();
     void note_select();
     bool note_validSelection();
     uint8_t note_effectiveVelocity(const Beat& beat_) const;

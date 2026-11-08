@@ -2583,6 +2583,10 @@ void Controller::keyboard_action() {
                                     case LAYER_INST_2_MENU:
 
                                     case LAYER_SONG_MENU:
+
+                                    case EUCLID_MENU:
+
+                                    case NOTE_MENU:
                                         ledLayerPlayMode = false;
                                         ledLayerSelectFlag = true;
                                         ledLayerSelectData = 0x01 << selectedLayerNum;
@@ -2731,6 +2735,10 @@ void Controller::keyboard_action() {
                                     case LAYER_INST_2_MENU:
 
                                     case LAYER_SONG_MENU:
+
+                                    case EUCLID_MENU:
+
+                                    case NOTE_MENU:
                                         ledLayerPlayMode = false;
                                         ledLayerSelectFlag = true;
                                         ledLayerSelectData = 0x01 << selectedLayerNum;
@@ -8648,6 +8656,10 @@ void Controller::lcd_drawSongBankShift() {
                 lcd_drawSong(i, j);
             }
         }
+
+        // 4. The bank changed at a loop end (SONG + pads while playing, or song mode): the song /
+        // NOTE page of the selected layer follows it.
+        layerPage_bankChanged();
     }
 }
 
@@ -23155,30 +23167,38 @@ void Controller::layerSong_selectBank(uint8_t bankNum_) {
             activeSongBank = bankNum_;
             lcd_drawSongBankTab(bankNum_, false);
 
-            // 3. ACTIVE MENU REFRESH
-            // Refresh selected beat and visible Layer Song widgets.
-            if (menu == LAYER_SONG_MENU) {
-                (layerLibrary[selectedLayerNum].bankLibrary[activeSongBank].lastActiveBeatNum != -1) ? selectedBeatNum = 0 : selectedBeatNum = -1;
-                lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
-                lcd_drawLayerSong_PositionData(selectedLayerNum);
-                lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
-                lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
-                lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
-                lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
-            } else if (menu == NOTE_MENU) {
-                (layerLibrary[selectedLayerNum].bankLibrary[activeSongBank].lastActiveBeatNum != -1) ? selectedBeatNum = 0 : selectedBeatNum = -1;
-                lcd_drawNote_Data();
-                lcd_drawNoteOverview();
-            }
-
-            // 4. GLOBAL LAYER REFRESH
+            // 3. GLOBAL LAYER REFRESH
             // Redraw all layer song lanes and update play pointers.
             for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                 lcd_clearSong(i, preBankNum);
                 lcd_drawSong(i, activeSongBank);
                 layerSong_calculatePlayBeatNum(i, activeSongBank, playInterval);
             }
+
+            // 4. ACTIVE MENU REFRESH
+            // Selected beat and the visible song / NOTE page widgets follow the new bank.
+            layerPage_bankChanged();
         }
+    }
+}
+
+void Controller::layerPage_bankChanged() {
+    /// @brief After the active bank changed: on the song or NOTE page, select the new bank's first
+    /// beat and redraw the fields (they showed the old bank's beat, and edits went to the wrong one).
+    if ((selectedLayerNum == -1) || ((menu != LAYER_SONG_MENU) && (menu != NOTE_MENU))) return;
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    selectedBeatNum = (bank.lastActiveBeatNum != -1) ? 0 : -1;
+    if (selectedBeatNum != -1) lcd_drawBeat(selectedLayerNum, activeSongBank, 0, true);
+    if (menu == LAYER_SONG_MENU) {
+        lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+        lcd_drawLayerSong_PositionData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillPatternData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
+    } else {
+        lcd_drawNote_Data();
+        lcd_drawNoteOverview();
     }
 }
 

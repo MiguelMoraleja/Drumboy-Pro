@@ -193,7 +193,7 @@ class Controller {
     TriggerMode triggerMode = TRIG_BAR;                                 // Quantization setting
     bool playActive;                                                    // Transport status: Playing
     bool recordActive;                                                  // Transport status: Recording
-    uint8_t precountPendingBeat[kLayerLibrarySize];                     // Layer hits during precount (0 none, fill pattern + 1), committed when playback starts
+    uint8_t precountPendingBeat[kLayerLibrarySize];                     // Layer hits during precount (0 none, velocity + 1), committed when playback starts
     bool playArmed;                                                     // Slave mode: waiting for master START to play
     bool recordArmed;                                                   // Slave mode: waiting for master START to record
     bool ignoreNextMidiStopAfterSpecialCmd;
@@ -303,6 +303,20 @@ class Controller {
     bool file_writeNotes();
     void file_readNotes(const char* fileName_);
     uint16_t layerSong_quantizeInterval(uint16_t interval_) const;
+    // Trig conditions (BeatNote.h): loops of the active bank, each layer's PRE, fills skipped whole.
+    volatile uint16_t noteLoop = 0;
+    bool notePre[kLayerLibrarySize] = {true, true, true, true, true, true, true, true, true, true};
+    bool noteFillSkip[kLayerLibrarySize] = {false};
+    bool note_plays(uint8_t layerNum_, uint16_t note_);
+    void note_restartLoops();
+    void note_select();
+    bool note_validSelection();
+    uint8_t note_effectiveVelocity(const Beat& beat_) const;
+    void note_step(EncoderFunc function_, bool up_);
+    void note_clear();
+    void lcd_drawNoteMenu();
+    void lcd_drawNote_Data();
+    void lcd_drawNoteOverview();
     void autosave_setInterval(uint8_t interval_);
     void autosave_markClean();
     void autosave_scanFile(uint8_t slot_, AutosaveFile& file_);
@@ -1126,7 +1140,7 @@ class Controller {
     void layerSong_beatRight();
     void layerSong_beatLeft();
 
-    void layerSong_setBeat(uint8_t layerNum_, uint8_t bankNum_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_);
+    void layerSong_setBeat(uint8_t layerNum_, uint8_t bankNum_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_ = 0);
     void layerSong_setSelectedBeatFill(uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_);
     void layerSong_setSelectedBeatFillTime(uint8_t fillTime_);
     void layerSong_setSelectedBeatFillLevel(uint8_t fillLevel_);

@@ -550,15 +550,14 @@ void Controller::update() {
                 if ((!layer.mute) && (layer.samplePlay))
                     layer_playBeat(layerNum, kNumberDataLibrary[level].powMultiplier);
 
-                // Write note to the current sequencer step if Recording is enabled. Beats store
-                // FLAT or GHOST for now: soft notes (velocity below 64) record as GHOST.
+                // Write note to the current sequencer step if Recording is enabled, with the
+                // velocity it came with (BeatNote.h).
                 if (recordActive) {
-                    const uint8_t pattern = (noteEvent.data2 < 64) ? 1 : 0;
                     if (!metronome.precountState) {
-                        layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, pattern, 0, 0, true);
+                        layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true, noteEvent.data2);
                     } else {
                         // Note landed during precount; commit it to position 0 once playback starts.
-                        precountPendingBeat[layerNum] = static_cast<uint8_t>(pattern + 1);
+                        precountPendingBeat[layerNum] = static_cast<uint8_t>(noteEvent.data2 + 1);
                     }
                 }
             }
@@ -1660,7 +1659,7 @@ void Controller::keyboard_action() {
                                     layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true);
                                 } else {
                                     // Hit landed during precount; commit it to position 0 once playback starts.
-                                    precountPendingBeat[layerNum] = 1;  // FLAT
+                                    precountPendingBeat[layerNum] = 1;  // pads: velocity from the pattern
                                 }
                             }
                         }
@@ -2324,6 +2323,10 @@ void Controller::keyboard_action() {
                                             euclid_clear();
                                             break;
 
+                                        case NOTE_MENU:
+                                            note_clear();
+                                            break;
+
                                         default:
                                             break;
                                     }
@@ -2701,9 +2704,14 @@ void Controller::keyboard_action() {
 
                             case KEY_LAYER_SONG:
                                 keyboard.layerSongKeyPress = false;
-                                // Song <-> EUCLID, or the song page from an instrument page.
+                                // Song -> EUCLID -> NOTE -> song, or the song page from an instrument page.
                                 if (!layerModKeyUsed && !alertFlag && (selectedLayerNum != -1) && layerPageMenu()) {
-                                    (menu == LAYER_SONG_MENU) ? euclid_select() : layerSong_select(selectedLayerNum, activeSongBank);
+                                    if (menu == LAYER_SONG_MENU)
+                                        euclid_select();
+                                    else if (menu == EUCLID_MENU)
+                                        note_select();
+                                    else
+                                        layerSong_select(selectedLayerNum, activeSongBank);
                                 }
                                 break;
 
@@ -4083,6 +4091,14 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             euclid_step(encoder[encoderNum_].function, true);
             break;
 
+        case ENC_NOTE_BEAT:
+        case ENC_NOTE_VEL:
+        case ENC_NOTE_PROB:
+        case ENC_NOTE_COND:
+        case ENC_NOTE_NUDGE:
+            if (menu == NOTE_MENU) note_step(encoder[encoderNum_].function, true);
+            break;
+
         case ENC_CHAIN_STEP:
         case ENC_CHAIN_BANK:
         case ENC_CHAIN_REPEATS:
@@ -4667,6 +4683,14 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_EUC_MODE:
         case ENC_EUC_ACCENTS:
             euclid_step(encoder[encoderNum_].function, false);
+            break;
+
+        case ENC_NOTE_BEAT:
+        case ENC_NOTE_VEL:
+        case ENC_NOTE_PROB:
+        case ENC_NOTE_COND:
+        case ENC_NOTE_NUDGE:
+            if (menu == NOTE_MENU) note_step(encoder[encoderNum_].function, false);
             break;
 
         case ENC_CHAIN_STEP:
@@ -8706,6 +8730,10 @@ void Controller::lcd_drawMenuIcon(Menu menu_) {
                 iconStr = "EU";
                 break;
 
+            case NOTE_MENU:
+                iconStr = "NT";
+                break;
+
             case SONG_MENU:
                 iconStr = "SG";
                 break;
@@ -8965,6 +8993,7 @@ void Controller::lcd_transitionMenu() {
         case ROUTING_MENU:
         case EUCLID_MENU:
         case SONG_MENU:
+        case NOTE_MENU:
             // Remove the chain overview / pattern and restore the tab divider it covered.
             lcd.setBackColor(BLACK);
             lcd.setForeColor(GRAY_50);
@@ -9042,6 +9071,12 @@ void Controller::lcd_transitionMenu() {
 
         case EUCLID_MENU:
             // Tabs 2-3 hold the pattern.
+            lcd.setBackColor(BLACK);
+            lcd.clearRect(493, 29, 325, 60);
+            break;
+
+        case NOTE_MENU:
+            // Tabs 2-3 hold the selected note.
             lcd.setBackColor(BLACK);
             lcd.clearRect(493, 29, 325, 60);
             break;
@@ -13458,7 +13493,7 @@ void Controller::preMenuLayerClear() {
 
     // 3. LAYER SONG / EUCLID MENU CLEANUP
     // Clear selected beat/layer and redraw layer tab when leaving the layer song or EUCLID page.
-    if ((preMenu == LAYER_SONG_MENU) || (preMenu == EUCLID_MENU)) {
+    if ((preMenu == LAYER_SONG_MENU) || (preMenu == EUCLID_MENU) || (preMenu == NOTE_MENU)) {
         if ((layerLibrary[selectedLayerNum].bankLibrary[activeSongBank].lastActiveBeatNum != -1) && (selectedBeatNum != -1)) lcd_drawBeat(selectedLayerNum, activeSongBank, selectedBeatNum, false);
         uint8_t layerNum = selectedLayerNum;
         selectedLayerNum = -1;
@@ -21479,7 +21514,7 @@ void Controller::lcd_drawSongOverview() {
 
 bool Controller::layerPageMenu() const {
     /// @brief True on a page of one layer: instrument pages 1-3, song, EUCLID.
-    return (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU) || (menu == LAYER_SONG_MENU) || (menu == EUCLID_MENU);
+    return (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU) || (menu == LAYER_SONG_MENU) || (menu == EUCLID_MENU) || (menu == NOTE_MENU);
 }
 
 void Controller::euclid_select() {
@@ -21565,6 +21600,208 @@ void Controller::euclid_step(EncoderFunc function_, bool up_) {
     }
     lcd_drawEuclid_Data();
     euclid_apply();
+}
+
+/* NOTE page (BeatNote.h) ----------------------------------------------------*/
+
+void Controller::note_select() {
+    /// @brief Opens the NOTE page for the selected layer (LAYER SONG tapped on the EUCLID page):
+    /// velocity, chance, condition and nudge of one beat, or of all beats with ADD held.
+
+    if ((menu == NOTE_MENU) || (selectedLayerNum == -1)) return;
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    if (bank.lastActiveBeatNum == -1) {
+        selectedBeatNum = -1;
+    } else if ((selectedBeatNum < 0) || (selectedBeatNum > bank.lastActiveBeatNum)) {
+        selectedBeatNum = 0;
+    }
+
+    preMenu = menu;
+    preMenuTab = menuTab;
+    menuTab = -1;  // every field has its own encoder
+    menu = NOTE_MENU;
+    lcd_transitionMenu();
+    lcd_transitionSelect();
+    lcd_drawNoteMenu();
+    if (selectedBeatNum != -1) lcd_drawBeat(selectedLayerNum, activeSongBank, static_cast<uint8_t>(selectedBeatNum), true);
+    encoder_update();
+}
+
+bool Controller::note_validSelection() {
+    /// @brief Keeps the selected beat inside the bank (beats can come and go while on the page).
+    if (selectedLayerNum == -1) return false;
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    if (bank.lastActiveBeatNum == -1) {
+        selectedBeatNum = -1;
+        return false;
+    }
+    if ((selectedBeatNum < 0) || (selectedBeatNum > bank.lastActiveBeatNum)) selectedBeatNum = 0;
+    return true;
+}
+
+uint8_t Controller::note_effectiveVelocity(const Beat& beat_) const {
+    /// @brief The velocity a beat plays with: its own, or its pattern's (FLAT 127, GHOST 64, MUTED 0).
+    if (beat_.getVelocity() != 0) return beat_.getVelocity();
+    if ((beat_.getFillType() == 0) && (beat_.getFillPattern() == 1)) return 64;
+    if ((beat_.getFillType() == 0) && (beat_.getFillPattern() == 2)) return 0;
+    return 127;
+}
+
+void Controller::note_step(EncoderFunc function_, bool up_) {
+    /// @brief Steps one NOTE field for the selected beat; with ADD held, VELOCITY, CHANCE and
+    /// NUDGE move every beat of the bank by the same amount and CONDITION sets them all alike.
+
+    if (!note_validSelection()) {
+        lcd_drawNote_Data();
+        lcd_drawNoteOverview();
+        return;
+    }
+    Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    const uint8_t last = static_cast<uint8_t>(bank.lastActiveBeatNum);
+    const bool all = keyboard.shiftKeyPress;
+    const int8_t dir = up_ ? 1 : -1;
+
+    if (function_ == ENC_NOTE_BEAT) {
+        lcd_drawBeat(selectedLayerNum, activeSongBank, static_cast<uint8_t>(selectedBeatNum), false);
+        selectedBeatNum = up_ ? ((selectedBeatNum < last) ? selectedBeatNum + 1 : 0) : ((selectedBeatNum > 0) ? selectedBeatNum - 1 : last);
+        lcd_drawBeat(selectedLayerNum, activeSongBank, static_cast<uint8_t>(selectedBeatNum), true);
+    } else {
+        const Beat& selected = bank.beatLibrary[selectedBeatNum];
+        const uint8_t cond = noteCondStep(noteCondCode(selected.getNote()), up_);
+        for (uint8_t k = 0; k <= last; k++) {
+            if (!all && (k != selectedBeatNum)) continue;
+            Beat& beat = bank.beatLibrary[k];
+            switch (function_) {
+                case ENC_NOTE_VEL: {
+                    int16_t v = static_cast<int16_t>(note_effectiveVelocity(beat) + dir);
+                    if (v < 1) v = 1;
+                    if (v > 127) v = 127;
+                    beat.setVelocity(static_cast<uint8_t>(v));
+                } break;
+                case ENC_NOTE_PROB:
+                    beat.setNote(noteWithChancePercent(beat.getNote(), static_cast<int16_t>(noteChancePercent(beat.getNote()) + 5 * dir)));
+                    break;
+                case ENC_NOTE_COND:
+                    beat.setNote(noteWithCond(beat.getNote(), cond));
+                    break;
+                case ENC_NOTE_NUDGE:
+                    beat.setNote(noteWithNudge(beat.getNote(), static_cast<int16_t>(noteNudge(beat.getNote()) + dir)));
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+    lcd_drawNote_Data();
+    lcd_drawNoteOverview();
+}
+
+void Controller::note_clear() {
+    /// @brief CLEAR on the NOTE page: the selected beat (ADD held: every beat of the bank) plays
+    /// as before again: velocity from its pattern, 100%, always, not nudged.
+    if (!note_validSelection()) return;
+    Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    for (int8_t k = 0; k <= bank.lastActiveBeatNum; k++) {
+        if (keyboard.shiftKeyPress || (k == selectedBeatNum)) bank.beatLibrary[k].resetNote();
+    }
+    lcd_drawNote_Data();
+    lcd_drawNoteOverview();
+}
+
+// NOTE page fields (index -> tab): NOTE, VELOCITY | the note | CHANCE, CONDITION, NUDGE.
+static const uint8_t kNoteFields = 5;
+static const uint8_t kNoteTab[kNoteFields] = {0, 1, 4, 5, 6};
+
+void Controller::lcd_drawNoteMenu() {
+    /// @brief Draws the NOTE page: fields and the selected note.
+    lcd_drawMenuIcon(NOTE_MENU);
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kDataMenuNum + selectedLayerNum, 1, kMenuNumX, kMenuNumY);
+    for (uint8_t f = 0; f < kNoteFields; f++) {
+        const uint8_t tab = kNoteTab[f];
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_NOTE_BEAT + f].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[tab], kMenuHeaderY[tab]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_NOTE_BEAT + f].sign, kMenuSignTextSize, kMenuSignBoxX[tab], kMenuSignBoxY[tab]);
+    }
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText("          ", kMenuHeaderTextSize, kMenuHeaderX[7], kMenuHeaderY[7]);
+    lcd_drawNote_Data();
+    lcd_drawNoteOverview();
+}
+
+void Controller::lcd_drawNote_Data() {
+    /// @brief Draws the NOTE field values of the selected beat.
+    char text[kNoteFields][kMenuDataTextSize + 1];
+    if (!note_validSelection()) {
+        for (uint8_t f = 0; f < kNoteFields; f++) memcpy(text[f], "         -", sizeof(text[f]));
+    } else {
+        const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+        const Beat& beat = bank.beatLibrary[selectedBeatNum];
+        char wide[32];
+        snprintf(wide, sizeof(wide), "%4u OF %2u", static_cast<unsigned>(selectedBeatNum + 1), static_cast<unsigned>(bank.lastActiveBeatNum + 1));
+        memcpy(text[0], wide, kMenuDataTextSize);
+        text[0][kMenuDataTextSize] = 0;
+        if (beat.getVelocity() != 0) {
+            snprintf(text[1], sizeof(text[1]), "%10u", static_cast<unsigned>(beat.getVelocity()));
+        } else if (beat.getFillType() != 0) {
+            memcpy(text[1], "      FILL", sizeof(text[1]));
+        } else {
+            memcpy(text[1], (beat.getFillPattern() == 1) ? "     GHOST" : ((beat.getFillPattern() == 2) ? "     MUTED" : "      FLAT"), sizeof(text[1]));
+        }
+        snprintf(text[2], sizeof(text[2]), "%10u", static_cast<unsigned>(noteChancePercent(beat.getNote())));
+        noteCondName(noteCondCode(beat.getNote()), text[3], sizeof(text[3]));
+        const int nudge = noteNudgePercent(beat.getNote());
+        (nudge == 0) ? snprintf(text[4], sizeof(text[4]), "%10d", 0) : snprintf(text[4], sizeof(text[4]), "%+10d", nudge);
+    }
+    lcd_setMenuDataState(WHITE);
+    for (uint8_t f = 0; f < kNoteFields; f++) {
+        const uint8_t tab = kNoteTab[f];
+        lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[tab], kMenuDataY[tab]);
+    }
+}
+
+void Controller::lcd_drawNoteOverview() {
+    /// @brief The selected note in words, in the top-right area (tabs 2-3), and the keys.
+    const uint16_t kX = 494, kY = 32, kLineStep = 11, kAreaX = 493, kAreaY = 30, kAreaW = 325, kAreaH = 60;
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(kAreaX, kAreaY, kAreaW, kAreaH);
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(LEFT);
+    char line[44];
+    int len;
+    if (!note_validSelection()) {
+        len = snprintf(line, sizeof(line), "NO BEATS IN THIS BANK");
+        lcd.setForeColor(GRAY_75);
+        if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY);
+        return;
+    }
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    const Beat& beat = bank.beatLibrary[selectedBeatNum];
+    char position[32];
+    beatListPosition(beat.getStartInterval(), barInterval, measureInterval, position, sizeof(position));
+    uint8_t set = 0;
+    for (int8_t k = 0; k <= bank.lastActiveBeatNum; k++) {
+        if (!noteIsDefault(bank.beatLibrary[k].getVelocity(), bank.beatLibrary[k].getNote())) set++;
+    }
+    len = snprintf(line, sizeof(line), "NOTE %d AT %s", selectedBeatNum + 1, position);
+    lcd.setForeColor(CYAN);
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY);
+
+    char cond[12];
+    noteCondName(noteCondCode(beat.getNote()), cond, sizeof(cond));
+    const char* c = cond;
+    while (*c == ' ') c++;
+    len = snprintf(line, sizeof(line), "VEL %u  %u%%  %s", static_cast<unsigned>(note_effectiveVelocity(beat)), static_cast<unsigned>(noteChancePercent(beat.getNote())), c);
+    lcd.setForeColor(WHITE);
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + kLineStep);
+    len = snprintf(line, sizeof(line), "%u OF %d BEATS HAVE SETTINGS", static_cast<unsigned>(set), bank.lastActiveBeatNum + 1);
+    lcd.setForeColor(GRAY_75);
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 2 * kLineStep);
+    len = snprintf(line, sizeof(line), "ADD+TURN: ALL BEATS");
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 3 * kLineStep);
+    len = snprintf(line, sizeof(line), "CLEAR: RESET  HOLD FILL: FILL");
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 4 * kLineStep);
 }
 
 // EUCLID page fields (index -> tab): STEPS, HITS | pattern | ROTATE, GRID, MODE, ACCENTS.
@@ -21925,9 +22162,14 @@ void Controller::layerInst_paste() {
 void Controller::layerSong_select(uint8_t layerNum_, uint8_t bankNum_) {
     /// @brief Enters Layer Song menu and focuses requested layer/bank context.
 
-    // Same layer again on the song page: next page (EUCLID), as I does for the instrument pages.
+    // Same layer again on the song page: next page (EUCLID, then NOTE), as I does for the
+    // instrument pages.
     if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_)) {
         euclid_select();
+        return;
+    }
+    if ((menu == EUCLID_MENU) && (selectedLayerNum == layerNum_)) {
+        note_select();
         return;
     }
 
@@ -22184,7 +22426,7 @@ uint16_t Controller::layerSong_quantizeInterval(uint16_t interval_) const {
     return startInterval;
 }
 
-void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_) {
+void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_) {
     /// @brief Inserts a beat into target bank with quantization, ordering, and UI sync.
 
     Layer& layer = layerLibrary[layerNum_];
@@ -22263,6 +22505,7 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
         if (!duplicate) {
             bank.setBeat(beatNum, startInterval, endInterval);
             bank.setBeatFill(beatNum, fillType_, fillPattern_, fillTime_, fillLevel_);
+            bank.beatLibrary[beatNum].setVelocity(velocity_);  // 0 = from the pattern (BeatNote.h)
             layerSong_calculateLastActiveBeatNum(layerNum_, bankTab_);
             layerSong_calculatePlayBeatNum(layerNum_, bankTab_, playInterval);
             if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_) && (selected_)) {
@@ -22918,6 +23161,10 @@ void Controller::layerSong_selectBank(uint8_t bankNum_) {
                 lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
                 lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
                 lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
+            } else if (menu == NOTE_MENU) {
+                (layerLibrary[selectedLayerNum].bankLibrary[activeSongBank].lastActiveBeatNum != -1) ? selectedBeatNum = 0 : selectedBeatNum = -1;
+                lcd_drawNote_Data();
+                lcd_drawNoteOverview();
             }
 
             // 4. GLOBAL LAYER REFRESH
@@ -23000,6 +23247,7 @@ void Controller::record() {
         stopFlag = false;
         resetFlag = false;
         midi_clockOnPlayStart();
+        note_restartLoops();
         playActive = true;
         if (io.syncOut == 1) {
             HAL_GPIO_WritePin(SYNC_OUT_GATE_GPIO_Port, SYNC_OUT_GATE_Pin, GPIO_PIN_SET);
@@ -23066,6 +23314,7 @@ void Controller::play() {
     if (songChain.active && (playInterval == 0)) song_toStartBank();
 
     midi_clockOnPlayStart();
+    note_restartLoops();
     stopFlag = false;
     resetFlag = false;
     playActive = true;
@@ -23176,6 +23425,7 @@ void Controller::reset() {
     // Song mode: RESET goes back to the first step of the chain.
     chainRestart(songChain, chainPlay);
     chainActionFlag = true;
+    note_restartLoops();  // RESET: the next loop is the first again (trig conditions)
 
     if ((playInterval != 0) || (metronome.precountState)) {
         // 3. PRECOUNT STATE RESET
@@ -24787,6 +25037,28 @@ float Controller::processAudioLpfHelper(uint8_t lpfNum_, float audio_) {
 /* Interrupt Functions -------------------------------------------------------*/
 ////////////////////////////////////////////////////////////////////////////////
 
+bool Controller::note_plays(uint8_t layerNum_, uint16_t note_) {
+    /// @brief Whether a beat with these note settings plays now (BeatNote.h): its condition (loop
+    /// of the bank, FILL key, the layer's PRE) and its chance. Called from the sequencer tick.
+    if (note_ == 0) return true;  // no condition, 100%: nothing to roll, PRE unchanged
+    NoteState state;
+    state.loop = noteLoop;
+    state.fillHeld = keyboard.fillKeyPress;
+    state.pre = notePre[layerNum_];
+    const bool plays = notePlays(note_, state, static_cast<uint16_t>(rand() % 10000));
+    notePre[layerNum_] = state.pre;
+    return plays;
+}
+
+void Controller::note_restartLoops() {
+    /// @brief Play from stop, RESET or a new bank: the next loop is the first (1ST, A:B).
+    noteLoop = 0;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        notePre[i] = true;
+        noteFillSkip[i] = false;
+    }
+}
+
 void Controller::interruptPlay() {
     /// @brief The central heartbeat of the sequencer. Manages metronome pre-counts, real-time beat triggering for all layers (simple and complex fills), hardware sync pulses, and LFO phase synchronization.
 
@@ -24841,9 +25113,9 @@ void Controller::interruptPlay() {
                 // time for the very next tick's beat-trigger pass to play them in sync.
                 for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                     if (precountPendingBeat[i]) {
-                        const uint8_t pattern = static_cast<uint8_t>(precountPendingBeat[i] - 1);
+                        const uint8_t velocity = static_cast<uint8_t>(precountPendingBeat[i] - 1);
                         precountPendingBeat[i] = 0;
-                        layerSong_setBeat(i, activeSongBank, playInterval, 0, pattern, 0, 0, true);
+                        layerSong_setBeat(i, activeSongBank, playInterval, 0, 0, 0, 0, true, velocity);
                     }
                 }
             }
@@ -24893,20 +25165,13 @@ void Controller::interruptPlay() {
                     // SIMPLE BEAT HANDLING
                     // Trigger simple beats at the main beat interval.
                     if ((beat.getFillType() == 0) && (beat.getFillPattern() <= 2) && (beat.getFillTarget() == NULL_FILL_TARGET)) {
-                        if (beat.getStartInterval() == playInterval) {
-                            if ((!layer.mute) && (layer.samplePlay)) {
-                                switch (beat.getFillPattern()) {
-                                    case 0:
-                                        fillVolMultiplier = kNumberDataLibrary[100].powMultiplier;
-                                        break;  // FLAT: 100% velocity
-
-                                    case 1:
-                                        fillVolMultiplier = kNumberDataLibrary[50].powMultiplier;
-                                        break;  // GHOST: 50% velocity
-
-                                    case 2:
-                                        break;  // MUTED: 0% velocity
-                                }
+                        // NUDGE moves when the beat plays (BeatNote.h); without one it is its start.
+                        if (noteDueInterval(beat.getStartInterval(), beat.getNote(), songInterval) == playInterval) {
+                            // Condition and chance first (they also feed PRE), then the level:
+                            // FLAT 100 / GHOST 50 unless the beat has its own velocity; MUTED stays silent.
+                            if (note_plays(i, beat.getNote()) && (!layer.mute) && (layer.samplePlay) && (beat.getFillPattern() != 2)) {
+                                const uint8_t level = noteLevel(beat.getVelocity(), (beat.getFillPattern() == 0) ? 100 : 50);
+                                fillVolMultiplier = kNumberDataLibrary[level].powMultiplier;
                             }
                             if (fillVolMultiplier > 0.0f) layer_playBeat(layer.number, fillVolMultiplier);
 
@@ -24922,8 +25187,12 @@ void Controller::interruptPlay() {
                     else if ((beat.getFillTarget() != NULL_FILL_TARGET) && (playBeatMicroNum != -1)) {
                         BeatMicro& beatMicro = bank.beatFillLibrary[beat.getFillTarget()].beatMicroLibrary[playBeatMicroNum];
                         if (beatMicro.getInterval() == playInterval) {
-                            if ((!layer.mute) && (layer.samplePlay) && ((playBeatMicroNum == 0) || ((playBeatMicroNum != 0) && (layer.fill)))) {
+                            // The whole fill plays or not (condition and chance at its first hit);
+                            // its own velocity scales every hit.
+                            if (playBeatMicroNum == 0) noteFillSkip[i] = !note_plays(i, beat.getNote());
+                            if (!noteFillSkip[i] && (!layer.mute) && (layer.samplePlay) && ((playBeatMicroNum == 0) || ((playBeatMicroNum != 0) && (layer.fill)))) {
                                 fillVolMultiplier = kNumberDataLibrary[beatMicro.getLevel()].powMultiplier;
+                                if (beat.getVelocity() != 0) fillVolMultiplier *= kNumberDataLibrary[noteLevel(beat.getVelocity(), 100)].powMultiplier;
                                 if (fillVolMultiplier > 0.0f) layer_playBeat(layer.number, fillVolMultiplier);
                             }
 
@@ -24980,6 +25249,7 @@ void Controller::interruptPlay() {
                 // A manual bank change wins (song_manualBank already moved the chain); otherwise
                 // song mode says which bank comes next (SongChain.h).
                 bool chainEnded = false;
+                const uint8_t bankBefore = activeSongBank;
                 if (bankShiftFlag) {
                     bankShiftFlag = false;
                     activeSongBank = targetSongBank;
@@ -25001,6 +25271,9 @@ void Controller::interruptPlay() {
                     }
                     chainActionFlag = true;
                 }
+
+                // Trig conditions count the loops of a bank (BeatNote.h): a new bank starts at 0.
+                noteLoop = (activeSongBank != bankBefore) ? 0 : static_cast<uint16_t>(noteLoop + 1);
 
                 // Reset all layer playback pointers for the new loop
                 for (uint8_t i = 0; i < kLayerLibrarySize; i++) {

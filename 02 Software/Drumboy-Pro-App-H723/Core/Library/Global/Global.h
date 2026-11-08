@@ -1249,6 +1249,12 @@ typedef enum {
 
     ENC_METRO_AUTOSAVE                              = 0x79,  // autosave interval (Metronome tab 6)
 
+    ENC_NOTE_BEAT                                   = 0x7A,  // NOTE page (BeatNote.h)
+    ENC_NOTE_VEL                                    = 0x7B,
+    ENC_NOTE_PROB                                   = 0x7C,
+    ENC_NOTE_COND                                   = 0x7D,
+    ENC_NOTE_NUDGE                                  = 0x7E,
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1302,7 +1308,10 @@ const EncoderFunc encoderLocalFunction[][8] = {
     {ENC_EUC_STEPS, ENC_EUC_HITS, ENC_FNC_NONE, ENC_FNC_NONE, ENC_EUC_ROTATE, ENC_EUC_GRID, ENC_EUC_MODE, ENC_EUC_ACCENTS},
     // SONG_MENU = 0x16
     // Tabs 2-3 show the chain.
-    {ENC_CHAIN_STEP, ENC_CHAIN_BANK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_CHAIN_REPEATS, ENC_CHAIN_LENGTH, ENC_CHAIN_END, ENC_CHAIN_PLAY}};
+    {ENC_CHAIN_STEP, ENC_CHAIN_BANK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_CHAIN_REPEATS, ENC_CHAIN_LENGTH, ENC_CHAIN_END, ENC_CHAIN_PLAY},
+    // NOTE_MENU = 0x17
+    // Tabs 2-3 show the selected note.
+    {ENC_NOTE_BEAT, ENC_NOTE_VEL, ENC_FNC_NONE, ENC_FNC_NONE, ENC_NOTE_PROB, ENC_NOTE_COND, ENC_NOTE_NUDGE, ENC_FNC_NONE}};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1458,7 +1467,13 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_CHAIN_END,           ENC_RES_S, "END       ", "SONG  ", "   ", false},
     {ENC_CHAIN_PLAY,          ENC_RES_S, "CHAIN     ", "SONG  ", "   ", false},
 
-    {ENC_METRO_AUTOSAVE,      ENC_RES_S, "AUTOSAVE  ", "METRO ", "MIN", false}
+    {ENC_METRO_AUTOSAVE,      ENC_RES_S, "AUTOSAVE  ", "METRO ", "MIN", false},
+
+    {ENC_NOTE_BEAT,           ENC_RES_M, "NOTE      ", "NOTE  ", "   ", false},
+    {ENC_NOTE_VEL,            ENC_RES_F, "VELOCITY  ", "NOTE  ", "   ", false},
+    {ENC_NOTE_PROB,           ENC_RES_M, "CHANCE    ", "NOTE  ", "  %", false},
+    {ENC_NOTE_COND,           ENC_RES_M, "CONDITION ", "NOTE  ", "   ", false},
+    {ENC_NOTE_NUDGE,          ENC_RES_M, "NUDGE     ", "NOTE  ", "  %", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -1585,7 +1600,8 @@ typedef enum {
     TEST_MENU                                       = 0x13,
     ROUTING_MENU                                    = 0x14,  // MIXER pressed again
     EUCLID_MENU                                     = 0x15,  // LAYER SONG tapped on the Layer Song page
-    SONG_MENU                                       = 0x16   // song mode: the SONG key tapped on its own
+    SONG_MENU                                       = 0x16,  // song mode: the SONG key tapped on its own
+    NOTE_MENU                                       = 0x17   // per-note settings: LAYER SONG tapped on the EUCLID page
 } Menu;
 
 typedef enum {

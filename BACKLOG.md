@@ -65,12 +65,12 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 **Sprint 4, "MIDI, autosave and notes" (proposed 2026-11-07).** Two releases, so the MIDI fix and the safety net reach the device first.
 
-*V1.13 "MIDI and autosave"* (built, waiting for the hardware test)
+*V1.13 "MIDI and autosave"* (done, tested on hardware)
 1. ✅ MIDI IN that loses nothing: USART1 RX FIFO or a circular DMA ring, an overrun counter shown on the test page, and a hardware-free parser (`MidiParser.h`) with running status, Note On velocity 0 = Note Off, and a 16-event queue. From [30](#30-midi-inout-velocity-running-status-note-queue-cc); CC input stays for later. (S–M)
 2. ✅ Incoming notes play at their velocity; MIDI out sends the velocity that played. From [30](#30-midi-inout-velocity-running-status-note-queue-cc). (S)
 3. ✅ Clock slave locked to the incoming ticks (`MidiClock.h`): the playhead never runs ahead of the clock, microsecond tempo measurement, fractional tempo inside; no independent clock out while slaved (forward the incoming ticks or none), doubled ticks rejected. [34](#34-midi-clock-slave-drift-and-200-bpm-runaway). (M)
 4. ✅ Autosave, part A: checksum-based change detection, AUTOSAVE OFF/2/5/10/20 min, two alternating reserved files written via rename, `RESTORE AUTOSAVE?` at power-on, autosave before LOAD over unsaved work. [32](#32-autosave). (M)
-5. Hardware test with Loopy Pro → Scarlett: 30 minutes at a fractional tempo in time, no runaway with a MIDI loop set up on purpose, overrun counter at 0 with clock and dense notes, power pulled mid-session restores the autosave. Then package, app (MIDI and autosave explained in their tabs), release.
+5. ✅ Hardware test with Loopy Pro → Scarlett: 30 minutes at a fractional tempo in time, no runaway with a MIDI loop set up on purpose, overrun counter at 0 with clock and dense notes, power pulled mid-session restores the autosave. Then package, app (MIDI and autosave explained in their tabs), release.
 
 *V1.14 "Notes"*
 6. Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)

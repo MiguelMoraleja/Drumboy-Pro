@@ -1463,7 +1463,7 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
-  { v: "V1.13", date: "2026-11-07", status: "Tested on hardware · release pending",
+  { v: "V1.13", date: "2026-11-07", status: "GitHub release v1.13 · tested", pub: true,
     nw: ["Locked to an incoming MIDI clock: the Drumboy plays only as far as each clock allows, so fractional tempos (Loopy Pro) no longer drift",
          "No own MIDI clock or start/stop on MIDI OUT while following one, so a MIDI loop can't run away to 200 BPM; the sync jack follows the incoming clock",
          "MIDI notes play at their velocity; running status and chords; velocity 0 is silent; soft notes record as GHOST",

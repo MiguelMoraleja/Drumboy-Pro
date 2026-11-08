@@ -43,6 +43,7 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 33 | [Per-note editing: velocity, probability and more](#33-per-note-editing-velocity-probability-and-more) | Feature | M–L |
 | 34 | [MIDI clock slave: drift and 200 BPM runaway](#34-midi-clock-slave-drift-and-200-bpm-runaway) | Bug | M |
 | 35 | [LFO destinations for the per-note settings](#35-lfo-destinations-for-the-per-note-settings) | Feature | M |
+| 36 | [Per-layer panning](#36-per-layer-panning) | Feature | A: S–M, B: L |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -86,7 +87,7 @@ Every step keeps the rules: hardware-free logic in `Core/Library/Global/*.h` wit
 
 **On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
-**Later:** [3](#3-lfos-cant-modulate-filters-or-effects) (needs 9), together with [24](#24-velocity-modulates-a-parameter-lxr) and [35](#35-lfo-destinations-for-the-per-note-settings) (one widening of what modulation can reach), [6](#6-routing-extra-effect-slots) (needs CPU measurement), the rest of [10](#10-housekeeping) alongside other work.
+**Later:** [3](#3-lfos-cant-modulate-filters-or-effects) (needs 9), together with [24](#24-velocity-modulates-a-parameter-lxr), [35](#35-lfo-destinations-for-the-per-note-settings) and [36](#36-per-layer-panning) part A (one format extension for the new per-layer bytes), [6](#6-routing-extra-effect-slots) (needs CPU measurement), the rest of [10](#10-housekeeping) alongside other work.
 
 ---
 
@@ -505,4 +506,35 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 - **Tests:** hardware-free offset math in `BeatNote.h` with host tests (clamping at 1/127, 0/100 %, ±12; depth 0 = no change; nudge offsets keep neighbours from swapping, so the ±12 limit stays).
 
 **Done when.** A RANDOM LFO on NOTE VEL makes a straight 16th hi-hat vary in loudness while its accents stay louder than the rest; a SINE LFO on CHANCE thins the layer out and fills it back over the LFO's period; with the LFO off or STYLE off the pattern plays exactly as written; songs from V1.14 load unchanged.
+
+### 36. Per-layer panning
+
+**Asked by the owner (2026-11-08).**
+
+**Today.**
+- **One PAN only:** the Mixer page has a single PAN (0–40, centre 20, `mixer.pan`, saved in the system preset and the song's kit block). It is a balance on the whole output: `mixer.volumeLeftFloat` and `mixer.volumeRightFloat` are applied at the very end of `processAudioBlock`, after the reverb.
+- **Mono up to the reverb:** layers are summed into one channel and EQ, filters and effects process mono ("copy mono accumulation to stereo output" when an effect is bypassed).
+- **The reverb is the only stereo:** its SURROUND makes the right side. There is no per-layer or per-note pan.
+
+**Proposal**, in three parts:
+
+- **A. Pan on the direct path (S–M), first.**
+  - **Field:** a PAN per layer (e.g. 0–40 like the mixer, constant-power law) on an instrument page.
+  - **Where it acts:** only on what a layer sends straight to MASTER (layer OUT = MASTER in the routing patch). Those layers are summed into a separate left/right direct bus, added to the output before master volume and the mixer PAN.
+  - **Other routes:** layers routed through EQ, filters or effects stay centred, as now. The field shows that when the layer's OUT isn't MASTER, e.g. the header dimmed like unused modules on the ROUTING page.
+  - **CPU:** two gains per active layer per sample, plus one stereo sum.
+  - **Storage:** one byte per layer. The layer record in the kit block is full (25 bytes), so it needs the same format extension as [3](#3-lfos-cant-modulate-filters-or-effects), [24](#24-velocity-modulates-a-parameter-lxr) and [35](#35-lfo-destinations-for-the-per-note-settings): do them together, one change.
+  - **Old songs:** load centred, so they sound the same.
+- **B. Stereo all the way (L), only after measuring.**
+  - **Change:** the whole chain processes left and right, and PAN works for every route.
+  - **Cost:** roughly doubles the DSP cost of EQ, filters and effects. V1.04 worst case was 34 % of the audio block, more since routing.
+  - **Gate:** measure with `make PROFILE=1` first, against the gate of [4](#4-routing-multiple-destinations-per-source) (< 80 % of the block, UDR/OVR = 0).
+  - **Effects:** some (delay, chorus) could become true stereo; others may need to stay mono to fit.
+- **C. Modulation, on top of A or B.**
+  - **Auto-pan:** an LFO → PAN slot per layer, in the same new LFO page as [35](#35-lfo-destinations-for-the-per-note-settings).
+  - **Pan per note:** a PAN on the NOTE page. Beats have no room left (RAM about 4 KB free since V1.14), so this waits until the song banks move to SDRAM, like phase B of [33](#33-per-note-editing-velocity-probability-and-more).
+
+**Tests.** Hardware-free pan law (`Pan.h`) with host tests: centre −3 dB per side, the ends fully one side, monotonic, and sums that don't clip more than today.
+
+**Done when (A).** Hats panned left and a shaker panned right are heard on their sides through headphones while kick and snare (through the EQ) stay centred. The mixer PAN still balances everything. CPU is measured before and after. Songs from V1.14 load centred and sound the same.
 

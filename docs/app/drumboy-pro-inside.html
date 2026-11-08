@@ -511,6 +511,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">%</span><div><b>CHANCE</b> 0–100 % in 5 % steps, rolled every loop, on top of the layer's PROB. A fill plays or not as a whole.</div></div>
           <div class="k"><span class="keycap">?</span><div><b>CONDITION:</b> <span class="mono">A:B</span> plays on loop A of every B (1:4 = first of four), <span class="mono">!A:B</span> the other loops, <span class="mono">1ST</span> only the first loop after START or a bank change, <span class="mono">PRE</span> if the layer's last conditioned beat played, <span class="mono">FILL</span> only while you hold the FILL key (and <span class="mono">!FILL</span> only when you don't).</div></div>
           <div class="k"><span class="keycap">↔</span><div><b>NUDGE</b> plays a plain beat up to 12 % of a 16th early or late, without moving it on the grid. Fills keep their timing.</div></div>
+          <div class="k"><span class="keycap">↶</span><div><b>UNDO / REDO:</b> STYLE + LEFT undoes, STYLE + RIGHT redoes the last beat or bank edit, on any page and while playing: MOVE, SHIFT ALL, insert, CLEAR, fills, paste, whole-bank paste, EUCLID, these NOTE settings and a recording take. Up to 64 steps; one knob gesture or one EUCLID visit is one step. Knob settings of the sound are not undone. LOAD, NEW and changing MEASURE/BAR/QUANTIZE start a new history.</div></div>
           <div class="k"><span class="keycap">ADD</span><div><b>ADD + turn</b> changes every beat of the bank by the same amount (CONDITION: sets them all). <b>CLEAR</b> resets the selected beat, <b>ADD + CLEAR</b> the whole bank. Songs from older firmware play exactly as before.</div></div>
         </div>
       </div>
@@ -564,7 +565,7 @@ table.rel td.new { min-width: 280px; }
     <div class="panel"><div class="tablewrap"><table class="rel" id="rel"></table></div></div>
   </section>
 
-  <footer>Built from the Drumboy Pro firmware source (<span class="mono">Controller.cpp</span>, <span class="mono">Global.h</span>): fill tables, level rules, the routing patch (<span class="mono">Routing.h</span>), Euclidean patterns, accents and beat editing (<span class="mono">Euclid.h</span>, <span class="mono">BeatList.h</span>), pitch (<span class="mono">Pitch.h</span>), song mode (<span class="mono">SongChain.h</span>), MIDI clock and velocity (<span class="mono">MidiClock.h</span>, <span class="mono">MidiParser.h</span>), autosave (<span class="mono">Autosave.h</span>), per-note settings (<span class="mono">BeatNote.h</span>) and volume math match the code. The test sounds are synthesized in the browser; the device plays your samples.</footer>
+  <footer>Built from the Drumboy Pro firmware source (<span class="mono">Controller.cpp</span>, <span class="mono">Global.h</span>): fill tables, level rules, the routing patch (<span class="mono">Routing.h</span>), Euclidean patterns, accents and beat editing (<span class="mono">Euclid.h</span>, <span class="mono">BeatList.h</span>), pitch (<span class="mono">Pitch.h</span>), song mode (<span class="mono">SongChain.h</span>), MIDI clock and velocity (<span class="mono">MidiClock.h</span>, <span class="mono">MidiParser.h</span>), autosave (<span class="mono">Autosave.h</span>), per-note settings (<span class="mono">BeatNote.h</span>), undo (<span class="mono">UndoLog.h</span>) and volume math match the code. The test sounds are synthesized in the browser; the device plays your samples.</footer>
 </div>
 
 <script>
@@ -1623,8 +1624,10 @@ const RELEASES = [
          "ADD + turn changes every beat of the bank; CLEAR resets a beat, ADD + CLEAR the bank",
          "MIDI recording keeps each note's velocity in the beat",
          "Saved in the song file after the chain; older firmware ignores it and old songs play as before",
-         "Song mode: picking a bank by hand (SONG + pads) never turns the chain off; a bank outside the chain plays one loop as a detour, then the chain goes on"],
-    fix: ["The song and NOTE pages kept the old bank's beat after a bank change at the loop end (edits went to the wrong beat)"] },
+         "Song mode: picking a bank by hand (SONG + pads) never turns the chain off; a bank outside the chain plays one loop as a detour, then the chain goes on",
+         "Undo / redo: STYLE + LEFT / STYLE + RIGHT for beat and bank edits (64 steps, also while playing)"],
+    fix: ["The song and NOTE pages kept the old bank's beat after a bank change at the loop end (edits went to the wrong beat)",
+          "The NOTE page's knobs drove the global encoder bank instead of its own fields"] },
   { v: "V1.13", date: "2026-11-07", status: "GitHub release v1.13 · tested", pub: true,
     nw: ["Locked to an incoming MIDI clock: the Drumboy plays only as far as each clock allows, so fractional tempos (Loopy Pro) no longer drift",
          "No own MIDI clock or start/stop on MIDI OUT while following one, so a MIDI loop can't run away to 200 BPM; the sync jack follows the incoming clock",

@@ -76,7 +76,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 *V1.14 "Notes"* (built, waiting for the hardware test)
 6. ✅ Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)
-7. ✅ NOTE page with VEL and PROB; MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
+7. ✅ NOTE page with VEL and PROB (plus undo/redo of beat and bank edits, [28](#28-undo-for-bank-edits-lxr)); MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
 8. ✅ COND (`A:B`, `!A:B`, `1ST`, `PRE`, `FILL` and negations) with the FILL performance key. (M)
 9. ✅ NUDGE. (S)
 10. Hardware test, package, app (a Notes tab to try VEL/PROB/COND on a pattern), release.
@@ -376,6 +376,8 @@ Reviewed from the owner's fork of the Erica Synths LXR V2 desktop firmware (Migu
 **LXR:** while recording, hold a key and the hits that pass the play position are erased. **Today:** only CLEAR (one beat or the whole layer). **Proposal:** while recording, hold CLEAR + a layer pad: beats of that layer under the play position are removed as it passes.
 
 ### 28. Undo for bank edits (LXR)
+
+**Status: done in V1.14** (`UndoLog.h`, `test_undo`). Multi-level undo and redo (STYLE + LEFT / RIGHT) for every beat and bank edit: 64 entries of one bank each in SDRAM after the bank clipboard (about 185 KB); undo/redo swap the stored bank with the live one under the interrupt lock; a knob gesture (2 s), an EUCLID visit and a recording take are one step; a whole-bank paste is one step of 10 banks. The history is cleared on LOAD, NEW, restore and when MEASURE/BAR/QUANTIZE change the grid. Sound settings (knobs) are not undoable (see the owner's choice, 2026-11-08: note level is enough).
 
 **LXR:** a backup buffer to return a pattern to how it was. **Today:** only EUCLID CLEAR. **Proposal:** one level of undo per bank for destructive edits (paste, EUCLID apply, CLEAR all, SHIFT ALL): snapshot before, a key combination to swap back. The SDRAM gap has room (one bank of 10 layers is ~28 KB, like the bank clipboard).
 

@@ -495,6 +495,7 @@ void Controller::update() {
         }
         if ((layerSongResetActionFlag) && (selectedLayerNum != -1)) {
             layerSongResetActionFlag = false;
+            undo_capture(UNDO_CLEAR, selectedLayerNum, activeSongBank);
             layerSong_resetAllBeats(selectedLayerNum, activeSongBank);
         }
 
@@ -553,6 +554,7 @@ void Controller::update() {
                 // Write note to the current sequencer step if Recording is enabled, with the
                 // velocity it came with (BeatNote.h).
                 if (recordActive) {
+                    undo_captureRecord(layerNum, activeSongBank);
                     if (!metronome.precountState) {
                         layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true, noteEvent.data2);
                     } else {
@@ -1370,6 +1372,7 @@ void Controller::adjustMeasureBarTiming() {
     /// @brief Synchronizes the sequencer grid with new timing settings and prunes invalid data.
     /// Recalculates all internal timing intervals and removes any beats that fall outside
     /// the newly defined song boundaries.
+    undoLog.clear();  // beats past the new song end are dropped: older states no longer fit
 
     // 1. REFRESH TIMING CONSTANTS
     // Rebuild timing intervals using current rhythm settings.
@@ -1655,6 +1658,7 @@ void Controller::keyboard_action() {
                             Layer& layer = layerLibrary[layerNum];
                             if ((!layer.mute) && (layer.samplePlay)) layer_playBeat(layerNum, 1.0f);
                             if (recordActive) {
+                                undo_captureRecord(layerNum, activeSongBank);
                                 if (!metronome.precountState) {
                                     layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true);
                                 } else {
@@ -1889,7 +1893,9 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_LEFT:
-                                if (!alertFlag) {
+                                if (!alertFlag && keyboard.styleKeyPress) {
+                                    undo_apply(false);  // STYLE + LEFT: undo (UndoLog.h)
+                                } else if (!alertFlag) {
                                     switch (menu) {
                                         case FILE_MENU:
                                             file_menuLeft();
@@ -1957,7 +1963,9 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_RIGHT:
-                                if (!alertFlag) {
+                                if (!alertFlag && keyboard.styleKeyPress) {
+                                    undo_apply(true);  // STYLE + RIGHT: redo (UndoLog.h)
+                                } else if (!alertFlag) {
                                     switch (menu) {
                                         case FILE_MENU:
                                             file_menuRight();
@@ -6537,6 +6545,7 @@ void Controller::autosave_restore() {
     HAL_Delay(1000);
     lcd_clearAlert();
     autosave_markClean();  // the files stay until a SAVE: the restored work is still not in a slot
+    undoLog.clear();
 }
 
 uint16_t Controller::file_noteEntryCount() {
@@ -13161,6 +13170,14 @@ void Controller::lcd_drawCopyPaste() {
         lcd.setForeColor(CYAN);
         lcd.drawText("PASTE", 5, 170, 112);
 
+        // Undo / redo (STYLE + LEFT / RIGHT).
+    } else if (textUndoFlag || textRedoFlag || textUndoNone) {
+        lcd.setForeColor(textUndoNone ? GRAY_75 : CYAN);
+        lcd.drawText(textUndoNone ? "EMPTY" : (textUndoFlag ? " UNDO" : " REDO"), 5, 170, 112);
+        textUndoFlag = textRedoFlag = textUndoNone = false;
+        textShow = true;
+        startTextTimer();
+
         // Bank full: a beat could not be added.
     } else if (textFullFlag) {
         textFullFlag = false;
@@ -13814,6 +13831,7 @@ void Controller::file_newAction() {
     reverb_reset();
 
     autosave_markClean();  // an empty song has nothing to autosave
+    undoLog.clear();
 }
 
 void Controller::file_loadSelect() {
@@ -13879,6 +13897,7 @@ void Controller::file_loadAction() {
     // Release load-in-progress flag after SD transaction completes.
     loadAction = false;
     if (alertType != ALERT_LOADERROR) autosave_markClean();
+    undoLog.clear();  // another song: its edits start a new history
 
     // 5. RESULT ALERT PRESENTATION
     // Display result alert and keep it visible for user acknowledgment.
@@ -15303,6 +15322,7 @@ void Controller::rhythm_setBar(uint8_t bar_) {
 
 void Controller::rhythm_setQuantize(uint8_t quantize_) {
     /// @brief Sets quantize grid and re-quantizes active song beats across banks.
+    undoLog.clear();  // every beat is re-quantized: older states no longer fit the grid
 
     // 1. INPUT VALIDATION
     // Accept only values inside configured quantize limits.
@@ -21366,6 +21386,80 @@ void Controller::song_toStartBank() {
 static Bank* const bankClipboard = reinterpret_cast<Bank*>(RAM_BANK_CLIPBOARD_ADDRESS);
 static_assert(RAM_BANK_CLIPBOARD_ADDRESS + kLayerLibrarySize * sizeof(Bank) <= 0xC0FB9640u, "bank clipboard must end before the images");
 
+// Undo history (UndoLog.h) in SDRAM after the bank clipboard: one Bank per entry.
+static Bank* const undoStore = reinterpret_cast<Bank*>((RAM_BANK_CLIPBOARD_ADDRESS + kLayerLibrarySize * sizeof(Bank) + 31u) & ~31u);
+static_assert(((RAM_BANK_CLIPBOARD_ADDRESS + kLayerLibrarySize * sizeof(Bank) + 31u) & ~31u) + kUndoEntries * sizeof(Bank) <= 0xC0FB9640u, "undo history must end before the images");
+
+void Controller::undo_capture(UndoKind kind_, int16_t layerNum_, uint8_t bankNum_) {
+    /// @brief Before an edit of one layer's bank: store it for undo, unless the edit joins the last
+    /// undo step (the same knob gesture, the same EUCLID visit).
+    if ((layerNum_ < 0) || (layerNum_ >= kLayerLibrarySize) || (bankNum_ >= kBankLibrarySize)) return;
+    undoRecordOpen = false;
+    uint16_t slot;
+    if (undoLog.begin(kind_, static_cast<uint8_t>(layerNum_), bankNum_, HAL_GetTick(), slot)) {
+        memcpy(static_cast<void*>(&undoStore[slot]), static_cast<const void*>(&layerLibrary[layerNum_].bankLibrary[bankNum_]), sizeof(Bank));
+    }
+}
+
+void Controller::undo_captureAllLayers(UndoKind kind_, uint8_t bankNum_) {
+    /// @brief Before an edit of a bank in every layer (whole-bank paste): one undo step.
+    undoRecordOpen = false;
+    undoLog.startGroup();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const uint16_t slot = undoLog.add(i, bankNum_);
+        memcpy(static_cast<void*>(&undoStore[slot]), static_cast<const void*>(&layerLibrary[i].bankLibrary[bankNum_]), sizeof(Bank));
+    }
+    undoLog.lastKind = kind_;
+    undoLog.lastLayer = 0xFF;
+}
+
+void Controller::undo_captureRecord(uint8_t layerNum_, uint8_t bankNum_) {
+    /// @brief A recorded hit: the take is one undo step; each layer/bank it touches is stored once.
+    if (!undoRecordOpen) {
+        undoLog.startGroup();
+        undoLog.lastKind = UNDO_RECORD;
+        undoLog.lastLayer = 0xFF;
+        undoRecordOpen = true;
+    }
+    if (undoLog.contains(layerNum_, bankNum_)) return;
+    const uint16_t slot = undoLog.add(layerNum_, bankNum_);
+    memcpy(static_cast<void*>(&undoStore[slot]), static_cast<const void*>(&layerLibrary[layerNum_].bankLibrary[bankNum_]), sizeof(Bank));
+}
+
+void Controller::undo_apply(bool redo_) {
+    /// @brief STYLE + LEFT (undo) / STYLE + RIGHT (redo): swaps the stored banks of the last step
+    /// with the live ones, each with the sequencer interrupt held off, so it works while playing.
+    uint16_t slots[kLayerLibrarySize * kBankLibrarySize];
+    const uint16_t n = redo_ ? undoLog.redo(slots, kLayerLibrarySize * kBankLibrarySize) : undoLog.undo(slots, kLayerLibrarySize * kBankLibrarySize);
+    undoRecordOpen = false;
+    if (n == 0) {
+        textUndoNone = true;
+        return;
+    }
+    for (uint16_t k = 0; k < n; k++) {
+        const UndoEntry& e = undoLog.entry[slots[k]];
+        Bank& live = layerLibrary[e.layer].bankLibrary[e.bank];
+        memcpy(static_cast<void*>(&layerSongScratch), static_cast<const void*>(&undoStore[slots[k]]), sizeof(Bank));
+        memcpy(static_cast<void*>(&undoStore[slots[k]]), static_cast<const void*>(&live), sizeof(Bank));
+        __disable_irq();
+        live = layerSongScratch;
+        layerSong_calculatePlayBeatNum(e.layer, e.bank, playInterval);
+        __enable_irq();
+        lcd_drawSong(e.layer, e.bank);
+    }
+    // The page of the selected layer shows the restored beats.
+    if (menu == EUCLID_MENU) {
+        euclidSnapshot = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+        euclidBank = activeSongBank;
+        euclidApplied = false;
+        euclidDropped = 0;
+        lcd_drawEuclidOverview();
+    } else {
+        layerPage_bankChanged();
+    }
+    redo_ ? (textRedoFlag = true) : (textUndoFlag = true);
+}
+
 void Controller::song_copyBank() {
     /// @brief SONG page, long COPY: copies the active bank of every layer (beats and fills).
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
@@ -21381,6 +21475,7 @@ void Controller::song_pasteBank() {
     /// layer is swapped in with the sequencer interrupt held off (as layerSong_commitBank does),
     /// so pasting while playing is safe. Beats past the song end (the song got shorter since the
     /// copy) are dropped.
+    if (bankCopyActive) undo_captureAllLayers(UNDO_BANK, activeSongBank);
     if (!bankCopyActive) return;
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
         memcpy(static_cast<void*>(&layerSongScratch), static_cast<const void*>(&bankClipboard[i]), sizeof(Bank));
@@ -21544,6 +21639,7 @@ void Controller::euclid_select() {
     euclidBank = activeSongBank;
     euclidApplied = false;
     euclidDropped = 0;
+    undoLog.newSession();  // one undo step for this visit's EUCLID edits
 
     preMenu = menu;
     preMenuTab = menuTab;
@@ -21558,6 +21654,7 @@ void Controller::euclid_select() {
 void Controller::euclid_apply() {
     /// @brief Rebuilds the layer from the current settings: the pattern alone (REPLACE) or added
     /// to the beats from before (MERGE). Applied live, also while playing.
+    undo_capture(UNDO_EUCLID, selectedLayerNum, activeSongBank);
 
     if (selectedLayerNum == -1) return;
     if (activeSongBank != euclidBank) {
@@ -21577,6 +21674,7 @@ void Controller::euclid_apply() {
 void Controller::euclid_clear() {
     /// @brief CLEAR on the EUCLID page: gives the layer back the beats it had when the page was
     /// opened.
+    if (euclidApplied && (activeSongBank == euclidBank)) undo_capture(UNDO_EUCLID, selectedLayerNum, activeSongBank);
 
     if ((selectedLayerNum == -1) || !euclidApplied || (activeSongBank != euclidBank)) return;
     layerSongScratch = euclidSnapshot;
@@ -21679,6 +21777,7 @@ void Controller::note_step(EncoderFunc function_, bool up_) {
     const bool all = keyboard.shiftKeyPress;
     const int8_t dir = up_ ? 1 : -1;
 
+    if (function_ != ENC_NOTE_BEAT) undo_capture(UNDO_NOTE, selectedLayerNum, activeSongBank);
     if (function_ == ENC_NOTE_BEAT) {
         lcd_drawBeat(selectedLayerNum, activeSongBank, static_cast<uint8_t>(selectedBeatNum), false);
         selectedBeatNum = up_ ? ((selectedBeatNum < last) ? selectedBeatNum + 1 : 0) : ((selectedBeatNum > 0) ? selectedBeatNum - 1 : last);
@@ -21718,6 +21817,7 @@ void Controller::note_clear() {
     /// @brief CLEAR on the NOTE page: the selected beat (ADD held: every beat of the bank) plays
     /// as before again: velocity from its pattern, 100%, always, not nudged.
     if (!note_validSelection()) return;
+    undo_capture(UNDO_NOTE, selectedLayerNum, activeSongBank);
     Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
     for (int8_t k = 0; k <= bank.lastActiveBeatNum; k++) {
         if (keyboard.shiftKeyPress || (k == selectedBeatNum)) bank.beatLibrary[k].resetNote();
@@ -22553,6 +22653,7 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
 
 void Controller::layerSong_setSelectedBeatFill(uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_) {
     /// @brief Applies fill type/pattern/time/level to selected beat and refreshes UI.
+    undo_capture(UNDO_FILL, selectedLayerNum, activeSongBank);  // UndoLog.h: before the edit
 
     // 1. SIMPLE FILL NORMALIZATION
     // Reset time/level modifiers for simple fill modes.
@@ -22581,6 +22682,7 @@ void Controller::layerSong_setSelectedBeatFill(uint8_t fillType_, uint8_t fillPa
 
 void Controller::layerSong_setSelectedBeatFillTime(uint8_t fillTime_) {
     /// @brief Updates selected beat fill-time mode and refreshes dependent UI.
+    undo_capture(UNDO_FILL, selectedLayerNum, activeSongBank);
 
     // 1. TIME MODE RE-CALCULATION
     // Recompute selected beat fill-time profile and play cursor.
@@ -22595,6 +22697,7 @@ void Controller::layerSong_setSelectedBeatFillTime(uint8_t fillTime_) {
 
 void Controller::layerSong_setSelectedBeatFillLevel(uint8_t fillLevel_) {
     /// @brief Updates selected beat fill-level mode and refreshes dependent UI.
+    undo_capture(UNDO_FILL, selectedLayerNum, activeSongBank);
 
     // 1. LEVEL MODE RE-CALCULATION
     // Recompute selected beat fill-level profile and play cursor.
@@ -22609,6 +22712,7 @@ void Controller::layerSong_setSelectedBeatFillLevel(uint8_t fillLevel_) {
 
 void Controller::layerSong_generateBeat(uint8_t type) {
     /// @brief Generates predefined beat layouts for the active layer song bank.
+    undo_capture(UNDO_GENERATE, selectedLayerNum, activeSongBank);
 
     uint16_t interval;
 
@@ -22703,6 +22807,7 @@ void Controller::layerSong_generateBeat(uint8_t type) {
 void Controller::layerSong_shiftSelectedBeat(bool direction_) {
     /// @brief Moves the selected beat one quantize step, jumping over neighbouring beats and
     /// wrapping at the song end. The beat keeps its fill (recomputed for its new length).
+    undo_capture(UNDO_MOVE, selectedLayerNum, activeSongBank);
 
     if ((selectedLayerNum == -1) || (selectedBeatNum == -1)) return;
     const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
@@ -22715,6 +22820,7 @@ void Controller::layerSong_shiftSelectedBeat(bool direction_) {
 void Controller::layerSong_shiftAll(bool forward_) {
     /// @brief Shifts every beat of the selected layer one quantize step, wrapping at the song
     /// end. Fills move with their beats; shifting back restores the layer exactly.
+    undo_capture(UNDO_MOVE, selectedLayerNum, activeSongBank);
 
     if (selectedLayerNum == -1) return;
     const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
@@ -22736,6 +22842,7 @@ void Controller::layerSong_shiftAll(bool forward_) {
 void Controller::layerSong_insertBeat() {
     /// @brief Inserts a plain beat on the quantize grid in the middle of the gap after the
     /// selected beat (at the song start in an empty bank) and selects it.
+    undo_capture(UNDO_MOVE, selectedLayerNum, activeSongBank);
 
     if (selectedLayerNum == -1) return;
     const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
@@ -22781,6 +22888,7 @@ void Controller::layerSong_commitBank(int16_t selectedBeatNum_) {
 
 void Controller::layerSong_resetSelectedBeat() {
     /// @brief Removes selected beat, compacts beat list, and refreshes selection/UI.
+    undo_capture(UNDO_DELETE, selectedLayerNum, activeSongBank);
 
     // 1. SELECTION & BANK VALIDATION
     // Continue only when selected layer and bank contain active beats.
@@ -23116,6 +23224,7 @@ void Controller::layerSong_copy() {
 
 void Controller::layerSong_paste() {
     /// @brief Pastes clipboard beat data into selected layer active song bank.
+    if (layerSongCopy.copyActive) undo_capture(UNDO_PASTE, selectedLayerNum, activeSongBank);
 
     // 1. CLIPBOARD & TARGET VALIDATION
     // Continue only when clipboard is active and selection is valid.
@@ -23230,6 +23339,8 @@ void Controller::layerSong_triggerBank(uint8_t bankNum_) {
 
 void Controller::record() {
     /// @brief Toggles recording state and synchronizes transport/icon state.
+
+    undoRecordOpen = false;  // a new take (or its end): its hits make one undo step
 
     // 1. TRANSPORT STATE BRANCH
     // Resolve behavior for idle, recording, and play-only states.

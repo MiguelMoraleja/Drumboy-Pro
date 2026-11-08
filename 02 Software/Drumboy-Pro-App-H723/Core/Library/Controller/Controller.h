@@ -310,6 +310,14 @@ class Controller {
     bool note_plays(uint8_t layerNum_, uint16_t note_);
     void note_restartLoops();
     void layerPage_bankChanged();
+    // Undo / redo of beat and bank edits (UndoLog.h); the stored banks live in SDRAM.
+    UndoLog<kUndoEntries> undoLog;
+    bool undoRecordOpen = false;
+    bool textUndoFlag = false, textRedoFlag = false, textUndoNone = false;
+    void undo_capture(UndoKind kind_, int16_t layerNum_, uint8_t bankNum_);
+    void undo_captureAllLayers(UndoKind kind_, uint8_t bankNum_);
+    void undo_captureRecord(uint8_t layerNum_, uint8_t bankNum_);
+    void undo_apply(bool redo_);
     void note_select();
     bool note_validSelection();
     uint8_t note_effectiveVelocity(const Beat& beat_) const;

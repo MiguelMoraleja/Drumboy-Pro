@@ -11,6 +11,7 @@
 #include "MCP23017.h"
 #include "Autosave.h"
 #include "BeatNote.h"
+#include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"
 #include "MidiParser.h"
@@ -2183,6 +2184,7 @@ const uint8_t kInitialQuantize                      = 2;
 
 const uint16_t kMeasureInterval                     = 800;
 const uint16_t kMeasureHalfInterval                 = kMeasureInterval / 2;
+const uint16_t kUndoEntries                         = 64;      // undo steps of one bank (UndoLog.h), stored in SDRAM
 const uint32_t kClockLockMinPeriodUs                = 40;      // sequencer timer limits while locked to MIDI clock
 const uint32_t kClockLockMaxPeriodUs                = 60000;   // (TIM15 counts microseconds, 16 bits)
 const uint16_t kMinSongInterval                     = 800;

@@ -3326,7 +3326,11 @@ void Controller::encoder_update() {
 
     if (activeEncoderBank >= kEncoderBankSize) activeEncoderBank = kMinEncoderGlobalTab;
     const uint8_t encoderFuncCount = sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]);
-    const Menu menuSafe = ((menu >= INIT_MENU) && (menu <= SONG_MENU)) ? menu : INIT_MENU;
+    // Every page with a row in encoderLocalFunction (NOTE_MENU is the last). A page past the table
+    // used to fall back to INIT_MENU, which binds the GLOBAL encoder functions.
+    constexpr uint8_t kLocalRows = sizeof(encoderLocalFunction) / sizeof(encoderLocalFunction[0]);
+    static_assert(kLocalRows == NOTE_MENU + 1, "encoderLocalFunction needs one row per menu");
+    const Menu menuSafe = (static_cast<uint8_t>(menu) < kLocalRows) ? menu : INIT_MENU;
 
     // 1. MODE/FUNCTION BINDING
     // Bind each encoder to global or local function map based on active menu.

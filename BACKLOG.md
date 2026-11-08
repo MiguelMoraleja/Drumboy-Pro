@@ -72,11 +72,11 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 4. ✅ Autosave, part A: checksum-based change detection, AUTOSAVE OFF/2/5/10/20 min, two alternating reserved files written via rename, `RESTORE AUTOSAVE?` at power-on, autosave before LOAD over unsaved work. [32](#32-autosave). (M)
 5. ✅ Hardware test with Loopy Pro → Scarlett: 30 minutes at a fractional tempo in time, no runaway with a MIDI loop set up on purpose, overrun counter at 0 with clock and dense notes, power pulled mid-session restores the autosave. Then package, app (MIDI and autosave explained in their tabs), release.
 
-*V1.14 "Notes"*
-6. Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)
-7. NOTE page with VEL and PROB; MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
-8. COND (`A:B`, `!A:B`, `1ST`, `PRE`, `FILL` and negations) with the FILL performance key. (M)
-9. NUDGE. (S)
+*V1.14 "Notes"* (built, waiting for the hardware test)
+6. ✅ Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)
+7. ✅ NOTE page with VEL and PROB; MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
+8. ✅ COND (`A:B`, `!A:B`, `1ST`, `PRE`, `FILL` and negations) with the FILL performance key. (M)
+9. ✅ NUDGE. (S)
 10. Hardware test, package, app (a Notes tab to try VEL/PROB/COND on a pattern), release.
 
 Every step keeps the rules: hardware-free logic in `Core/Library/Global/*.h` with host tests, `make WERROR=1` clean, and songs from V1.12 load unchanged. Left for after sprint 4: phase B of 33 (PITCH, DECAY per beat), 14 part B (EUCLID VELOCITY, now just a way to fill VEL), CC input from 30, autosave history (32 B).
@@ -250,7 +250,7 @@ Kit and song files have a signature but no format version. Several items above c
 
 **Today.** Every hit the EUCLID page makes is a plain beat at full velocity (BASIC / FLAT), so the pattern sounds mechanical. Plain beats have only three velocities: FLAT (100), GHOST (50) and MUTED (0), set by the beat's fill PATTERN; the VELOCITY field (FLAT, STEP, DESCEND, ASCEND, RANDOM) only shapes the micro-hits of a complex fill, not single beats. Variance is possible today only indirectly: an LFO on the layer's LEVEL (RANDOM type for humanising) with STYLE on changes each hit, and since V1.10 the instrument page shows the value used.
 
-**Status: part A done in V1.11** (ACCENTS on EUCLID tab 7, `euclidAccents()` in `Euclid.h`). Part B open; its per-beat velocity storage is now planned in [33](#33-per-note-editing-velocity-probability-and-more), and the VELOCITY field here becomes one way to fill it.
+**Status: part A done in V1.11** (ACCENTS on EUCLID tab 7, `euclidAccents()` in `Euclid.h`). Part B open; the per-beat velocity exists since V1.14 ([33](#33-per-note-editing-velocity-probability-and-more)), so part B is now only a way to fill it from the EUCLID page.
 
 **Proposal**, in two parts:
 
@@ -347,7 +347,7 @@ Reviewed from the owner's fork of the Erica Synths LXR V2 desktop firmware (Migu
 
 ### 21. Probability per beat (LXR)
 
-**LXR:** a 0–100% probability per step. **Today:** one PROB per layer. **Proposal:** a probability per beat (and per fill micro-hit?) on the song page, rolled at each hit. Same per-beat storage as 20. Now part of [33](#33-per-note-editing-velocity-probability-and-more).
+**LXR:** a 0–100% probability per step. **Today:** one PROB per layer. **Proposal:** a probability per beat (and per fill micro-hit?) on the song page, rolled at each hit. Same per-beat storage as 20. **Done in V1.14** as CHANCE on the NOTE page ([33](#33-per-note-editing-velocity-probability-and-more)), per beat; a fill plays or not as a whole.
 
 ### 22. Live roll (LXR)
 
@@ -426,6 +426,8 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 **Done when.** With AUTOSAVE 10, editing and then pulling the power loses at most 10 minutes of work; the next power-on offers the restore; pulling the power during an autosave write still leaves a loadable autosave; manual slots are never touched by autosave.
 
 ### 33. Per-note editing: velocity, probability and more
+
+**Status: phase A done in V1.14** (`BeatNote.h`, `test_beatnote`). Stored in the Beat itself in 3 bytes (velocity + a 16-bit word: chance in 5% steps, 51 conditions, nudge ±12 steps of 2 ticks), because internal RAM is tight (Beat 8 → 10 bytes, about 4 KB left); the BTX block is sparse (7 bytes per beat with settings) and matched by start on load. !A:B only for B up to 4 and no NEI, to fit 6 bits. Phase B (PITCH, DECAY) needs RAM: move the song banks to SDRAM first.
 
 **Today.** A beat (a note on Layer Song) has a start, a fill (type, pattern, time, level) and an active flag, stored in 4 bytes per beat in the song file (257 bytes per bank per layer). Plain beats only have FLAT (100), GHOST (50) and MUTED (0). Probability exists only per layer (PROB). Incoming MIDI velocity is ignored ([30](#30-midi-inout-velocity-running-status-note-queue-cc)), and MIDI out always sends 100.
 

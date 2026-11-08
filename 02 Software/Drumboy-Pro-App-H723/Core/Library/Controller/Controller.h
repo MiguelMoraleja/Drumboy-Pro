@@ -193,7 +193,7 @@ class Controller {
     TriggerMode triggerMode = TRIG_BAR;                                 // Quantization setting
     bool playActive;                                                    // Transport status: Playing
     bool recordActive;                                                  // Transport status: Recording
-    bool precountPendingBeat[kLayerLibrarySize];                        // Layer hits during precount, committed to interval 0 when playback starts
+    uint8_t precountPendingBeat[kLayerLibrarySize];                     // Layer hits during precount (0 none, fill pattern + 1), committed when playback starts
     bool playArmed;                                                     // Slave mode: waiting for master START to play
     bool recordArmed;                                                   // Slave mode: waiting for master START to record
     bool ignoreNextMidiStopAfterSpecialCmd;
@@ -288,6 +288,25 @@ class Controller {
     bool previewPending = false;        // start once the voice is idle and the knob has rested
     uint32_t previewRequestTick = 0;
     int8_t previewLayer = -1;
+    // Autosave (Autosave.h): interval on the Metronome page, CRC of the last safe state.
+    AutosaveTiming autosaveTiming;
+    uint32_t autosaveCleanCrc = 0;
+    bool autosavePending = false;           // due and changed: write when safe
+    uint32_t lastInputMs = 0;               // last key or encoder (autosave waits while editing)
+    volatile bool loopEndFlag = false;      // the sequencer wrapped (set in interruptPlay)
+    const char* fileNameOverride = nullptr; // set: sd_checkFile/sd_loadFile/sd_saveFile use this path
+    void file_encodeKit(uint8_t* data);
+    void file_encodeLayerSong(uint8_t layerNum_, uint8_t* data);
+    uint32_t file_stateCrc();
+    void autosave_setInterval(uint8_t interval_);
+    void autosave_markClean();
+    void autosave_scanFile(uint8_t slot_, AutosaveFile& file_);
+    bool autosave_write();
+    void autosave_deleteAll();
+    void autosave_update();
+    void autosave_offerRestore();
+    void autosave_restore();
+
     bool previewOn = true;              // Metronome page, saved in the system preset
     uint8_t previewLevel = 70;
 
@@ -371,6 +390,7 @@ class Controller {
     /* State Accessors (Getters) --------------------------------- */
 
     Io     getIo()    { return io; }                                    // Get MIDI/Sync state
+    void   midi_countRxError() { io.midi.rxErrors = io.midi.rxErrors + 1; }  // MIDI IN UART error (diagnostics)
     Mixer  getMixer() { return mixer; }                                 // Get Master audio levels
     Menu   getMenu()  { return menu; }                                  // Get currently active UI screen
 
@@ -395,6 +415,12 @@ class Controller {
     bool enqueueMidiTx(const uint8_t* data, uint8_t len);
     void serviceMidiTx();
     void receiveMidiCommand();
+    void midi_receiveClock(uint32_t nowCycles_);
+    void midi_clockEngage(bool fromMidi_);
+    void midi_clockRelease();
+    bool midi_txTransportOn() const;
+    void midi_clockOnPlayStart();
+    void syncOutClockTick();
 
     /* Song Functions -------------------------------------------- */
 
@@ -1057,6 +1083,7 @@ class Controller {
     void preview_setLevel(uint8_t level_);
     void lcd_drawMetro_PreviewData();
     void lcd_drawMetro_PreviewLevelData();
+    void lcd_drawMetro_AutosaveData();
     bool layerPageMenu() const;
     void euclid_apply();
     void euclid_clear();

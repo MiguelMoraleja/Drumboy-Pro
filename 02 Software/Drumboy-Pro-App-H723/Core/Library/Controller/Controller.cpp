@@ -81,7 +81,7 @@ Controller::Controller()
       drumkitStatus(FILE_NONE),
       playActive(false),
       recordActive(false),
-      precountPendingBeat{false},
+      precountPendingBeat{0},
     ignoreNextMidiStopAfterSpecialCmd(false),
       playTimerPeriod(0),
       measureTimerPeriod(0),
@@ -337,6 +337,12 @@ void Controller::initialize() {
         menu = GLOBAL_MENU;
         startPlayTimer();       // Start the main Sequencer Heartbeat
         startMidiClockTimer();  // Start the midi Sequencer Heartbeat
+
+        // 6. Autosave: the empty song is the clean state; offer unsaved work from last time.
+        autosave_markClean();
+        autosaveTiming.lastCheckMs = HAL_GetTick();
+        lastInputMs = HAL_GetTick();
+        autosave_offerRestore();
     }
 }
 
@@ -351,6 +357,7 @@ void Controller::update() {
     } else {
         // 2. INPUT PROCESSING
         // Read keyboard and encoder sources, then dispatch actions.
+        if (keyboard.keyLayer.readFlag || keyboard.keyLeft.readFlag || keyboard.keyRight.readFlag) lastInputMs = HAL_GetTick();
         keyboard_read();
         keyboard_action();
 
@@ -367,6 +374,9 @@ void Controller::update() {
 
         // Stream the sample preview from the SD card (Preview.h).
         preview_update();
+
+        // Write the song to the autosave files when due and safe (Autosave.h).
+        autosave_update();
 
 #ifdef DSP_PROFILE
         lcd_drawDspProfile();
@@ -514,44 +524,44 @@ void Controller::update() {
         for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
             // Send Note On (0x90)
             if ((io.midi.txNotes) && (io.midi.txTriggerNoteOn[i])) {
-                uint8_t msg[3] = {(uint8_t)(0x90 + io.midi.txChannel), io.midi.txData[i], 0x64};
+                // The velocity the hit played with (FLAT 127, GHOST 64, fills and MIDI in as played).
+                uint8_t msg[3] = {(uint8_t)(0x90 + io.midi.txChannel), io.midi.txData[i], io.midi.txVelocity[i]};
                 if (enqueueMidiTx(msg, 3)) io.midi.txTriggerNoteOn[i] = false;
             }
 
             // Send Note Off (0x80)
             if ((io.midi.txNotes) && (io.midi.txTriggerNoteOff[i])) {
-                uint8_t msg[3] = {(uint8_t)(0x80 + io.midi.txChannel), io.midi.txData[i], 0x64};
+                uint8_t msg[3] = {(uint8_t)(0x80 + io.midi.txChannel), io.midi.txData[i], 0x40};
                 if (enqueueMidiTx(msg, 3)) io.midi.txTriggerNoteOff[i] = false;
             }
         }
 
         // 13. INBOUND MIDI PROCESSING
         // Translate incoming MIDI events to playback and recording actions.
-        if (io.midi.rxNoteOnWriteFlag == 1) {
-            uint8_t layerNum = io.midi.rxNoteOnKey % 12;  // Map MIDI key to layer (0-11)
+        // Every note in the queue (MidiParser.h), at its velocity: chords and fast runs all play.
+        MidiEvent noteEvent;
+        while (io.midi.rxNoteQueue.pop(noteEvent)) {
+            uint8_t layerNum = noteEvent.data1 % 12;  // Map MIDI key to layer (0-11)
             if (layerNum < kLayerLibrarySize) {
                 Layer& layer = layerLibrary[layerNum];
+                const uint8_t level = midiVelocityToLevel(noteEvent.data2);
 
                 // Trigger audio if layer is active and unmuted
                 if ((!layer.mute) && (layer.samplePlay))
-                    layer_playBeat(layerNum, 1.0f);
+                    layer_playBeat(layerNum, kNumberDataLibrary[level].powMultiplier);
 
-                // Write note to the current sequencer step if Recording is enabled
+                // Write note to the current sequencer step if Recording is enabled. Beats store
+                // FLAT or GHOST for now: soft notes (velocity below 64) record as GHOST.
                 if (recordActive) {
+                    const uint8_t pattern = (noteEvent.data2 < 64) ? 1 : 0;
                     if (!metronome.precountState) {
-                        layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true);
+                        layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, pattern, 0, 0, true);
                     } else {
                         // Note landed during precount; commit it to position 0 once playback starts.
-                        precountPendingBeat[layerNum] = true;
+                        precountPendingBeat[layerNum] = static_cast<uint8_t>(pattern + 1);
                     }
                 }
             }
-            io.midi.rxNoteOnWriteFlag = 0;  // Clear software interrupt flag
-        }
-
-        // Clean up inbound Note Off logic
-        if (io.midi.rxNoteOffWriteFlag == 1) {
-            io.midi.rxNoteOffWriteFlag = 0;
         }
 
         // 14. INBOUND MIDI TRANSPORT AND CLOCK
@@ -674,6 +684,8 @@ void Controller::update() {
                 if (newTempo > kMaxTempo) newTempo = kMaxTempo;
                 if ((uint8_t)newTempo != rhythm.tempo) {
                     rhythm_setTempo((uint8_t)newTempo);
+                } else if (io.midi.clockLocked) {
+                    updatePlayTimerPeriod();  // the fractional tempo moved: clock/sync outputs follow
                 }
             }
             io.midi.rxClockFlag = false;
@@ -841,10 +853,12 @@ void Controller::loadSystemPreset() {
                         routing_setMetroOut(routeUnpackMetro((uint8_t)dataSystemPreset[11]));
 
                         // Sample preview: only in files written by V1.11 or later (23 bytes).
-                        if (sd.byteswritten >= kSystemPresetDataSize) {
+                        if (sd.byteswritten >= kSystemPresetDataSizeV111) {
                             preview_setOn((bool)dataSystemPreset[21]);
                             preview_setLevel((uint8_t)dataSystemPreset[22]);
                         }
+                        // Autosave interval: V1.13 or later (24 bytes); older files keep the default.
+                        if (sd.byteswritten >= kSystemPresetDataSize) autosave_setInterval((uint8_t)dataSystemPreset[23]);
 
                         // 6. I/O & SYNC PARAMETER APPLY
                         // Apply persisted sync and MIDI routing parameters.
@@ -914,6 +928,9 @@ void Controller::saveSystemPreset() {
             // Sample preview (V1.11)
             dataSystemPreset[21] = (uint8_t)previewOn;
             dataSystemPreset[22] = previewLevel;
+
+            // Autosave (V1.13)
+            dataSystemPreset[23] = autosaveTiming.interval;
 
             // 4. SD CARD WRITE
             // Seek payload offset and write serialized preset data.
@@ -1112,164 +1129,178 @@ void Controller::serviceMidiTx() {
 }
 
 void Controller::receiveMidiCommand() {
-    /// @brief Parses incoming MIDI bytes one at a time (called from UART ISR).
-    /// Real-time system bytes (0xF8–0xFF) are dispatched immediately without
-    /// interrupting the running channel-message state machines.
+    /// @brief Parses incoming MIDI bytes one at a time (called from the UART receive interrupt).
+    /// MidiParser.h does the byte work (running status, real-time bytes anywhere, velocity 0 =
+    /// note off); notes go to a queue for the main loop, real-time bytes are handled here so the
+    /// clock is timestamped as it arrives.
 
     // 1. RX ACTIVITY CHECK
     // Continue parsing only when MIDI RX engine is enabled.
     if (!io.midi.rxActive) return;
 
-    uint8_t rxData = midiRxData;
+    // Timestamp first: the clock lock measures intervals in CPU cycles.
+    const uint32_t nowCycles = DWT_CYCCNT;
 
-    // 2. REAL-TIME MESSAGE HANDLER (0xF8–0xFF)
-    // Single-byte real-time messages may appear anywhere in the byte stream.
-    // Clock and transport are gated independently so CLOCK ONLY and
-    // CLK+TRNS/FULL can behave differently.
-    if (rxData >= 0xF8) {
-        switch (rxData) {
-            case 0xF8: {
-                if (!io.midi.rxClock) return;
-                // MIDI Clock: accumulate 48 ticks (2 beats) then calculate BPM.
-                // Using 2-beat window + rounding to suppress 1ms HAL_GetTick jitter.
-                uint32_t now = HAL_GetTick();
-                io.midi.rxClockTickPhase = (io.midi.rxClockTickPhase + 1) % 24;
-                if (io.midi.rxClockCount == 0) {
-                    // First tick received after idle — anchor the beat start.
-                    io.midi.rxClockBeatStart = now;
-                    io.midi.rxClockCount = 1;
-                } else if (++io.midi.rxClockCount > 48) {
-                    // 48 ticks elapsed: two full beats measured.
-                    uint32_t interval = now - io.midi.rxClockBeatStart;
-                    if ((interval > 0) && (interval < 8000)) {  // Guard: 15–400 BPM
-                        io.midi.rxClockBpm = (uint16_t)((120000UL + interval / 2) / interval);
-                        io.midi.rxClockFlag = true;
-                    }
-                    io.midi.rxClockBeatStart = now;
-                    io.midi.rxClockCount = 1;
-                }
+    MidiEvent event;
+    if (!midiParse(io.midi.rxParser, midiRxData, event)) return;
 
-                if (io.midi.rxTransport && io.midi.rxTransportRunning && io.midi.rxClockPhaseValid &&
-                    (io.midi.rxClockTickPhase == 0) && (playArmed || recordArmed) && !playActive) {
-                    io.midi.rxPlayFlag = true;
-                }
-                break;
+    switch (event.type) {
+        // 2. NOTES: queued for the main loop (all notes of a chord arrive)
+        case MIDI_EVENT_NOTE_ON:
+            if (io.midi.rxNotes && (event.channel == io.midi.rxChannel)) {
+                if (!io.midi.rxNoteQueue.push(event)) io.midi.rxErrors = io.midi.rxErrors + 1;
             }
+            break;
 
-            case 0xFA:  // MIDI Start
-                if (!io.midi.rxTransport) return;
-                io.midi.rxClockCount = 0;
-                io.midi.rxClockTickPhase = 0;
-                io.midi.rxTransportRunning = true;
-                io.midi.rxClockPhaseValid = true;
-                io.midi.rxStartFlag = true;
-                io.midi.rxPlayFlag = true;
-                break;
+        // 3. DRUMBOY SYSEX TRANSPORT COMMANDS
+        case MIDI_EVENT_SYSEX_CMD:
+            if (io.midi.rxTransport) {
+                if (event.data1 == kMidiSysExTrigStop)
+                    io.midi.rxTrigStopFlag = true;
+                else if (event.data1 == kMidiSysExTrigReset)
+                    io.midi.rxTrigResetFlag = true;
+                else if (event.data1 == kMidiSysExTrigRecord)
+                    io.midi.rxTrigRecordFlag = true;
+            }
+            break;
 
-            case 0xFB:  // MIDI Continue
-                if (!io.midi.rxTransport) return;
-                io.midi.rxClockCount = 0;
-                io.midi.rxClockTickPhase = 0;
-                io.midi.rxTransportRunning = true;
-                io.midi.rxClockPhaseValid = true;
-                io.midi.rxContinueFlag = true;
-                break;
+        // 4. REAL-TIME MESSAGES (0xF8–0xFF)
+        // Clock and transport are gated independently so CLOCK ONLY and CLK+TRNS/FULL can behave
+        // differently.
+        case MIDI_EVENT_REALTIME:
+            switch (event.data1) {
+                case 0xF8:
+                    if (io.midi.rxClock) midi_receiveClock(nowCycles);
+                    break;
 
-            case 0xFC:  // MIDI Stop
-                if (!io.midi.rxTransport) return;
-                io.midi.rxClockCount = 0;
-                io.midi.rxClockTickPhase = 0;
-                io.midi.rxTransportRunning = false;
-                io.midi.rxClockPhaseValid = false;
-                io.midi.rxStopFlag = true;
-                break;
+                case 0xFA:  // MIDI Start: the next clock is position 0
+                case 0xFB:  // MIDI Continue: the next clock continues from the current position
+                    if (!io.midi.rxTransport) return;
+                    io.midi.rxClockTickPhase = 0;
+                    io.midi.rxTransportRunning = true;
+                    io.midi.rxClockPhaseValid = true;
+                    midi_clockEngage(true);
+                    if (event.data1 == 0xFA) {
+                        io.midi.rxStartFlag = true;
+                        io.midi.rxPlayFlag = true;
+                    } else {
+                        io.midi.rxContinueFlag = true;
+                    }
+                    break;
 
-            case 0xFF:  // MIDI System Reset
-                if (!io.midi.rxTransport) return;
-                io.midi.rxClockCount = 0;
-                io.midi.rxClockTickPhase = 0;
-                io.midi.rxTransportRunning = false;
-                io.midi.rxClockPhaseValid = false;
-                io.midi.rxResetFlag = true;
-                break;
+                case 0xFC:  // MIDI Stop
+                case 0xFF:  // MIDI System Reset
+                    if (!io.midi.rxTransport) return;
+                    io.midi.rxClockTickPhase = 0;
+                    io.midi.rxTransportRunning = false;
+                    io.midi.rxClockPhaseValid = false;
+                    // The clock stops with the transport: the Drumboy runs free to its stop point.
+                    midi_clockRelease();
+                    if (event.data1 == 0xFC)
+                        io.midi.rxStopFlag = true;
+                    else
+                        io.midi.rxResetFlag = true;
+                    break;
+
+                default:
+                    break;
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
+void Controller::midi_receiveClock(uint32_t nowCycles_) {
+    /// @brief One MIDI clock (0xF8): feeds the clock lock (MidiClock.h), steers the sequencer timer
+    /// while locked, reports the tempo every beat, and starts armed play on a beat.
+
+    io.midi.rxLastClockMs = HAL_GetTick();
+    MidiClockLock& lock = io.midi.clockLock;
+    lock.unitsPerUs = static_cast<float>(SystemCoreClock / 1000000);
+
+    // Armed play/record in transport mode starts on a beat: that clock becomes position 0.
+    const uint8_t nextPhase = (io.midi.rxClockTickPhase + 1) % 24;
+    const bool armedStart = io.midi.rxTransport && io.midi.rxTransportRunning && io.midi.rxClockPhaseValid &&
+                            (nextPhase == 0) && (playArmed || recordArmed) && !playActive;
+    if (armedStart) midi_clockEngage(true);
+
+    // Playing with the clock present but not locked yet (CLOCK ONLY, or the clock came back):
+    // lock from here on.
+    if (!io.midi.clockLocked && playActive && (io.syncIn == 0)) midi_clockEngage(false);
+
+    const ClockTickResult result = clockLockTick(lock, nowCycles_);
+    if (result == CLOCK_REJECTED) return;
+    io.midi.rxClockTickPhase = nextPhase;
+    syncOutClockTick();  // the sync output jack follows the incoming clock
+
+    if (io.midi.clockLocked) {
+        const uint32_t period = clockLockPeriodUs(lock, kClockLockMinPeriodUs, kClockLockMaxPeriodUs);
+        if (period) __HAL_TIM_SET_AUTORELOAD(&htim15, period - 1);
+        // The sequencer was waiting for this clock: restart its timer so the tick lands on it.
+        if ((result == CLOCK_KICK) && playActive) htim15.Instance->EGR = TIM_EGR_UG;
+    }
+
+    // Tempo for the display, the tempo-synced effects and the clock/sync outputs: once a beat.
+    if (++io.midi.rxClockBpmCount >= 24) {
+        io.midi.rxClockBpmCount = 0;
+        const float bpm = clockLockBpm(lock);
+        if ((bpm > 0.0f) && (bpm < 400.0f)) {
+            io.midi.rxClockBpm = static_cast<uint16_t>(bpm + 0.5f);
+            io.midi.rxClockFlag = true;
         }
+    }
+
+    if (armedStart) io.midi.rxPlayFlag = true;
+}
+
+void Controller::midi_clockEngage(bool fromMidi_) {
+    /// @brief Locks the sequencer to the MIDI clock with a new origin: position 0 (or the current
+    /// position on CONTINUE / when already playing) plays on the next clock.
+    if (!io.midi.rxClock || (io.syncIn != 0)) return;
+    clockLockRestart(io.midi.clockLock);
+    io.midi.rxLastClockMs = HAL_GetTick();
+    io.midi.clockStartedByMidi = fromMidi_;
+    io.midi.clockLocked = true;
+}
+
+void Controller::midi_clockRelease() {
+    /// @brief Unlocks the sequencer: it runs free on its own timer at the last measured tempo.
+    if (!io.midi.clockLocked) return;
+    io.midi.clockLocked = false;
+    io.midi.clockStartedByMidi = false;
+    const uint32_t intervalUs = clockLockIntervalUs(io.midi.clockLock);
+    uint32_t period = (intervalUs > 0) ? (intervalUs * kClockPulsesPerQuarter + kMeasureInterval / 2) / kMeasureInterval : playTimerPeriod;
+    if (period < kClockLockMinPeriodUs) period = kClockLockMinPeriodUs;
+    if (period > kClockLockMaxPeriodUs) period = kClockLockMaxPeriodUs;
+    __HAL_TIM_SET_AUTORELOAD(&htim15, period - 1);
+}
+
+bool Controller::midi_txTransportOn() const {
+    /// @brief MIDI OUT transport (start/stop/SysEx triggers) only as master: a Drumboy that follows
+    /// MIDI transport doesn't send its own, so a MIDI loop can't echo START back and restart it.
+    return io.midi.txTransport && !io.midi.rxTransport;
+}
+
+void Controller::midi_clockOnPlayStart() {
+    /// @brief Playback starts (play or record): lock to the MIDI clock if it is running. A START
+    /// or an armed start already set the origin on its clock; a local start waits for the next one.
+    if (!io.midi.rxClock || (io.syncIn != 0)) {
+        midi_clockRelease();
         return;
     }
-
-    if (rxData == kMidiSysExStart) {
-        io.midi.rxSysExStage = 1;
-        io.midi.rxSysExCmd = 0;
+    // Keep that origin only if it is recent (within a beat): a START long ago that did not start
+    // the Drumboy (nothing armed) must not make it rush through every clock since.
+    if (io.midi.clockLocked && io.midi.clockStartedByMidi && (io.midi.clockLock.clocks <= kClockPulsesPerQuarter)) {
+        io.midi.clockStartedByMidi = false;
         return;
     }
-
-    if (io.midi.rxSysExStage != 0) {
-        switch (io.midi.rxSysExStage) {
-            case 1:
-                io.midi.rxSysExStage = (rxData == kMidiSysExManufacturerNonCommercial) ? 2 : 0;
-                break;
-
-            case 2:
-                io.midi.rxSysExStage = (rxData == kMidiSysExTransportFamily) ? 3 : 0;
-                break;
-
-            case 3:
-                io.midi.rxSysExCmd = rxData;
-                io.midi.rxSysExStage = 4;
-                break;
-
-            case 4:
-                if ((rxData == kMidiSysExEnd) && io.midi.rxTransport) {
-                    if (io.midi.rxSysExCmd == kMidiSysExTrigStop)
-                        io.midi.rxTrigStopFlag = true;
-                    else if (io.midi.rxSysExCmd == kMidiSysExTrigReset)
-                        io.midi.rxTrigResetFlag = true;
-                    else if (io.midi.rxSysExCmd == kMidiSysExTrigRecord)
-                        io.midi.rxTrigRecordFlag = true;
-                }
-                io.midi.rxSysExStage = 0;
-                io.midi.rxSysExCmd = 0;
-                break;
-
-            default:
-                io.midi.rxSysExStage = 0;
-                io.midi.rxSysExCmd = 0;
-                break;
-        }
-        return;
-    }
-
-    // 3. NOTE ON PARSER (0x90 + CHANNEL)
-    // Only processed when rxNotes is enabled (NOTES or SYN+NOT mode).
-    if (io.midi.rxNotes) {
-        if ((io.midi.rxNoteOnReadStage == 0) && (rxData == (0x90 + io.midi.rxChannel))) {
-            // Stage 0: Valid Status byte detected for the selected channel.
-            io.midi.rxNoteOnReadStage = 1;
-        } else if (io.midi.rxNoteOnReadStage == 1) {
-            // Stage 1: Capture the Note Number (0–127).
-            io.midi.rxNoteOnKey = rxData;
-            io.midi.rxNoteOnReadStage = 2;
-        } else if (io.midi.rxNoteOnReadStage == 2) {
-            // Stage 2: Capture the Velocity and finalize the message.
-            io.midi.rxNoteOnVelocity = rxData;
-            io.midi.rxNoteOnReadStage = 0;
-            io.midi.rxNoteOnWriteFlag = 1;
-        }
-
-        // 4. NOTE OFF PARSER (0x80 + CHANNEL)
-        if ((io.midi.rxNoteOffReadStage == 0) && (rxData == (0x80 + io.midi.rxChannel))) {
-            // Stage 0: Valid Note Off Status byte detected.
-            io.midi.rxNoteOffReadStage = 1;
-        } else if (io.midi.rxNoteOffReadStage == 1) {
-            // Stage 1: Capture the Note Number.
-            io.midi.rxNoteOffKey = rxData;
-            io.midi.rxNoteOffReadStage = 2;
-        } else if (io.midi.rxNoteOffReadStage == 2) {
-            // Stage 2: Capture the Release Velocity and finalize.
-            io.midi.rxNoteOffVelocity = rxData;
-            io.midi.rxNoteOffReadStage = 0;
-            io.midi.rxNoteOffWriteFlag = 1;
-        }
-    }
+    const bool clockPresent = io.midi.clockLock.haveLast && ((HAL_GetTick() - io.midi.rxLastClockMs) < kClockGapUs / 1000);
+    if (clockPresent)
+        midi_clockEngage(false);
+    else
+        midi_clockRelease();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1372,9 +1403,18 @@ void Controller::updatePlayTimerPeriod() {
     // Calculate 24 PPQN pulse period (60,000,000us / 24 pulses = 2,500,000).
     midiClockPeriod = 2500000 / rhythm.tempo;
 
+    // Locked to MIDI clock (MidiClock.h): the measured clock interval, fractional tempo included,
+    // and the sequencer timer is steered by each incoming clock instead.
+    const bool locked = io.midi.clockLocked && (io.midi.clockLock.intervalUs > 0.0f);
+    if (locked) {
+        midiClockPeriod = clockLockIntervalUs(io.midi.clockLock);
+        if (midiClockPeriod < 1) midiClockPeriod = 1;
+        if (midiClockPeriod > 65535) midiClockPeriod = 65535;
+    }
+
     // 4. HARDWARE REGISTER UPDATES
     // Write new period to TIM15 auto-reload register for the sequencer.
-    __HAL_TIM_SET_AUTORELOAD(&htim15, playTimerPeriod - 1);
+    if (!locked) __HAL_TIM_SET_AUTORELOAD(&htim15, playTimerPeriod - 1);
 
     // Write new period to TIM4 auto-reload register for external MIDI sync.
     __HAL_TIM_SET_AUTORELOAD(&htim4, midiClockPeriod - 1);
@@ -1620,7 +1660,7 @@ void Controller::keyboard_action() {
                                     layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true);
                                 } else {
                                     // Hit landed during precount; commit it to position 0 once playback starts.
-                                    precountPendingBeat[layerNum] = true;
+                                    precountPendingBeat[layerNum] = 1;  // FLAT
                                 }
                             }
                         }
@@ -2031,6 +2071,10 @@ void Controller::keyboard_action() {
                                             file_loadAction();
                                             break;
 
+                                        case ALERT_RESTOREAUTOSAVE:
+                                            autosave_restore();
+                                            break;
+
                                         case ALERT_SAVEFILE:
 
                                         case ALERT_OVERWRITEFILE:
@@ -2196,6 +2240,8 @@ void Controller::keyboard_action() {
 
                             case KEY_CLEAR:
                                 if (alertFlag) {
+                                    // Declining the restore: the autosaved work is not wanted.
+                                    if (alertType == ALERT_RESTOREAUTOSAVE) autosave_deleteAll();
                                     lcd_clearAlert();
                                     alertFlag = false;
                                 } else if (keyboard.muteKeyPress) {
@@ -3077,6 +3123,7 @@ void Controller::encoder_read() {
     for (uint8_t i = 0; i < kEncoderSize; i++) {
         Encoder& enc = encoder[i];
         if (!enc.readFlag) continue;
+        lastInputMs = HAL_GetTick();  // autosave waits while the user is turning knobs
 
         // Atomic grab of the captured state from ISR
         uint8_t currentAB = enc.capturedAB;
@@ -3579,6 +3626,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
 
         case ENC_METRO_PREVIEW_LEVEL:
             if (previewLevel < 100) preview_setLevel(previewLevel + 1);
+            break;
+
+        case ENC_METRO_AUTOSAVE:
+            if (autosaveTiming.interval + 1 < kAutosaveIntervalCount) autosave_setInterval(autosaveTiming.interval + 1);
             break;
 
             // Filter 0 functions
@@ -4191,6 +4242,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
 
         case ENC_METRO_PREVIEW_LEVEL:
             if (previewLevel > 0) preview_setLevel(previewLevel - 1);
+            break;
+
+        case ENC_METRO_AUTOSAVE:
+            if (autosaveTiming.interval > 0) autosave_setInterval(autosaveTiming.interval - 1);
             break;
 
             // Filter 0 functions
@@ -5581,6 +5636,7 @@ SdResult Controller::sd_checkFile(uint8_t fileNum_) {
     strcpy(fileName, kFileStart);
     strcat(fileName, fileNum);
     strcat(fileName, kFileEnd);
+    if (fileNameOverride) snprintf(fileName, sizeof fileName, "%s", fileNameOverride);  // autosave files
 
     // 2. FILE ACCESS
     // Attempt to open the file. If it fails, the file is physically missing.
@@ -5644,6 +5700,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
     strcpy(fileName, kFileStart);
     strcat(fileName, fileNum);
     strcat(fileName, kFileEnd);
+    if (fileNameOverride) snprintf(fileName, sizeof fileName, "%s", fileNameOverride);  // autosave files
 
     char instName[kLayerLibrarySize][kFileNameSize + 1];
     uint16_t instNum[kLayerLibrarySize];
@@ -6051,26 +6108,9 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
     return result;
 }
 
-SdResult Controller::sd_saveFile(uint8_t fileNum_) {
-    /// @brief Serializes current project state and writes it to the selected SD slot.
-    /// Encodes drumkit parameters, asset references, song data, and final EOF marker.
-
-    SdResult result = SD_ERROR;
-    char eof[] = "EOF";
-    char fileName[50];
-    char fileNum[4];
-
-    // 1. FILENAME CONSTRUCTION
-    // Generate the 3-digit padded filename (e.g., File_001.rws).
-    sprintf(fileNum, "%03d", (fileNum_ + 1));
-    strcpy(fileName, kFileStart);
-    strcat(fileName, fileNum);
-    strcat(fileName, kFileEnd);
-    uint8_t data[kDrumkitByteSize] = {0x00};
-
-    // 2. PAYLOAD ENCODING
-    // Build the drumkit payload buffer before starting SD write operations.
-
+void Controller::file_encodeKit(uint8_t* data) {
+    /// @brief Encodes the drumkit block of a song file (kDrumkitByteSize bytes): mixer, rhythm,
+    /// metronome, I/O, EQ, filters, effects, reverb, LFOs, layers, routing and sample names.
     // 2.1 SLOT MARKER
     // Mark file as active project slot.
     data[0] = '*';
@@ -6238,6 +6278,252 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
             data[offset + 50] = 'o';
         }
     }
+}
+
+void Controller::file_encodeLayerSong(uint8_t layerNum_, uint8_t* data) {
+    /// @brief Encodes one layer's song block (kSongByteSize bytes, into a kDrumkitByteSize buffer):
+    /// all banks, every beat's packed data and start interval.
+    memset(data, 0x00, kDrumkitByteSize);
+    data[0] = 'l';
+    Layer& layer = layerLibrary[layerNum_];
+
+    // Encode all banks for current layer
+    for (uint8_t b = 0; b < kBankLibrarySize; b++) {
+        Bank& bank = layer.bankLibrary[b];
+        uint16_t offsetBank = 1 + (b * 257);
+        data[offsetBank] = 'b';
+
+        // Encode packed beat data + start interval
+        for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
+            Beat& beat = bank.beatLibrary[k];
+            uint16_t offsetBeat = offsetBank + 1 + (k * 4);
+            uint16_t data_ = beat.getData();
+            data[offsetBeat + 0] = (uint8_t)(data_ >> 8);
+            data[offsetBeat + 1] = (uint8_t)(data_ & 0xFF);
+            uint16_t startInterval = beat.getStartInterval();
+            data[offsetBeat + 2] = (uint8_t)(startInterval >> 8);
+            data[offsetBeat + 3] = (uint8_t)(startInterval & 0xFF);
+        }
+    }
+}
+
+uint32_t Controller::file_stateCrc() {
+    /// @brief CRC-32 of the song exactly as SAVE would write it (Autosave.h): changes mean unsaved work.
+    uint8_t data[kDrumkitByteSize];
+    memset(data, 0x00, sizeof data);
+    file_encodeKit(data);
+    uint32_t crc = autosaveCrc32(0, data, kDrumkitByteSize);
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        file_encodeLayerSong(l, data);
+        crc = autosaveCrc32(crc, data, kSongByteSize);
+    }
+    uint8_t chainData[kChainFileSize];
+    chainWrite(songChain, chainData);
+    return autosaveCrc32(crc, chainData, kChainFileSize);
+}
+
+/* Autosave (Autosave.h) -----------------------------------------------------*/
+
+void Controller::autosave_setInterval(uint8_t interval_) {
+    /// @brief AUTOSAVE on the Metronome page: OFF, 2, 5, 10 or 20 minutes (saved in the system preset).
+    if (interval_ >= kAutosaveIntervalCount) interval_ = kAutosaveDefaultInterval;
+    autosaveTiming.interval = interval_;
+    autosaveTiming.lastCheckMs = HAL_GetTick();
+    if (interval_ == 0) autosavePending = false;
+    if (menu == METRO_MENU) lcd_drawMetro_AutosaveData();
+    systemPresetSaveFlag = true;
+}
+
+void Controller::autosave_markClean() {
+    /// @brief The song as it is now is safe (just loaded, saved, autosaved or new).
+    autosaveCleanCrc = file_stateCrc();
+    autosavePending = false;
+}
+
+void Controller::autosave_scanFile(uint8_t slot_, AutosaveFile& file_) {
+    /// @brief Checks one autosave file: complete, with a trailer whose CRC matches its content.
+    file_ = AutosaveFile();
+    f_close(&sd.file);
+    if (f_open(&sd.file, kAutosavePath[slot_], FA_READ) != FR_OK) return;
+    const uint32_t size = f_size(&sd.file);
+    if (size > static_cast<uint32_t>(kAutosaveTrailerSize + strlen(kFileRef))) {
+        uint8_t buffer[512];
+        uint32_t remaining = size - kAutosaveTrailerSize;
+        uint32_t crc = 0;
+        bool ok = true;
+        while (remaining > 0) {
+            const UINT chunk = (remaining > sizeof buffer) ? sizeof buffer : static_cast<UINT>(remaining);
+            UINT got = 0;
+            if ((f_read(&sd.file, buffer, chunk, &got) != FR_OK) || (got != chunk)) {
+                ok = false;
+                break;
+            }
+            crc = autosaveCrc32(crc, buffer, chunk);
+            remaining -= chunk;
+        }
+        uint8_t trailer[kAutosaveTrailerSize];
+        UINT got = 0;
+        uint32_t sequence = 0, trailerCrc = 0;
+        if (ok && (f_read(&sd.file, trailer, kAutosaveTrailerSize, &got) == FR_OK) && (got == kAutosaveTrailerSize) &&
+            autosaveReadTrailer(trailer, sequence, trailerCrc) && (trailerCrc == crc)) {
+            file_.valid = true;
+            file_.sequence = sequence;
+        }
+    }
+    f_close(&sd.file);
+}
+
+bool Controller::autosave_write() {
+    /// @brief Writes the song to the older of the two autosave files, then seals it with the
+    /// trailer (sequence + CRC of what is actually on the card). A write cut short leaves the
+    /// other file as the good copy.
+    if (!sd.ready) return false;
+    AutosaveFile files[2];
+    autosave_scanFile(0, files[0]);
+    autosave_scanFile(1, files[1]);
+    const uint8_t slot = autosaveNextSlot(files[0], files[1]);
+    const uint32_t sequence = autosaveNextSequence(files[0], files[1]);
+
+    const FileStatus keepStatus = fileStatus;  // the FILE page's slot status is not ours to change
+    fileNameOverride = kAutosavePath[slot];
+    const SdResult saved = sd_saveFile(0);
+    fileNameOverride = nullptr;
+    fileStatus = keepStatus;
+    if (saved != SD_OK) return false;
+
+    bool sealed = false;
+    keyboard_disable();
+    f_close(&sd.file);
+    if (f_open(&sd.file, kAutosavePath[slot], FA_READ) == FR_OK) {
+        const uint32_t size = f_size(&sd.file);
+        uint8_t buffer[512];
+        uint32_t remaining = size, crc = 0;
+        bool ok = true;
+        while (remaining > 0) {
+            const UINT chunk = (remaining > sizeof buffer) ? sizeof buffer : static_cast<UINT>(remaining);
+            UINT got = 0;
+            if ((f_read(&sd.file, buffer, chunk, &got) != FR_OK) || (got != chunk)) {
+                ok = false;
+                break;
+            }
+            crc = autosaveCrc32(crc, buffer, chunk);
+            remaining -= chunk;
+        }
+        f_close(&sd.file);
+        if (ok && (f_open(&sd.file, kAutosavePath[slot], FA_WRITE | FA_OPEN_EXISTING) == FR_OK)) {
+            uint8_t trailer[kAutosaveTrailerSize];
+            autosaveWriteTrailer(trailer, sequence, crc);
+            UINT written = 0;
+            sealed = (f_lseek(&sd.file, size) == FR_OK) && (f_write(&sd.file, trailer, kAutosaveTrailerSize, &written) == FR_OK) &&
+                     (written == kAutosaveTrailerSize);
+            sealed = (f_close(&sd.file) == FR_OK) && sealed;
+        }
+    }
+    f_close(&sd.file);
+    keyboard_enable();
+    return sealed;
+}
+
+void Controller::autosave_deleteAll() {
+    /// @brief The autosaved work is now in a slot (SAVE) or not wanted (restore declined).
+    if (!sd.ready) return;
+    f_close(&sd.file);
+    f_unlink(kAutosavePath[0]);
+    f_unlink(kAutosavePath[1]);
+}
+
+void Controller::autosave_update() {
+    /// @brief Main loop: every AUTOSAVE minutes, if the song changed, write it as soon as that
+    /// can't disturb playing (Autosave.h: autosaveSafeNow).
+    const bool atLoopEnd = loopEndFlag;
+    loopEndFlag = false;
+    if (!sd.ready) return;
+    const uint32_t now = HAL_GetTick();
+    if (!autosavePending) {
+        if (!autosaveDue(autosaveTiming, now)) return;
+        autosaveTiming.lastCheckMs = now;
+        if (file_stateCrc() == autosaveCleanCrc) return;
+        autosavePending = true;
+    }
+    const AutosaveContext context = {playActive,
+                                     recordActive || metronome.precountState,
+                                     io.midi.rxNotes,
+                                     atLoopEnd,
+                                     alertFlag || loadAction || saveAction || (previewVoice.state != PREVIEW_IDLE),
+                                     now - lastInputMs};
+    if (!autosaveSafeNow(context)) return;
+    autosavePending = false;
+    if (autosave_write()) autosave_markClean();
+}
+
+void Controller::autosave_offerRestore() {
+    /// @brief At power-on: an autosave file holds work that was never saved into a slot. Ask.
+    if (!sd.ready) return;
+    AutosaveFile files[2];
+    autosave_scanFile(0, files[0]);
+    autosave_scanFile(1, files[1]);
+    if (autosaveNewest(files[0], files[1]) < 0) return;
+    alertFlag = true;
+    alertType = ALERT_RESTOREAUTOSAVE;
+    lcd_drawAlert();
+}
+
+void Controller::autosave_restore() {
+    /// @brief Loads the newest autosave like a song file (ADD on RESTORE AUTOSAVE?).
+    lcd_clearAlert();
+    AutosaveFile files[2];
+    autosave_scanFile(0, files[0]);
+    autosave_scanFile(1, files[1]);
+    const int8_t newest = autosaveNewest(files[0], files[1]);
+    if (newest < 0) return;
+
+    reset();
+    lcd_resetPlay();
+    loadAction = true;
+    const FileStatus keepStatus = fileStatus;
+    fileNameOverride = kAutosavePath[newest];
+    switch (sd_loadFile(0)) {
+        case SD_OK:
+            alertType = ALERT_LOADSUCCESS;
+            break;
+        case SD_ERROR_DETECT:
+            alertType = ALERT_MISSINGSAMPLE;
+            break;
+        default:
+            alertType = ALERT_LOADERROR;
+            break;
+    }
+    fileNameOverride = nullptr;
+    fileStatus = keepStatus;
+    loadAction = false;
+    lcd_drawAlert();
+    HAL_Delay(1000);
+    lcd_clearAlert();
+    autosave_markClean();  // the files stay until a SAVE: the restored work is still not in a slot
+}
+
+SdResult Controller::sd_saveFile(uint8_t fileNum_) {
+    /// @brief Serializes current project state and writes it to the selected SD slot.
+    /// Encodes drumkit parameters, asset references, song data, and final EOF marker.
+
+    SdResult result = SD_ERROR;
+    char eof[] = "EOF";
+    char fileName[50];
+    char fileNum[4];
+
+    // 1. FILENAME CONSTRUCTION
+    // Generate the 3-digit padded filename (e.g., File_001.rws).
+    sprintf(fileNum, "%03d", (fileNum_ + 1));
+    strcpy(fileName, kFileStart);
+    strcat(fileName, fileNum);
+    strcat(fileName, kFileEnd);
+    if (fileNameOverride) snprintf(fileName, sizeof fileName, "%s", fileNameOverride);  // autosave files
+    uint8_t data[kDrumkitByteSize] = {0x00};
+
+    // 2. PAYLOAD ENCODING
+    // Build the drumkit payload buffer before starting SD write operations.
+
+    file_encodeKit(data);
 
     // 3. INPUT PROTECTION
     // Disable keyboard interrupts during SD write operations.
@@ -6276,28 +6562,7 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
                 // 5.3 SONG ENCODE + WRITE
                 // Encode each layer's banks/beats and write serialized song payload.
                 for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
-                    memset(data, 0x00, sizeof(data));
-                    data[0] = 'l';
-                    Layer& layer = layerLibrary[l];
-
-                    // Encode all banks for current layer
-                    for (uint8_t b = 0; b < kBankLibrarySize; b++) {
-                        Bank& bank = layer.bankLibrary[b];
-                        uint16_t offsetBank = 1 + (b * 257);
-                        data[offsetBank] = 'b';
-
-                        // Encode packed beat data + start interval
-                        for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
-                            Beat& beat = bank.beatLibrary[k];
-                            uint16_t offsetBeat = offsetBank + 1 + (k * 4);
-                            uint16_t data_ = beat.getData();
-                            data[offsetBeat + 0] = (uint8_t)(data_ >> 8);
-                            data[offsetBeat + 1] = (uint8_t)(data_ & 0xFF);
-                            uint16_t startInterval = beat.getStartInterval();
-                            data[offsetBeat + 2] = (uint8_t)(startInterval >> 8);
-                            data[offsetBeat + 3] = (uint8_t)(startInterval & 0xFF);
-                        }
-                    }
+                    file_encodeLayerSong(l, data);
 
                     // Write song payload in 512-byte chunks
                     writeCountTotal = (kSongByteSize / writeByteSize);
@@ -7858,6 +8123,10 @@ void Controller::lcd_drawAlert() {
 
         case ALERT_LOADFILE:
             alertText = kAlertTextLoadFile;
+            break;
+
+        case ALERT_RESTOREAUTOSAVE:
+            alertText = kAlertTextRestoreAutosave;
             break;
 
         case ALERT_SAVEFILE:
@@ -10180,7 +10449,14 @@ void Controller::lcd_drawRhythm_TempoData() {
     bool slaveModeActive = (io.syncIn != 0) || (io.midiIn != 0);
     bool masterModeActive = !slaveModeActive && ((io.syncOut != 0) || (io.midiOut != 0));
 
-    if (slaveModeActive) {
+    if (slaveModeActive && (io.midi.rxErrors > 0)) {
+        // MIDI IN diagnostics: bytes lost (UART overrun/framing) or notes dropped from a full queue.
+        char errText[16];
+        const uint32_t errors = (io.midi.rxErrors > 9999) ? 9999 : io.midi.rxErrors;
+        snprintf(errText, sizeof errText, "ERR %4lu", static_cast<unsigned long>(errors));
+        lcd_setMenuTextState(YELLOW);
+        lcd.drawText(errText, kMenuTextBoxTextSize, kMenuTextBoxX[0], kMenuTextBoxY[0]);
+    } else if (slaveModeActive) {
         lcd_setMenuTextState(YELLOW);
         lcd.drawText("   SLAVE", kMenuTextBoxTextSize, kMenuTextBoxX[0], kMenuTextBoxY[0]);
     } else if (masterModeActive) {
@@ -10267,6 +10543,7 @@ void Controller::lcd_drawMetroMenu() {
     lcd.drawText(kHeaderVolume, kMenuHeaderTextSize, kMenuHeaderX[3], kMenuHeaderY[3]);
     lcd.drawText(kHeaderPreview, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
     lcd.drawText(kHeaderPreviewLevel, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
+    lcd.drawText(kHeaderAutosave, kMenuHeaderTextSize, kMenuHeaderX[6], kMenuHeaderY[6]);
 
     // 4. SIGN/UNIT DRAW
     // Draw unit/sign text for each parameter slot.
@@ -10277,6 +10554,7 @@ void Controller::lcd_drawMetroMenu() {
     lcd.drawText("  %", kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
     lcd.drawText("  %", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
+    lcd.drawText("MIN", kMenuSignTextSize, kMenuSignBoxX[6], kMenuSignBoxY[6]);
 
     // 5. DATA DRAW
     // Draw metronome parameter values.
@@ -10286,6 +10564,14 @@ void Controller::lcd_drawMetroMenu() {
     lcd_drawMetro_VolumeData();
     lcd_drawMetro_PreviewData();
     lcd_drawMetro_PreviewLevelData();
+    lcd_drawMetro_AutosaveData();
+}
+
+void Controller::lcd_drawMetro_AutosaveData() {
+    /// @brief Draws the autosave interval field (tab 6): OFF or minutes.
+    lcd_setMenuDataState(WHITE);
+    const uint8_t minutes = kAutosaveMinutes[(autosaveTiming.interval < kAutosaveIntervalCount) ? autosaveTiming.interval : kAutosaveDefaultInterval];
+    lcd.drawText((minutes == 0) ? kDataOff : kNumberDataLibrary[minutes].nameLongR, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
 }
 
 void Controller::lcd_drawMetro_PreviewData() {
@@ -13341,6 +13627,9 @@ void Controller::file_newAction() {
     // Remove pending alert before executing state reset flow.
     lcd_clearAlert();
 
+    // Unsaved work is autosaved first (when AUTOSAVE is on): NEW can be undone at the next power-on.
+    if ((autosaveIntervalMs(autosaveTiming.interval) > 0) && (file_stateCrc() != autosaveCleanCrc)) autosave_write();
+
     // 2. TRANSPORT RESET
     // Reset song transport and playback runtime state.
     reset();
@@ -13377,6 +13666,8 @@ void Controller::file_newAction() {
     effect_reset(0);
     effect_reset(1);
     reverb_reset();
+
+    autosave_markClean();  // an empty song has nothing to autosave
 }
 
 void Controller::file_loadSelect() {
@@ -13402,6 +13693,11 @@ void Controller::file_loadAction() {
     // 1. PRE-LOAD CLEANUP
     // Clear existing alerts and reset runtime playback context.
     lcd_clearAlert();
+
+    // Unsaved work is autosaved first (when AUTOSAVE is on), so a LOAD can be undone by restoring
+    // it at the next power-on.
+    if ((autosaveIntervalMs(autosaveTiming.interval) > 0) && (file_stateCrc() != autosaveCleanCrc)) autosave_write();
+
     reset();
     lcd_resetPlay();
 
@@ -13436,6 +13732,7 @@ void Controller::file_loadAction() {
     // 4. TRANSACTION FLAG RESTORE
     // Release load-in-progress flag after SD transaction completes.
     loadAction = false;
+    if (alertType != ALERT_LOADERROR) autosave_markClean();
 
     // 5. RESULT ALERT PRESENTATION
     // Display result alert and keep it visible for user acknowledgment.
@@ -13477,6 +13774,12 @@ void Controller::file_saveAction() {
     // 3. SD SAVE EXECUTION & RESULT MAPPING
     // Execute SD save and map operation result to alert type.
     (sd_saveFile(fileMenuCounter) == SD_OK) ? alertType = ALERT_SAVESUCCESS : alertType = ALERT_SAVEERROR;
+
+    // The work is in a slot now: the autosave files are no longer needed.
+    if (alertType == ALERT_SAVESUCCESS) {
+        autosave_deleteAll();
+        autosave_markClean();
+    }
 
     // 4. TRANSACTION FLAG RESTORE
     // Release save-in-progress flag after SD transaction completes.
@@ -14939,8 +15242,8 @@ void Controller::metro_menuRight() {
     // 1. TAB STATE UPDATE
     // Advance tab index and wrap to first tab at upper boundary.
     preMenuTab = menuTab;
-    // Tabs 0-3 metronome, 4-5 sample preview.
-    menuTab = (menuTab < 5) ? (menuTab + 1) : kMinMenu4Tab;
+    // Tabs 0-3 metronome, 4-5 sample preview, 6 autosave.
+    menuTab = (menuTab < 6) ? (menuTab + 1) : kMinMenu4Tab;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation for tab change.
@@ -14953,7 +15256,7 @@ void Controller::metro_menuLeft() {
     // 1. TAB STATE UPDATE
     // Decrement tab index and wrap to last tab at lower boundary.
     preMenuTab = menuTab;
-    menuTab = (menuTab > kMinMenu4Tab) ? (menuTab - 1) : 5;
+    menuTab = (menuTab > kMinMenu4Tab) ? (menuTab - 1) : 6;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation for tab change.
@@ -14989,6 +15292,10 @@ void Controller::metro_menuUp() {
         case 5:
             if (previewLevel < 100) preview_setLevel(previewLevel + 1);
             break;
+
+        case 6:
+            if (autosaveTiming.interval + 1 < kAutosaveIntervalCount) autosave_setInterval(autosaveTiming.interval + 1);
+            break;
     }
 }
 
@@ -15020,6 +15327,10 @@ void Controller::metro_menuDown() {
 
         case 5:
             if (previewLevel > 0) preview_setLevel(previewLevel - 1);
+            break;
+
+        case 6:
+            if (autosaveTiming.interval > 0) autosave_setInterval(autosaveTiming.interval - 1);
             break;
     }
 }
@@ -15571,10 +15882,13 @@ void Controller::io_setMidiIn(uint8_t mode_) {
         io.midi.rxNotes = modeData.notesEnabled;
         io.midi.rxActive = modeData.clockEnabled || modeData.transportEnabled || modeData.notesEnabled;
 
-        io.midi.rxClockCount = 0;
         io.midi.rxClockTickPhase = 0;
-        io.midi.rxClockBeatStart = 0;
         io.midi.rxClockBpm = 0;
+        io.midi.rxClockBpmCount = 0;
+        io.midi.rxParser = MidiParser();
+        io.midi.rxNoteQueue.clear();
+        midi_clockRelease();
+        clockLockForgetTiming(io.midi.clockLock);
         io.midi.rxClockFlag = false;
         io.midi.rxTransportRunning = false;
         io.midi.rxClockPhaseValid = false;
@@ -18941,7 +19255,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
         uint8_t targetSector = layer.playSampleSector;
         if ((sampleSectorLibrary[layer.playSampleSector].active) && (sampleSectorLibrary[layer.playSampleSector].playMode) && (!(sampleSectorLibrary[layer.playSampleSector].writeMode))) {
             int8_t nDirection, nResolution;
-            int16_t nPitch, nLevel, nStart, nEnd, nTiming, nProbability;
+            int16_t nPitch, nLevel, nStart, nEnd, nTiming, nProbability = layer.probability;
             float normMultiplier;
             ((mixer.normalize) && (layer.normalize)) ? normMultiplier = sampleSectorLibrary[targetSector].normMultiplier : normMultiplier = 1.0f;
 
@@ -18963,6 +19277,9 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                 if (random > threshold) probability = false;
             }
             if (probability) {
+                // MIDI out sends the velocity this hit plays with.
+                io.midi.txVelocity[layerNum_] = midiMultiplierToVelocity(fillVolMultiplier_);
+
                 // initialize temp beat data
                 tBD.active = true;
                 tBD.ramAddress = RAM_SAMPLE_ADDRESS + (targetSector * kSampleByteSize);
@@ -22559,7 +22876,7 @@ void Controller::record() {
             metronome.countDown = rhythm.measure;
 
             // Clear any stale pending hits from a previous precount take.
-            for (uint8_t i = 0; i < kLayerLibrarySize; i++) precountPendingBeat[i] = false;
+            for (uint8_t i = 0; i < kLayerLibrarySize; i++) precountPendingBeat[i] = 0;
         }
 
         // Reset LFO counters to start modulation cycles from known phase.
@@ -22569,7 +22886,7 @@ void Controller::record() {
 
         // Enqueue MIDI Start only when playback actually begins.
         // If precount is active, defer transmission until precount completes.
-        if (io.midi.txTransport) {
+        if (midi_txTransportOn()) {
             if (usePrecount) {
                 io.midi.txStartPending = true;
             } else {
@@ -22585,6 +22902,7 @@ void Controller::record() {
         recordIcon.mode = true;
         stopFlag = false;
         resetFlag = false;
+        midi_clockOnPlayStart();
         playActive = true;
         if (io.syncOut == 1) {
             HAL_GPIO_WritePin(SYNC_OUT_GATE_GPIO_Port, SYNC_OUT_GATE_Pin, GPIO_PIN_SET);
@@ -22628,7 +22946,7 @@ void Controller::play() {
 
     // 1. MIDI START TRANSMISSION
     // Enqueue MIDI Start (0xFA) before the clock timer fires its first tick.
-    if (io.midi.txTransport) {
+    if (midi_txTransportOn()) {
         static const uint8_t kMidiStart = 0xFA;
         enqueueMidiTx(&kMidiStart, 1);
         io.midi.txStartPending = false;
@@ -22650,6 +22968,7 @@ void Controller::play() {
     // Song mode: playing from the top starts on the chain's current step.
     if (songChain.active && (playInterval == 0)) song_toStartBank();
 
+    midi_clockOnPlayStart();
     stopFlag = false;
     resetFlag = false;
     playActive = true;
@@ -22677,7 +22996,7 @@ void Controller::stop() {
 
     // 1. MIDI STOP TRANSMISSION
     // Enqueue MIDI Stop (0xFC) when MIDI sync TX is active.
-    if (io.midi.txTransport) {
+    if (midi_txTransportOn()) {
         static const uint8_t kMidiStop = 0xFC;
         enqueueMidiTx(&kMidiStop, 1);
     }
@@ -22706,6 +23025,7 @@ void Controller::stop() {
     resetFlag = false;
     playActive = false;
     recordActive = false;
+    midi_clockRelease();
     io.midi.txStartPending = false;
     io.sync.txPulseCounter = 0;
     io.sync.txTrsTickCounter = 0;
@@ -22737,7 +23057,7 @@ void Controller::reset() {
     // 1. MIDI RESET TRANSMISSION
     // Enqueue MIDI Stop (0xFC) + Song Position Pointer to 0 (0xF2 0x00 0x00)
     // to signal all connected devices to rewind to position 1.
-    if (io.midi.txTransport) {
+    if (midi_txTransportOn()) {
         if (!resetFlag) {
             static const uint8_t kMidiTrigResetSysEx[5] = {
                 kMidiSysExStart,
@@ -22825,7 +23145,7 @@ void Controller::reset() {
 void Controller::triggerStop() {
     /// @brief Arms stop at musical boundary or stops immediately during precount.
 
-    if (io.midi.txTransport) {
+    if (midi_txTransportOn()) {
         static const uint8_t kMidiTrigStopSysEx[5] = {
             kMidiSysExStart,
             kMidiSysExManufacturerNonCommercial,
@@ -22854,7 +23174,7 @@ void Controller::triggerStop() {
 void Controller::triggerReset() {
     /// @brief Arms reset at musical boundary or resets immediately during precount.
 
-    if (io.midi.txTransport) {
+    if (midi_txTransportOn()) {
         static const uint8_t kMidiTrigResetSysEx[5] = {
             kMidiSysExStart,
             kMidiSysExManufacturerNonCommercial,
@@ -24373,6 +24693,16 @@ float Controller::processAudioLpfHelper(uint8_t lpfNum_, float audio_) {
 void Controller::interruptPlay() {
     /// @brief The central heartbeat of the sequencer. Manages metronome pre-counts, real-time beat triggering for all layers (simple and complex fills), hardware sync pulses, and LFO phase synchronization.
 
+    // Locked to MIDI clock (MidiClock.h): play only as far as the clock allows, then wait for it.
+    // If the clock stops arriving, run free at the last tempo.
+    if (playActive && io.midi.clockLocked) {
+        if ((HAL_GetTick() - io.midi.rxLastClockMs) > kClockGapUs / 1000) {
+            midi_clockRelease();
+        } else if (!clockLockMayAdvance(io.midi.clockLock)) {
+            return;
+        }
+    }
+
     if (playActive) {
         // 1. METRONOME PRE-COUNT PHASE
         // Handle the "get ready" timeline before normal song playback starts.
@@ -24414,8 +24744,9 @@ void Controller::interruptPlay() {
                 // time for the very next tick's beat-trigger pass to play them in sync.
                 for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                     if (precountPendingBeat[i]) {
-                        precountPendingBeat[i] = false;
-                        layerSong_setBeat(i, activeSongBank, playInterval, 0, 0, 0, 0, true);
+                        const uint8_t pattern = static_cast<uint8_t>(precountPendingBeat[i] - 1);
+                        precountPendingBeat[i] = 0;
+                        layerSong_setBeat(i, activeSongBank, playInterval, 0, pattern, 0, 0, true);
                     }
                 }
             }
@@ -24425,7 +24756,7 @@ void Controller::interruptPlay() {
         // Handle runtime metronome, sync pulses, beat triggering, and loop flow.
 
         else {
-            if (io.midi.txStartPending && io.midi.txTransport) {
+            if (io.midi.txStartPending && midi_txTransportOn()) {
                 static const uint8_t kMidiStart = 0xFA;
                 enqueueMidiTx(&kMidiStart, 1);
                 io.midi.txStartPending = false;
@@ -24545,6 +24876,7 @@ void Controller::interruptPlay() {
                 // LOOP END PROCEDURES
                 // Reset play interval and apply end-of-loop bank/play pointer updates.
                 playInterval = 0;
+                loopEndFlag = true;  // autosave may write now (Autosave.h)
                 io.sync.txPulseCounter = 0;
 
                 // Handle Bank Shifting at the end of the loop cycle
@@ -24706,6 +25038,10 @@ void Controller::interruptSyncInPulse() {
 
 void Controller::interruptMidiTxClock() {
     /// @brief Transmits MIDI Clock (0xF8) on each timer tick. Called from TIM4 ISR at 24 PPQN.
+    /// While following an incoming MIDI clock the Drumboy sends no clock of its own (a MIDI loop
+    /// would feed it back and double the tempo), and the sync output follows the incoming clock
+    /// (see midi_receiveClock), so this timer does nothing.
+    if (io.midi.rxClock) return;
 
     // 1. CLOCK TRANSMISSION
     // Enqueue real-time MIDI Clock byte when MIDI sync TX is active.
@@ -24713,6 +25049,11 @@ void Controller::interruptMidiTxClock() {
         static const uint8_t kMidiClock = 0xF8;
         enqueueMidiTx(&kMidiClock, 1);
     }
+    syncOutClockTick();
+}
+
+void Controller::syncOutClockTick() {
+    /// @brief One 24 PPQN clock for the sync output jack: pulses at its PPQN setting.
 
     // Sync-out clock policy:
     // MODE-A -> always running (no gate function)

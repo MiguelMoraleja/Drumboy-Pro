@@ -9,7 +9,10 @@
 #include "FileFormat.h"
 #include "Lfo.h"
 #include "MCP23017.h"
+#include "Autosave.h"
 #include "Metronome.h"
+#include "MidiClock.h"
+#include "MidiParser.h"
 #include "Pitch.h"
 #include "Preview.h"
 #include "SongChain.h"
@@ -917,6 +920,7 @@ const char kHeaderVelocity[]                        = "VELOCITY  ";
 const char kHeaderVolume[]                          = "VOLUME    ";
 const char kHeaderPreview[]                         = "PREVIEW   ";
 const char kHeaderPreviewLevel[]                    = "PREV LEVEL";
+const char kHeaderAutosave[]                        = "AUTOSAVE  ";
 const char kHeaderWet[]                             = "WET       ";
 
 const char kHeaderLow[]                             = "LOW       ";
@@ -1242,6 +1246,8 @@ typedef enum {
     ENC_CHAIN_END                                   = 0x77,
     ENC_CHAIN_PLAY                                  = 0x78,
 
+    ENC_METRO_AUTOSAVE                              = 0x79,  // autosave interval (Metronome tab 6)
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1259,7 +1265,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // RHYTHM_MENU = 0x05
     {ENC_RHYTHM_TEMPO, ENC_RHYTHM_MEASURE, ENC_RHYTHM_BAR, ENC_RHYTHM_QUANTIZE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // METRO_MENU = 0x06
-    {ENC_METRO_ACTIVE, ENC_METRO_PRECOUNT, ENC_METRO_SAMPLE, ENC_METRO_VOLUME, ENC_METRO_PREVIEW, ENC_METRO_PREVIEW_LEVEL, ENC_FNC_NONE, ENC_FNC_NONE},
+    {ENC_METRO_ACTIVE, ENC_METRO_PRECOUNT, ENC_METRO_SAMPLE, ENC_METRO_VOLUME, ENC_METRO_PREVIEW, ENC_METRO_PREVIEW_LEVEL, ENC_METRO_AUTOSAVE, ENC_FNC_NONE},
     // IO_MENU = 0x07
     {ENC_IO_SYNCIN, ENC_IO_SYNCOUT, ENC_IO_MIDIIN, ENC_IO_MIDIOUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // FILTER_0_MENU = 0x08
@@ -1449,7 +1455,9 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_CHAIN_REPEATS,       ENC_RES_M, "REPEATS   ", "SONG  ", "   ", false},
     {ENC_CHAIN_LENGTH,        ENC_RES_M, "LENGTH    ", "SONG  ", "   ", false},
     {ENC_CHAIN_END,           ENC_RES_S, "END       ", "SONG  ", "   ", false},
-    {ENC_CHAIN_PLAY,          ENC_RES_S, "CHAIN     ", "SONG  ", "   ", false}
+    {ENC_CHAIN_PLAY,          ENC_RES_S, "CHAIN     ", "SONG  ", "   ", false},
+
+    {ENC_METRO_AUTOSAVE,      ENC_RES_S, "AUTOSAVE  ", "METRO ", "MIN", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -1611,6 +1619,7 @@ typedef enum {
     ALERT_CLEARSUCCESS                              = 0x16,
     ALERT_CLEARERROR                                = 0x17,
     ALERT_SHUTDOWN                                  = 0x18,
+    ALERT_RESTOREAUTOSAVE                           = 0x19,
     ALERT_OFF                                       = 0x20
 } AlertType;
 
@@ -1618,6 +1627,7 @@ const char kAlertTextResetPlay[]                    = "RESET PLAY?";
 
 const char kAlertTextNewFile[]                      = "NEW FILE?";
 const char kAlertTextLoadFile[]                     = "LOAD FILE?";
+const char kAlertTextRestoreAutosave[]              = "RESTORE AUTOSAVE?";
 const char kAlertTextSaveFile[]                     = "SAVE FILE?";
 const char kAlertTextClearFile[]                    = "CLEAR FILE?";
 const char kAlertTextOverwriteFile[]                = "OVERWRITE FILE?";
@@ -1800,6 +1810,7 @@ const uint8_t kHeadPhoneDecibelData[]               = {0x7F, 0x4C, 0x40, 0x39, 0
 const char kFileRef[]                               = "RW_DRUMBOYPRO_FILE       ";
 const char kFileStart[]                             = "System/File/File_";
 const char kFileEnd[]                               = ".rwf";
+const char* const kAutosavePath[2]                  = {"System/File/Autosave_A.rwf", "System/File/Autosave_B.rwf"};
 
 const uint16_t kFileByteSize                        = 14360;
 const uint8_t kFileLibrarySize                      = 100;
@@ -1851,7 +1862,8 @@ const char kSystemPresetFilename[]                  = "System/Preset/System.rwp"
 
 // 21 bytes up to V1.10; 21-22 (sample preview on/off and level) added in V1.11. Older 21-byte
 // files still load: the missing bytes keep their defaults.
-const uint8_t kSystemPresetDataSize                 = 23;
+const uint8_t kSystemPresetDataSize                 = 24;   // V1.13: + byte 23 autosave interval
+const uint8_t kSystemPresetDataSizeV111             = 23;   // V1.11-V1.12: + bytes 21-22 sample preview
 const uint8_t kSystemPresetDataSizeV110             = 21;
 
 const char kEncoderPresetRef[]                      = "RW_DRUMBOYPRO_PRESET_ENC ";
@@ -2154,6 +2166,8 @@ const uint8_t kInitialQuantize                      = 2;
 
 const uint16_t kMeasureInterval                     = 800;
 const uint16_t kMeasureHalfInterval                 = kMeasureInterval / 2;
+const uint32_t kClockLockMinPeriodUs                = 40;      // sequencer timer limits while locked to MIDI clock
+const uint32_t kClockLockMaxPeriodUs                = 60000;   // (TIM15 counts microseconds, 16 bits)
 const uint16_t kMinSongInterval                     = 800;
 const uint16_t kMaxSongInterval                     = 64000;
 const float kQuantizeInterval[]                     = {50, 100, 200, 400, 800, 1600, 3200};
@@ -2375,18 +2389,15 @@ struct Midi {
     uint8_t rxChannel                               = 0;
     uint8_t txChannel                               = 0;
 
-    uint8_t rxNoteOnReadStage                       = 0;
-    uint8_t rxNoteOnWriteFlag                       = 0;
-    uint8_t rxNoteOnKey                             = 0;
-    uint8_t rxNoteOnVelocity                        = 0;
-
-    uint8_t rxNoteOffReadStage                      = 0;
-    uint8_t rxNoteOffWriteFlag                      = 0;
-    uint8_t rxNoteOffKey                            = 0;
-    uint8_t rxNoteOffVelocity                       = 0;
+    // MIDI IN (MidiParser.h): parser state in the UART interrupt, received notes queued for the
+    // main loop, receive errors (UART overrun/framing, full queue) for the diagnostics display.
+    MidiParser rxParser;
+    MidiQueue<16> rxNoteQueue;
+    volatile uint32_t rxErrors                      = 0;
 
     bool txTriggerNoteOn[10]                        = {false};
     bool txTriggerNoteOff[10]                       = {false};
+    volatile uint8_t txVelocity[10]                 = {127, 127, 127, 127, 127, 127, 127, 127, 127, 127};
 
     const uint8_t txData[10]                        = {0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D};
 
@@ -2398,13 +2409,16 @@ struct Midi {
     volatile bool rxTrigResetFlag                   = false;
     volatile bool rxTrigRecordFlag                  = false;
 
-    uint8_t rxSysExStage                            = 0;
-    uint8_t rxSysExCmd                              = 0;
-
-    uint8_t rxClockCount                            = 0;                // 0 = idle; 1–24 = counting within one beat
     volatile uint8_t rxClockTickPhase               = 0;                // 0 = beat boundary, 1-23 = in-between MIDI clocks
-    volatile uint32_t rxClockBeatStart              = 0;                // HAL_GetTick() at the start of beat measurement
-    volatile uint16_t rxClockBpm                    = 0;                // BPM computed from last full 24-clock beat
+    volatile uint16_t rxClockBpm                    = 0;                // measured tempo, rounded, for the display and effects
+    uint8_t rxClockBpmCount                         = 0;                // clocks since the last tempo report
+
+    // Clock slave lock (MidiClock.h): while clockLocked, the sequencer only plays as far as the
+    // incoming clock allows. Engaged on START/CONTINUE or when playing with the clock running.
+    MidiClockLock clockLock;
+    volatile bool clockLocked                       = false;
+    volatile bool clockStartedByMidi                = false;            // START/arm set the lock origin: play() keeps it
+    volatile uint32_t rxLastClockMs                 = 0;                // HAL_GetTick() of the last clock received
     volatile bool rxClockFlag                       = false;            // New BPM value ready for the main loop
     volatile bool rxTransportRunning                = false;
     volatile bool rxStartFlag                       = false;

@@ -38,7 +38,8 @@ The MCU sits at the center of six subsystems: an NT35510 display driven over a 1
 - **Pitch in semitones** (V1.11): −24 to +24, a fast turn jumps by octaves; kits from older firmware keep their exact pitch until you change it
 - **Song mode** (V1.12): chain the 5 banks, each for 1–16 loops, up to 16 steps, looping or stopping at the end; tap the SONG key on its own for the SONG page; there, a long COPY / PASTE copies a whole bank (all 10 layers) to another
 - **Sample preview** (V1.11): turning SAMPLE plays the sample straight from the SD card (no loading, no length limit); the layer pad replays it; on/off and level on the Metronome page
-- **MIDI In/Out** (opto-isolated input) and **Sync In/Out** for external clock/gate sync
+- **MIDI In/Out** (opto-isolated input) and **Sync In/Out** for external clock/gate sync; since V1.13 the Drumboy follows an incoming MIDI clock tick by tick (fractional tempos don't drift), plays incoming notes at their velocity (running status, chords), sends each hit's real velocity, and sends no clock or transport of its own while it follows one (no MIDI loops); MIDI receive errors show as ERR on the Rhythm page
+- **Autosave** (V1.13): every 2–20 minutes (AUTOSAVE on the Metronome page, default 10) the song goes to two reserved files on the SD card; after a power cut or crash the Drumboy offers RESTORE AUTOSAVE? at power-on (ADD restores, CLEAR discards); LOAD and NEW autosave unsaved work first
 - **SD-card firmware updates** via a dedicated bootloader with CRC-32 verified staged writes
 - Fully open hardware (KiCad) and firmware (C/C++ against the STM32 HAL) — no CMSIS-DSP or external DSP library, all hand-rolled biquad/delay-line DSP on the Cortex-M7 FPU
 

@@ -472,7 +472,7 @@ table.rel td.new { min-width: 280px; }
           <h3>On the device</h3>
           <div class="k"><span class="keycap">⁘</span><div><b>Tap the SONG key</b> on its own (bottom right, the one you hold with the pads to pick a bank): the SONG page. Tap it there to turn the chain on or off (CHAIN).</div></div>
           <div class="k"><span class="keycap">↻</span><div><b>Fields:</b> STEP picks the step to edit, BANK and REPEATS set it, LENGTH adds or removes steps at the end (a new step copies the last one), END is LOOP or STOP, CHAIN ON/OFF.</div></div>
-          <div class="k"><span class="keycap">⁘+</span><div><b>Picking a bank by hand</b> (SONG + pads) while the chain plays jumps the chain to the step that uses that bank. A bank the chain doesn't use turns the chain off.</div></div>
+          <div class="k"><span class="keycap">⁘+</span><div><b>Picking a bank by hand</b> (SONG + pads) never turns the chain off. A bank the chain uses: the chain jumps to its step (from the loop end while playing). Any other bank plays one loop as a detour, then the chain goes on from where it was; the detour doesn't count as a repeat. Picked while stopped, it plays first. (V1.14; before, a bank outside the chain turned it off.)</div></div>
           <div class="k"><span class="keycap">⧉</span><div><b>Copy a whole bank:</b> on the SONG page hold COPY (all 10 layers of the active bank, beats and fills), pick another bank with SONG + pads, hold PASTE. Works while playing; the per-layer copy on the song page is unchanged.</div></div>
           <div class="k"><span class="keycap">■</span><div><b>STOP</b> keeps the chain's position; <b>RESET</b> goes back to step 1. The chain is saved with the song; older firmware ignores it.</div></div>
         </div>
@@ -1622,8 +1622,9 @@ const RELEASES = [
          "FILL condition: those beats play only while the FILL key is held",
          "ADD + turn changes every beat of the bank; CLEAR resets a beat, ADD + CLEAR the bank",
          "MIDI recording keeps each note's velocity in the beat",
-         "Saved in the song file after the chain; older firmware ignores it and old songs play as before"],
-    fix: [] },
+         "Saved in the song file after the chain; older firmware ignores it and old songs play as before",
+         "Song mode: picking a bank by hand (SONG + pads) never turns the chain off; a bank outside the chain plays one loop as a detour, then the chain goes on"],
+    fix: ["The song and NOTE pages kept the old bank's beat after a bank change at the loop end (edits went to the wrong beat)"] },
   { v: "V1.13", date: "2026-11-07", status: "GitHub release v1.13 · tested", pub: true,
     nw: ["Locked to an incoming MIDI clock: the Drumboy plays only as far as each clock allows, so fractional tempos (Loopy Pro) no longer drift",
          "No own MIDI clock or start/stop on MIDI OUT while following one, so a MIDI loop can't run away to 200 BPM; the sync jack follows the incoming clock",

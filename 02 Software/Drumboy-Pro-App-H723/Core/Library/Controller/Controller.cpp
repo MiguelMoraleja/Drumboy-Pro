@@ -21403,6 +21403,8 @@ void Controller::song_setActive(bool active_) {
     /// the bank playing now (or from step 1); while stopped, it starts from its current step.
     __disable_irq();
     songChain.active = active_;
+    chainPlay.skipCount = false;  // no jump or detour left over from before
+    chainPlay.detour = -1;
     if (active_ && playActive && (chainJumpToBank(songChain, chainPlay, activeSongBank) < 0)) chainRestart(songChain, chainPlay);
     __enable_irq();
     if (active_ && !playActive) song_toStartBank();
@@ -21410,13 +21412,13 @@ void Controller::song_setActive(bool active_) {
 }
 
 void Controller::song_manualBank(uint8_t bank_) {
-    /// @brief A bank picked by hand (SONG + pads) while the chain is on: the chain jumps to the step
-    /// that uses that bank; a bank the chain doesn't use turns chain play off.
+    /// @brief A bank picked by hand (SONG + pads) while the chain is on (SongChain.h,
+    /// chainManualBank): a bank the chain uses jumps the chain to its step; any other bank plays one
+    /// loop as a detour and the chain goes on from where it was. The chain is never turned off.
     chainActionFlag = true;  // the SONG page shows the active bank (copy hint)
     if (!songChain.active) return;
     __disable_irq();
-    const int8_t step = chainJumpToBank(songChain, chainPlay, bank_);
-    if (step < 0) songChain.active = false;
+    const int8_t step = chainManualBank(songChain, chainPlay, bank_, playActive);
     __enable_irq();
     if (step >= 0) songStepSel = static_cast<uint8_t>(step);
     chainActionFlag = true;
@@ -23335,7 +23337,8 @@ void Controller::play() {
     // 3. TRANSPORT STATE UPDATE
     // Set playback flags and transport icons for running state.
     // Song mode: playing from the top starts on the chain's current step.
-    if (songChain.active && (playInterval == 0)) song_toStartBank();
+    // (Not after a bank picked by hand while stopped: that bank plays first, SongChain.h.)
+    if (songChain.active && (playInterval == 0) && !chainPlay.skipCount) song_toStartBank();
 
     midi_clockOnPlayStart();
     note_restartLoops();
@@ -25274,11 +25277,14 @@ void Controller::interruptPlay() {
                 // song mode says which bank comes next (SongChain.h).
                 bool chainEnded = false;
                 const uint8_t bankBefore = activeSongBank;
-                if (bankShiftFlag) {
+                if (bankShiftFlag && !songChain.active) {
                     bankShiftFlag = false;
                     activeSongBank = targetSongBank;
                     bankActionFlag = true;
                 } else if (songChain.active) {
+                    // Song mode decides, manual picks included (song_manualBank set up the jump or
+                    // the detour in chainPlay).
+                    bankShiftFlag = false;
                     const int8_t next = chainLoopEnd(songChain, chainPlay);
                     if (next == kChainStop) {
                         chainEnded = true;

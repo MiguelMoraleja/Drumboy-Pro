@@ -4,6 +4,7 @@
 #include <cstring>
 #include <random>
 #include <string>
+#include <utility>
 
 #include "SongChain.h"
 
@@ -97,6 +98,82 @@ static void testJumpAndEdit() {
     CHECK(chainTotalLoops(c) == 7, "total loops");
 }
 
+// Plays loops like the firmware: the bank playing, switched at each loop end; manual_ = {loop index
+// at which SONG + pad is pressed (during that loop), bank}.
+static std::string playManual(const SongChain& c, ChainPlay& p, int loops, std::initializer_list<std::pair<int, int>> manual, uint8_t start = 0xFF) {
+    std::string out;
+    uint8_t bank = (start == 0xFF) ? chainCurrentBank(c, p) : start;
+    for (int i = 0; i < loops; i++) {
+        for (const auto& m : manual)
+            if (m.first == i) chainManualBank(c, p, static_cast<uint8_t>(m.second), true);
+        out += static_cast<char>('1' + bank);
+        const int8_t r = chainLoopEnd(c, p);
+        if (r == kChainStop) {
+            out += '|';
+            break;
+        }
+        if (r >= 0) bank = static_cast<uint8_t>(r);
+    }
+    return out;
+}
+
+static void testManual() {
+    // Chain 1x4 2x2 (loop). Banks 3-5 are not in it.
+    const SongChain c = make({{0, 4}, {1, 2}}, true);
+    ChainPlay p;
+    CHECK(playManual(c, p, 8, {}) == "11112211", "no manual: %s", "");
+
+    // A detour while playing: bank 3 plays one loop after the current loop, then the chain goes on
+    // where it was; the loop before the detour counts, the detour doesn't.
+    p = ChainPlay();
+    std::string s = playManual(c, p, 9, {{1, 2}});
+    CHECK(s == "113112211", "detour in step 1: %s", s.c_str());
+    p = ChainPlay();
+    s = playManual(c, p, 9, {{3, 4}});  // pressed in the 4th loop of bank 1: the step ends, then 5, then bank 2
+    CHECK(s == "111152211", "detour at the step's end: %s", s.c_str());
+    // The chain stays on, and its position is kept.
+    CHECK(c.active, "chain still on");
+
+    // Two detours in a row: each plays one loop, neither counts.
+    p = ChainPlay();
+    s = playManual(c, p, 9, {{0, 2}, {1, 3}});
+    CHECK(s == "134111221", "two detours: %s", s.c_str());
+
+    // A jump while playing: bank 2 from the next loop end, the old bank's loop doesn't count,
+    // then bank 2 plays its full 2 repeats.
+    p = ChainPlay();
+    s = playManual(c, p, 8, {{1, 1}});
+    CHECK(s == "11221111", "jump: %s", s.c_str());
+    // Jumping to the bank that is playing restarts its repeats.
+    p = ChainPlay();
+    s = playManual(c, p, 9, {{2, 0}});
+    CHECK(s == "111111122", "jump to the same bank: %s", s.c_str());
+
+    // Stopped: a detour bank is switched to at once by the caller, plays first, then the chain's step.
+    p = ChainPlay();
+    CHECK(chainManualBank(c, p, 4, false) == -1, "stopped detour");
+    s = playManual(c, p, 7, {}, 4);
+    CHECK(s == "5111122", "stopped detour plays first: %s", s.c_str());
+    // Stopped jump: the step plays its full repeats.
+    p = ChainPlay();
+    CHECK(chainManualBank(c, p, 1, false) == 1, "stopped jump");
+    s = playManual(c, p, 5, {}, 1);
+    CHECK(s == "22111", "stopped jump: %s", s.c_str());
+
+    // END = STOP: a detour requested in the last loop doesn't play; the song stops.
+    const SongChain e = make({{0, 1}, {1, 1}}, false);
+    p = ChainPlay();
+    s = playManual(e, p, 5, {{1, 3}});
+    CHECK(s == "12|", "stop wins: %s", s.c_str());
+    CHECK(p.detour == -1 && !p.skipCount && p.step == 0, "clean after the stop");
+
+    // RESET clears a pending detour or jump.
+    p = ChainPlay();
+    chainManualBank(c, p, 3, true);
+    chainRestart(c, p);
+    CHECK(p.detour == -1 && !p.skipCount, "restart clears");
+}
+
 static void testFile() {
     std::mt19937 rng(5);
     uint8_t buf[kChainFileSize];
@@ -130,6 +207,7 @@ static void testFile() {
 int main() {
     testPlayback();
     testJumpAndEdit();
+    testManual();
     testFile();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

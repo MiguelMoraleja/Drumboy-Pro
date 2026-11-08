@@ -2,9 +2,11 @@
 // Hardware-free so it can be tested on a PC (see 02 Software/tests).
 //
 // The sequencer calls chainLoopEnd() at every loop end while the chain plays; it says which bank
-// to play next, or that the song is over. A manual bank change while the chain plays jumps the
-// chain to the first step with that bank (chainJumpToBank); a bank the chain doesn't use turns
-// the chain off. STOP keeps the position; RESET goes back to step 1 (chainRestart).
+// to play next, or that the song is over. A bank picked by hand (chainManualBank) never turns the
+// chain off: a bank the chain uses jumps the chain to its step (from the next loop end while
+// playing, at once when stopped); a bank the chain doesn't use plays one loop as a detour, then
+// the chain goes on from where it was (the detour loop doesn't count as one of its repeats).
+// STOP keeps the position; RESET goes back to step 1 (chainRestart).
 //
 // File: song files (.rwf) get a chain block after their "EOF". Older firmware stops reading at
 // "EOF", so the block needs no format version: it carries its own marker.
@@ -33,12 +35,18 @@ struct SongChain {
 };
 
 struct ChainPlay {
-    uint8_t step = 0;       // step playing now
-    uint8_t loopsDone = 0;  // loops of that step already finished
+    uint8_t step = 0;        // step playing now
+    uint8_t loopsDone = 0;   // loops of that step already finished
+    bool skipCount = false;  // the loop now playing is not the step's own (a jump or a detour is under way)
+    int8_t detour = -1;      // a bank to play for one loop from the next loop end, -1 = none
 };
 
 const int8_t kChainKeep = -1;  // stay on the current bank
 const int8_t kChainStop = -2;  // the song is over: stop
+
+struct SongChain;
+struct ChainPlay;
+inline int8_t chainCountLoop(const SongChain& c_, ChainPlay& p_);
 
 inline void chainClear(SongChain& c_) { c_ = SongChain(); }
 
@@ -46,15 +54,44 @@ inline void chainRestart(const SongChain& c_, ChainPlay& p_) {
     (void)c_;
     p_.step = 0;
     p_.loopsDone = 0;
+    p_.skipCount = false;
+    p_.detour = -1;
 }
 
 inline uint8_t chainCurrentBank(const SongChain& c_, const ChainPlay& p_) {
     return c_.steps[(p_.step < c_.count) ? p_.step : 0].bank;
 }
 
-// One loop finished: returns the bank to switch to, kChainKeep, or kChainStop.
+// One loop finished: returns the bank to switch to, kChainKeep, or kChainStop. After a jump or a
+// detour it returns the bank to play even when it is the step's own (the caller compares it with
+// the bank playing).
 inline int8_t chainLoopEnd(const SongChain& c_, ChainPlay& p_) {
     if (c_.count == 0) return kChainKeep;
+    if (p_.step >= c_.count) p_.step = 0;
+    int8_t next;
+    if (p_.skipCount) {
+        // The loop that ended was a detour, or the old bank before a jump: don't count it.
+        p_.skipCount = false;
+        next = static_cast<int8_t>(c_.steps[p_.step].bank);
+    } else {
+        next = chainCountLoop(c_, p_);
+        if (next == kChainStop) {
+            p_.detour = -1;
+            return kChainStop;
+        }
+        if ((next == kChainKeep) && (p_.detour >= 0)) next = static_cast<int8_t>(c_.steps[p_.step].bank);
+    }
+    if (p_.detour >= 0) {
+        // A bank the chain doesn't use: one loop of it, then back to the chain without counting.
+        next = p_.detour;
+        p_.detour = -1;
+        p_.skipCount = true;
+    }
+    return next;
+}
+
+// One loop of the current step counted (the chain's own rule).
+inline int8_t chainCountLoop(const SongChain& c_, ChainPlay& p_) {
     if (p_.step >= c_.count) p_.step = 0;
     const uint8_t before = c_.steps[p_.step].bank;
     p_.loopsDone++;
@@ -72,8 +109,8 @@ inline int8_t chainLoopEnd(const SongChain& c_, ChainPlay& p_) {
     return (next == before) ? kChainKeep : static_cast<int8_t>(next);
 }
 
-// Manual bank change while the chain plays: the first step using that bank, from the current
-// step on (wrapping), so a bank used twice continues forward. -1 if the chain doesn't use it.
+// Manual bank change: the first step using that bank, from the current step on (wrapping), so a
+// bank used twice continues forward. -1 if the chain doesn't use it.
 inline int8_t chainJumpToBank(const SongChain& c_, ChainPlay& p_, uint8_t bank_) {
     for (uint8_t k = 0; k < c_.count; k++) {
         const uint8_t s = static_cast<uint8_t>((p_.step + k) % c_.count);
@@ -82,6 +119,28 @@ inline int8_t chainJumpToBank(const SongChain& c_, ChainPlay& p_, uint8_t bank_)
             p_.loopsDone = 0;
             return static_cast<int8_t>(s);
         }
+    }
+    return -1;
+}
+
+// A bank picked by hand (SONG + pads). Returns the step jumped to, or -1 for a detour.
+// - A bank the chain uses: the chain goes to that step. Playing, the bank switches at the loop
+//   end and that loop doesn't count; stopped, the caller switches at once and counting is normal.
+// - A bank it doesn't use: playing, it plays for one loop from the loop end (the loop now playing
+//   counts as usual, unless it is itself a detour or a jump), then the chain goes on; stopped, the
+//   caller switches at once, it plays first, then the chain's current step.
+inline int8_t chainManualBank(const SongChain& c_, ChainPlay& p_, uint8_t bank_, bool playing_) {
+    const int8_t step = chainJumpToBank(c_, p_, bank_);
+    if (step >= 0) {
+        p_.detour = -1;
+        p_.skipCount = playing_;
+        return step;
+    }
+    if (playing_) {
+        p_.detour = static_cast<int8_t>(bank_);
+    } else {
+        p_.detour = -1;
+        p_.skipCount = true;
     }
     return -1;
 }

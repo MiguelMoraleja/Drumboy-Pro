@@ -74,7 +74,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 4. ✅ Autosave, part A: checksum-based change detection, AUTOSAVE OFF/2/5/10/20 min, two alternating reserved files written via rename, `RESTORE AUTOSAVE?` at power-on, autosave before LOAD over unsaved work. [32](#32-autosave). (M)
 5. ✅ Hardware test with Loopy Pro → Scarlett: 30 minutes at a fractional tempo in time, no runaway with a MIDI loop set up on purpose, overrun counter at 0 with clock and dense notes, power pulled mid-session restores the autosave. Then package, app (MIDI and autosave explained in their tabs), release.
 
-*V1.14 "Notes"* (built, waiting for the hardware test)
+*V1.14 "Notes"* (built, waiting for the hardware test). Also in V1.14, asked by the owner: undo/redo ([28](#28-undo-for-bank-edits-lxr)), SONG + pads never turn the chain off, and the left S key (STYLE) became SOLO, with STYLE moved to a field on instrument page 3.
 6. ✅ Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)
 7. ✅ NOTE page with VEL and PROB (plus undo/redo of beat and bank edits, [28](#28-undo-for-bank-edits-lxr)); MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
 8. ✅ COND (`A:B`, `!A:B`, `1ST`, `PRE`, `FILL` and negations) with the FILL performance key. (M)
@@ -377,7 +377,7 @@ Reviewed from the owner's fork of the Erica Synths LXR V2 desktop firmware (Migu
 
 ### 28. Undo for bank edits (LXR)
 
-**Status: done in V1.14** (`UndoLog.h`, `test_undo`). Multi-level undo and redo (STYLE + LEFT / RIGHT) for every beat and bank edit: 64 entries of one bank each in SDRAM after the bank clipboard (about 185 KB); undo/redo swap the stored bank with the live one under the interrupt lock; a knob gesture (2 s), an EUCLID visit and a recording take are one step; a whole-bank paste is one step of 10 banks. The history is cleared on LOAD, NEW, restore and when MEASURE/BAR/QUANTIZE change the grid. Sound settings (knobs) are not undoable (see the owner's choice, 2026-11-08: note level is enough).
+**Status: done in V1.14** (`UndoLog.h`, `test_undo`). Multi-level undo and redo (MUTE + LEFT / RIGHT) for every beat and bank edit: 64 entries of one bank each in SDRAM after the bank clipboard (about 185 KB); undo/redo swap the stored bank with the live one under the interrupt lock; a knob gesture (2 s), an EUCLID visit and a recording take are one step; a whole-bank paste is one step of 10 banks. The history is cleared on LOAD, NEW, restore and when MEASURE/BAR/QUANTIZE change the grid. Sound settings (knobs) are not undoable (see the owner's choice, 2026-11-08: note level is enough).
 
 **LXR:** a backup buffer to return a pattern to how it was. **Today:** only EUCLID CLEAR. **Proposal:** one level of undo per bank for destructive edits (paste, EUCLID apply, CLEAR all, SHIFT ALL): snapshot before, a key combination to swap back. The SDRAM gap has room (one bank of 10 layers is ~28 KB, like the bank clipboard).
 

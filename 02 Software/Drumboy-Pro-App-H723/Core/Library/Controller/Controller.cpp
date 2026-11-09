@@ -547,8 +547,8 @@ void Controller::update() {
                 Layer& layer = layerLibrary[layerNum];
                 const uint8_t level = midiVelocityToLevel(noteEvent.data2);
 
-                // Trigger audio if layer is active and unmuted
-                if ((!layer.mute) && (layer.samplePlay))
+                // Trigger audio if layer is active, unmuted and not silenced by a SOLO
+                if (layerAudible(layerNum) && (layer.samplePlay))
                     layer_playBeat(layerNum, kNumberDataLibrary[level].powMultiplier);
 
                 // Write note to the current sequencer step if Recording is enabled, with the
@@ -1631,7 +1631,8 @@ void Controller::keyboard_action() {
                         } else if (keyboard.fillKeyPress) {
                             layerInst_setFill(layerNum, !layerLibrary[layerNum].fill);
                         } else if (keyboard.styleKeyPress) {
-                            layerInst_setStyle(layerNum, !layerLibrary[layerNum].style);
+                            // The left S key is SOLO since V1.14 (STYLE is a field on instrument page 3).
+                            layerInst_setSolo(layerNum, !(soloMask & (1u << layerNum)));
                         } else if ((keyboard.lfoKeyPress) && (!alertFlag)) {
                             lfo_select(layerNum);
                         } else if ((keyboard.layerInstKeyPress) && (!alertFlag)) {
@@ -1656,7 +1657,7 @@ void Controller::keyboard_action() {
                             // Browsing samples: the pad replays the preview, not the loaded sample.
                         } else {
                             Layer& layer = layerLibrary[layerNum];
-                            if ((!layer.mute) && (layer.samplePlay)) layer_playBeat(layerNum, 1.0f);
+                            if (layerAudible(layerNum) && (layer.samplePlay)) layer_playBeat(layerNum, 1.0f);
                             if (recordActive) {
                                 undo_captureRecord(layerNum, activeSongBank);
                                 if (!metronome.precountState) {
@@ -1893,8 +1894,8 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_LEFT:
-                                if (!alertFlag && keyboard.styleKeyPress) {
-                                    undo_apply(false);  // STYLE + LEFT: undo (UndoLog.h)
+                                if (!alertFlag && keyboard.muteKeyPress) {
+                                    undo_apply(false);  // MUTE + LEFT: undo (UndoLog.h)
                                 } else if (!alertFlag) {
                                     switch (menu) {
                                         case FILE_MENU:
@@ -1963,8 +1964,8 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_RIGHT:
-                                if (!alertFlag && keyboard.styleKeyPress) {
-                                    undo_apply(true);  // STYLE + RIGHT: redo (UndoLog.h)
+                                if (!alertFlag && keyboard.muteKeyPress) {
+                                    undo_apply(true);  // MUTE + RIGHT: redo (UndoLog.h)
                                 } else if (!alertFlag) {
                                     switch (menu) {
                                         case FILE_MENU:
@@ -2121,9 +2122,7 @@ void Controller::keyboard_action() {
                                         if (!layerLibrary[i].fill) layerInst_setFill(i, true);
                                     }
                                 } else if (keyboard.styleKeyPress) {
-                                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-                                        if (!layerLibrary[i].style) layerInst_setStyle(i, true);
-                                    }
+                                    // SOLO + ADD: nothing (STYLE for every layer: ADD + turn STYLE on page 3).
                                 } else {
                                     keyboard.shiftKeyPress = true;
                                     switch (menu) {
@@ -2260,9 +2259,7 @@ void Controller::keyboard_action() {
                                         if (layerLibrary[i].fill) layerInst_setFill(i, false);
                                     }
                                 } else if (keyboard.styleKeyPress) {
-                                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-                                        if (layerLibrary[i].style) layerInst_setStyle(i, false);
-                                    }
+                                    layerInst_clearSolo();  // SOLO + CLEAR: every layer back
                                 } else {
                                     switch (menu) {
                                         case RHYTHM_MENU:
@@ -4060,6 +4057,16 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             (layerLibrary[selectedLayerNum].mixerInMode < kMaxLayerOut) ? layerInst_setOut(selectedLayerNum, layerLibrary[selectedLayerNum].mixerInMode + 1) : layerInst_setOut(selectedLayerNum, kMinLayerOut);
             break;
 
+        case ENC_INST_2_STYLE: {
+            // ADD + turn: every layer gets the selected layer's new STYLE.
+            const bool style = !layerLibrary[selectedLayerNum].style;
+            if (keyboard.shiftKeyPress) {
+                for (uint8_t i = 0; i < kLayerLibrarySize; i++) layerInst_setStyle(i, style);
+            } else {
+                layerInst_setStyle(selectedLayerNum, style);
+            }
+        } break;
+
         case ENC_ROUTE_EQ_OUT:
         case ENC_ROUTE_F1_OUT:
         case ENC_ROUTE_F2_OUT:
@@ -4653,6 +4660,16 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_INST_2_OUT:
             (layerLibrary[selectedLayerNum].mixerInMode > kMinLayerOut) ? layerInst_setOut(selectedLayerNum, layerLibrary[selectedLayerNum].mixerInMode - 1) : layerInst_setOut(selectedLayerNum, kMaxLayerOut);
             break;
+
+        case ENC_INST_2_STYLE: {
+            // ADD + turn: every layer gets the selected layer's new STYLE.
+            const bool style = !layerLibrary[selectedLayerNum].style;
+            if (keyboard.shiftKeyPress) {
+                for (uint8_t i = 0; i < kLayerLibrarySize; i++) layerInst_setStyle(i, style);
+            } else {
+                layerInst_setStyle(selectedLayerNum, style);
+            }
+        } break;
 
         case ENC_ROUTE_EQ_OUT:
         case ENC_ROUTE_F1_OUT:
@@ -12058,6 +12075,20 @@ void Controller::lcd_drawLayerInst2Menu(uint8_t layerNum_) {
 
     // 3. DATA DRAW
     lcd_drawLayerInst_OutData(layerNum_);
+
+    // STYLE (tab 5): the layer's processing on/off, set with the left S key before V1.14.
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kHeaderStyle, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
+    lcd_setMenuSignState(GRAY_75);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
+    lcd_drawLayerInst_StyleData(layerNum_);
+}
+
+void Controller::lcd_drawLayerInst_StyleData(uint8_t layerNum_) {
+    /// @brief Draws the STYLE field: ON = pitch, direction, resolution, start/end, timing, PROB and
+    /// the LFOs apply; OFF = the sample plays plain at its level.
+    lcd_setMenuDataState(WHITE);
+    lcd.drawText(layerLibrary[layerNum_].style ? kDataOn : kDataOff, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
 }
 
 void Controller::lcd_drawLayerInst_InstData(uint8_t layerNum_) {
@@ -12971,7 +13002,7 @@ void Controller::lcd_drawLayerTab_Fill(uint8_t layerNum_) {
 }
 
 void Controller::lcd_drawLayerTab_Style(uint8_t layerNum_) {
-    /// @brief Draws style state indicator box for layer row.
+    /// @brief Draws the third indicator box of a layer row: SOLO since V1.14 (it showed STYLE).
 
     // 1. STYLE SETUP
     // Configure box color from layer-tab state.
@@ -12983,7 +13014,7 @@ void Controller::lcd_drawLayerTab_Style(uint8_t layerNum_) {
 
     // 3. FILL STATE DRAW
     // Fill box when state is active, clear when inactive.
-    if (!layerLibrary[layerNum_].style) lcd.setForeColor(BLACK);
+    if (!(soloMask & (1u << layerNum_))) lcd.setForeColor(BLACK);
     lcd.fillRect(kLayerBoxStyleX + 1, kLayerBoxY[layerNum_] + 1, kLayerBoxWidth - 2, kLayerBoxHeight - 2);
 }
 
@@ -13170,7 +13201,7 @@ void Controller::lcd_drawCopyPaste() {
         lcd.setForeColor(CYAN);
         lcd.drawText("PASTE", 5, 170, 112);
 
-        // Undo / redo (STYLE + LEFT / RIGHT).
+        // Undo / redo (MUTE + LEFT / RIGHT).
     } else if (textUndoFlag || textRedoFlag || textUndoNone) {
         lcd.setForeColor(textUndoNone ? GRAY_75 : CYAN);
         lcd.drawText(textUndoNone ? "EMPTY" : (textUndoFlag ? " UNDO" : " REDO"), 5, 170, 112);
@@ -21427,7 +21458,7 @@ void Controller::undo_captureRecord(uint8_t layerNum_, uint8_t bankNum_) {
 }
 
 void Controller::undo_apply(bool redo_) {
-    /// @brief STYLE + LEFT (undo) / STYLE + RIGHT (redo): swaps the stored banks of the last step
+    /// @brief MUTE + LEFT (undo) / MUTE + RIGHT (redo): swaps the stored banks of the last step
     /// with the live ones, each with the sequencer interrupt held off, so it works while playing.
     uint16_t slots[kLayerLibrarySize * kBankLibrarySize];
     const uint16_t n = redo_ ? undoLog.redo(slots, kLayerLibrarySize * kBankLibrarySize) : undoLog.undo(slots, kLayerLibrarySize * kBankLibrarySize);
@@ -22193,8 +22224,29 @@ void Controller::layerInst_setStyle(uint8_t layerNum_, bool style_) {
     layerLibrary[layerNum_].style = style_;
 
     // 2. UI REFRESH
-    // Redraw style icon on layer tab.
+    // The STYLE field on instrument page 3 (the layer row's third box shows SOLO since V1.14).
+    if ((menu == LAYER_INST_2_MENU) && (selectedLayerNum == layerNum_)) lcd_drawLayerInst_StyleData(layerNum_);
+}
+
+bool Controller::layerAudible(uint8_t layerNum_) const {
+    /// @brief A layer sounds unless muted, or another layer is soloed and this one isn't.
+    return !layerLibrary[layerNum_].mute && ((soloMask == 0) || (soloMask & (1u << layerNum_)));
+}
+
+void Controller::layerInst_setSolo(uint8_t layerNum_, bool solo_) {
+    /// @brief SOLO (left S + pad): while any layer is soloed only the soloed ones sound (and send
+    /// MIDI). Not saved, and MUTE stays as it was.
+    if (layerNum_ >= kLayerLibrarySize) return;
+    soloMask = solo_ ? static_cast<uint16_t>(soloMask | (1u << layerNum_)) : static_cast<uint16_t>(soloMask & ~(1u << layerNum_));
     lcd_drawLayerTab_Style(layerNum_);
+}
+
+void Controller::layerInst_clearSolo() {
+    /// @brief SOLO + CLEAR: every layer sounds again.
+    const uint16_t was = soloMask;
+    soloMask = 0;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++)
+        if (was & (1u << i)) lcd_drawLayerTab_Style(i);
 }
 
 void Controller::layerInst_copy() {
@@ -25307,7 +25359,7 @@ void Controller::interruptPlay() {
                         if (noteDueInterval(beat.getStartInterval(), beat.getNote(), songInterval) == playInterval) {
                             // Condition and chance first (they also feed PRE), then the level:
                             // FLAT 100 / GHOST 50 unless the beat has its own velocity; MUTED stays silent.
-                            if (note_plays(i, beat.getNote()) && (!layer.mute) && (layer.samplePlay) && (beat.getFillPattern() != 2)) {
+                            if (note_plays(i, beat.getNote()) && layerAudible(i) && (layer.samplePlay) && (beat.getFillPattern() != 2)) {
                                 const uint8_t level = noteLevel(beat.getVelocity(), (beat.getFillPattern() == 0) ? 100 : 50);
                                 fillVolMultiplier = kNumberDataLibrary[level].powMultiplier;
                             }
@@ -25328,7 +25380,7 @@ void Controller::interruptPlay() {
                             // The whole fill plays or not (condition and chance at its first hit);
                             // its own velocity scales every hit.
                             if (playBeatMicroNum == 0) noteFillSkip[i] = !note_plays(i, beat.getNote());
-                            if (!noteFillSkip[i] && (!layer.mute) && (layer.samplePlay) && ((playBeatMicroNum == 0) || ((playBeatMicroNum != 0) && (layer.fill)))) {
+                            if (!noteFillSkip[i] && layerAudible(i) && (layer.samplePlay) && ((playBeatMicroNum == 0) || ((playBeatMicroNum != 0) && (layer.fill)))) {
                                 fillVolMultiplier = kNumberDataLibrary[beatMicro.getLevel()].powMultiplier;
                                 if (beat.getVelocity() != 0) fillVolMultiplier *= kNumberDataLibrary[noteLevel(beat.getVelocity(), 100)].powMultiplier;
                                 if (fillVolMultiplier > 0.0f) layer_playBeat(layer.number, fillVolMultiplier);

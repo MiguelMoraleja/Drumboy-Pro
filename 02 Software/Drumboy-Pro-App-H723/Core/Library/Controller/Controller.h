@@ -310,6 +310,12 @@ class Controller {
     bool note_plays(uint8_t layerNum_, uint16_t note_);
     void note_restartLoops();
     void layerPage_bankChanged();
+    // SOLO (left S key + pads, V1.14): soloed layers, not saved.
+    uint16_t soloMask = 0;
+    bool layerAudible(uint8_t layerNum_) const;
+    void layerInst_setSolo(uint8_t layerNum_, bool solo_);
+    void layerInst_clearSolo();
+    void lcd_drawLayerInst_StyleData(uint8_t layerNum_);
     // Undo / redo of beat and bank edits (UndoLog.h); the stored banks live in SDRAM.
     UndoLog<kUndoEntries> undoLog;
     bool undoRecordOpen = false;

@@ -867,6 +867,7 @@ const char kHeaderDry[]                             = "DRY       ";
 const char kHeaderDrive[]                           = "DRIVE     ";
 const char kHeaderEnd[]                             = "END       ";
 const char kHeaderOut[]                             = "OUT       ";
+const char kHeaderStyle[]                           = "STYLE     ";
 const char kHeaderFeedback[]                        = "FEEDBACK  ";
 const char kHeaderFill[]                            = "FILL      ";
 const char kHeaderFrequency[]                       = "FREQUENCY";
@@ -1256,6 +1257,8 @@ typedef enum {
     ENC_NOTE_COND                                   = 0x7D,
     ENC_NOTE_NUDGE                                  = 0x7E,
 
+    ENC_INST_2_STYLE                                = 0x7F,  // layer STYLE (page 3; the left S key is SOLO since V1.14)
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1295,7 +1298,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // LAYER_INST_1_MENU = 0x10
     {ENC_INST_1_INST, ENC_INST_1_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_1_START, ENC_INST_1_END, ENC_INST_1_TIMING, ENC_INST_1_PROB},
     // LAYER_INST_2_MENU = 0x11
-    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
+    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_INST_2_STYLE, ENC_FNC_NONE, ENC_FNC_NONE},
     // LAYER_SONG_MENU = 0x12
     // Tabs 2-3 hold the fill graph.
     {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_SONG_MOVE, ENC_SONG_SHIFT},
@@ -1474,7 +1477,9 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_NOTE_VEL,            ENC_RES_F, "VELOCITY  ", "NOTE  ", "   ", false},
     {ENC_NOTE_PROB,           ENC_RES_M, "CHANCE    ", "NOTE  ", "  %", false},
     {ENC_NOTE_COND,           ENC_RES_M, "CONDITION ", "NOTE  ", "   ", false},
-    {ENC_NOTE_NUDGE,          ENC_RES_M, "NUDGE     ", "NOTE  ", "  %", false}
+    {ENC_NOTE_NUDGE,          ENC_RES_M, "NUDGE     ", "NOTE  ", "  %", false},
+
+    {ENC_INST_2_STYLE,        ENC_RES_S, "STYLE     ", "LAYER ", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");

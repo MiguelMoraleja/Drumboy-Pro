@@ -14,7 +14,8 @@
 //   A:B   plays on loop A of every B loops (B 2-8)     !A:B  the other loops (B 2-4)
 //   1ST   only the first loop since START or a bank change     !1ST  every loop but the first
 //   PRE   plays if the layer's last conditioned beat played    !PRE  if it did not
-//   FILL  only while the FILL key is held                       !FILL only while it is not
+//   FKEY  only while the F (FILL) key is held                   !FKEY only while it is not
+//         (named FKEY on the device so it isn't mistaken for the layer's FILL switch)
 // "Conditioned" = a beat with a condition other than PRE/!PRE, or a chance below 100%.
 //
 // Nudge moves a plain beat by up to +-24 ticks (+-12% of a 16th) when it plays; beats are at
@@ -132,8 +133,8 @@ inline void noteCondName(uint8_t code_, char* out_, uint8_t size_) {
         case COND_NOT_FIRST: strcpy(t, "!1ST"); break;
         case COND_PRE: strcpy(t, "PRE"); break;
         case COND_NOT_PRE: strcpy(t, "!PRE"); break;
-        case COND_FILL: strcpy(t, "FILL"); break;
-        case COND_NOT_FILL: strcpy(t, "!FILL"); break;
+        case COND_FILL: strcpy(t, "FKEY"); break;
+        case COND_NOT_FILL: strcpy(t, "!FKEY"); break;
     }
     if (size_ == 0) return;
     const uint8_t width = (size_ - 1 < 10) ? static_cast<uint8_t>(size_ - 1) : 10;

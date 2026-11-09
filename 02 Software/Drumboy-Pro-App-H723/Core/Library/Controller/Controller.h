@@ -320,6 +320,7 @@ class Controller {
     UndoLog<kUndoEntries> undoLog;
     bool undoRecordOpen = false;
     bool textUndoFlag = false, textRedoFlag = false, textUndoNone = false;
+    bool textFkeyFlag = false;  // F key held: show FKEY
     void undo_capture(UndoKind kind_, int16_t layerNum_, uint8_t bankNum_);
     void undo_captureAllLayers(UndoKind kind_, uint8_t bankNum_);
     void undo_captureRecord(uint8_t layerNum_, uint8_t bankNum_);

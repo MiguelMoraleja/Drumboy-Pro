@@ -2407,6 +2407,7 @@ void Controller::keyboard_action() {
                             case KEY_FILL:
                                 keyboard.fillKeyPress = true;
                                 encoderFastMode = true;
+                                textFkeyFlag = true;  // FKEY beats play while it is held (BeatNote.h)
                                 break;
 
                             case KEY_STYLE:
@@ -2565,6 +2566,7 @@ void Controller::keyboard_action() {
                             case KEY_FILL:
                                 keyboard.fillKeyPress = false;
                                 encoderFastMode = false;
+                                textClearFlag = true;  // remove FKEY (ARMED comes back if armed)
                                 break;
 
                             case KEY_STYLE:
@@ -13201,6 +13203,12 @@ void Controller::lcd_drawCopyPaste() {
         lcd.setForeColor(CYAN);
         lcd.drawText("PASTE", 5, 170, 112);
 
+        // F (FILL) key held: FKEY beats play, !FKEY beats rest. Shown until it is released.
+    } else if (textFkeyFlag) {
+        textFkeyFlag = false;
+        lcd.setForeColor(YELLOW);
+        lcd.drawText(" FKEY", 5, 170, 112);
+
         // Undo / redo (MUTE + LEFT / RIGHT).
     } else if (textUndoFlag || textRedoFlag || textUndoNone) {
         lcd.setForeColor(textUndoNone ? GRAY_75 : CYAN);
@@ -21949,7 +21957,7 @@ void Controller::lcd_drawNoteOverview() {
     if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 2 * kLineStep);
     len = snprintf(line, sizeof(line), "ADD+TURN: ALL BEATS");
     if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 3 * kLineStep);
-    len = snprintf(line, sizeof(line), "CLEAR: RESET  HOLD FILL: FILL");
+    len = snprintf(line, sizeof(line), "CLEAR: RESET  HOLD F: FKEY BEATS");
     if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 4 * kLineStep);
 }
 

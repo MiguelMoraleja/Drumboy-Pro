@@ -498,7 +498,7 @@ table.rel td.new { min-width: 280px; }
         <div class="panel" style="display:grid; gap:14px">
           <div class="transport">
             <button class="play" id="nt-play" aria-pressed="false">Play</button>
-            <button class="ghost" id="nt-fill" aria-pressed="false">Hold FILL</button>
+            <button class="ghost" id="nt-fill" aria-pressed="false">Hold F (FKEY)</button>
             <span class="muted mono" id="nt-loop" style="font-size:.85rem"></span>
           </div>
           <div class="field"><span class="label">One bar of 16ths: click a step to select it (or add a beat). Bar height = velocity; a ring = played this loop, faded = skipped.</span><div class="nsteps" id="nt-steps" aria-label="Steps"></div></div>
@@ -509,7 +509,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">S</span><div><b>Open it:</b> on a layer's song page tap LAYER SONG (S) twice: song → EUCLID → <b>NOTE</b> → song. NOTE picks the beat (it is highlighted on the timeline).</div></div>
           <div class="k"><span class="keycap">♪</span><div><b>VELOCITY</b> 1–127 for that beat; until you turn it, the beat plays as FLAT, GHOST or MUTED as before. On a fill it scales every hit. MIDI recording stores each note's velocity here.</div></div>
           <div class="k"><span class="keycap">%</span><div><b>CHANCE</b> 0–100 % in 5 % steps, rolled every loop, on top of the layer's PROB. A fill plays or not as a whole.</div></div>
-          <div class="k"><span class="keycap">?</span><div><b>CONDITION:</b> <span class="mono">A:B</span> plays on loop A of every B (1:4 = first of four), <span class="mono">!A:B</span> the other loops, <span class="mono">1ST</span> only the first loop after START or a bank change, <span class="mono">PRE</span> if the layer's last conditioned beat played, <span class="mono">FILL</span> only while you hold the FILL key (and <span class="mono">!FILL</span> only when you don't).</div></div>
+          <div class="k"><span class="keycap">?</span><div><b>CONDITION:</b> <span class="mono">A:B</span> plays on loop A of every B (1:4 = first of four), <span class="mono">!A:B</span> the other loops, <span class="mono">1ST</span> only the first loop after START or a bank change, <span class="mono">PRE</span> if the layer's last conditioned beat played, <span class="mono">FKEY</span> only while you hold the F (FILL) key, and <span class="mono">!FKEY</span> only when you don't; the screen shows FKEY while it is held. It is not the layer's FILL switch (F + pad).</div></div>
           <div class="k"><span class="keycap">↔</span><div><b>NUDGE</b> plays a plain beat up to 12 % of a 16th early or late, without moving it on the grid. Fills keep their timing.</div></div>
           <div class="k"><span class="keycap">↶</span><div><b>UNDO / REDO:</b> MUTE (the M on the left) + LEFT undoes, MUTE + RIGHT redoes the last beat or bank edit, on any page and while playing: MOVE, SHIFT ALL, insert, CLEAR, fills, paste, whole-bank paste, EUCLID, these NOTE settings and a recording take. Up to 64 steps; one knob gesture or one EUCLID visit is one step. Knob settings of the sound are not undone. LOAD, NEW and changing MEASURE/BAR/QUANTIZE start a new history.</div></div>
           <div class="k"><span class="keycap">ADD</span><div><b>ADD + turn</b> changes every beat of the bank by the same amount (CONDITION: sets them all). <b>CLEAR</b> resets the selected beat, <b>ADD + CLEAR</b> the whole bank. Songs from older firmware play exactly as before.</div></div>
@@ -589,7 +589,7 @@ window.addEventListener("hashchange", route);
 
 /* ---------- Notes: per-note velocity, chance, condition, nudge (port of BeatNote.h) ---------- */
 const NT_CONDS = (() => {
-  const c = [["ALWAYS"], ["FILL"], ["!FILL"], ["PRE"], ["!PRE"], ["1ST"], ["!1ST"]];
+  const c = [["ALWAYS"], ["FKEY"], ["!FKEY"], ["PRE"], ["!PRE"], ["1ST"], ["!1ST"]];
   for (let b = 2; b <= 8; b++) for (let a = 1; a <= b; a++) c.push([a + ":" + b, a, b, false]);
   for (let b = 2; b <= 4; b++) for (let a = 1; a <= b; a++) c.push(["!" + a + ":" + b, a, b, true]);
   return c;
@@ -605,7 +605,7 @@ function ntCondPasses(code) {
   if (code === 0) return true;
   if (c.length === 4) { const hit = (nt.loop % c[2]) === c[1] - 1; return c[3] ? !hit : hit; }
   switch (c[0]) {
-    case "FILL": return nt.fill; case "!FILL": return !nt.fill;
+    case "FKEY": return nt.fill; case "!FKEY": return !nt.fill;
     case "PRE": return nt.pre; case "!PRE": return !nt.pre;
     case "1ST": return nt.loop === 0; case "!1ST": return nt.loop !== 0;
   }
@@ -656,7 +656,7 @@ function ntRender() {
   document.getElementById("nt-nudge-v").textContent = (s.nudge > 0 ? "+" : "") + s.nudge + " %";
   document.getElementById("nt-vel").value = s.vel; document.getElementById("nt-prob").value = s.prob;
   document.getElementById("nt-cond").value = s.cond; document.getElementById("nt-nudge").value = s.nudge;
-  document.getElementById("nt-loop").textContent = nt.playing ? `loop ${nt.loop + 1}` + (nt.fill ? " · FILL held" : "") : "";
+  document.getElementById("nt-loop").textContent = nt.playing ? `loop ${nt.loop + 1}` + (nt.fill ? " · F held" : "") : "";
   const t = (h, v) => `<div class="tab"><span class="h">${h}</span><span class="v">${v}</span><span class="g">&nbsp;</span></div>`;
   const vel = !s.on ? "-" : (s.vel ? s.vel : (s.ghost ? "GHOST" : "FLAT"));
   const ov = s.on ? `NOTE ${idx} AT 1.${Math.floor(nt.sel / 4) + 1}.${nt.sel % 4 + 1}\nVEL ${s.vel || (s.ghost ? 64 : 127)}  ${s.prob}%  ${NT_CONDS[s.cond][0]}\n${nt.steps.filter(x => x.on && (x.vel || x.prob < 100 || x.cond || x.nudge)).length} OF ${on.length} BEATS HAVE SETTINGS` : "NO BEAT HERE";
@@ -1619,8 +1619,8 @@ function sgSetup() {
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
   { v: "V1.14", date: "2026-11-08", status: "Testing, not published",
-    nw: ["NOTE page (song → EUCLID → NOTE): each beat gets its own VELOCITY, CHANCE (5 % steps), CONDITION (A:B, !A:B, 1ST, PRE, FILL and negations) and NUDGE (±12 % of a 16th)",
-         "FILL condition: those beats play only while the FILL key is held",
+    nw: ["NOTE page (song → EUCLID → NOTE): each beat gets its own VELOCITY, CHANCE (5 % steps), CONDITION (A:B, !A:B, 1ST, PRE, FKEY and negations) and NUDGE (±12 % of a 16th)",
+         "FKEY condition: those beats play only while the F (FILL) key is held (the screen shows FKEY); !FKEY only while it is not",
          "ADD + turn changes every beat of the bank; CLEAR resets a beat, ADD + CLEAR the bank",
          "MIDI recording keeps each note's velocity in the beat",
          "Saved in the song file after the chain; older firmware ignores it and old songs play as before",

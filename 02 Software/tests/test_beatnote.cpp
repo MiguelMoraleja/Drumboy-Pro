@@ -36,7 +36,7 @@ static void testConditions() {
         names.insert(name(c));
     }
     CHECK(names.size() == kNoteCondCount, "%zu unique names", names.size());
-    CHECK(name(0) == "ALWAYS" && name(kNoteCondFill) == "FILL" && name(kNoteCondNotPre) == "!PRE", "names");
+    CHECK(name(0) == "ALWAYS" && name(kNoteCondFill) == "FKEY" && name(kNoteCondNotPre) == "!PRE", "names");
     CHECK(name(noteCondEncode({COND_RATIO, 1, 4})) == "1:4" && name(noteCondEncode({COND_RATIO, 8, 8})) == "8:8", "ratio names");
     CHECK(name(noteCondEncode({COND_NOT_RATIO, 3, 4})) == "!3:4", "negated ratio");
     CHECK(noteCondEncode({COND_NOT_RATIO, 1, 5}) == 0 && noteCondEncode({COND_RATIO, 3, 2}) == 0, "out of range = none");

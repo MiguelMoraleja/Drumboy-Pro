@@ -956,33 +956,73 @@ const IDEAS = [
       });
       P.text("MUTE HELD", 305, 103, 5, LC.YE);
     } },
-  { id: "mix", group: 0, name: "MIX view", item: "45, 46, 47", size: "M–L", today: false,
+  { id: "mix", group: 0, name: "Dub mixer", item: "45, 46, 47, 49", size: "L, in phases", today: false,
     note: ["",
-           "The ten lanes become channel strips: level with a live meter, pan, the three sends and the channel filter. The top and bottom rows edit the selected layer (2, in cyan). This is the screen that per-layer sends need."],
+           "The lane area becomes a desk: one strip per layer and one for line-in, each with its channel filter (FL), echo send (EC), reverb send (RV), fader and meter; then the ECHO and VERB returns, and the big DUB FILTER knob over the master meters. The top row edits the selected strip (2, cyan); the bottom row is always the desk: FEEDBACK, the two returns and the dub filter. Layer 5 is being thrown into the echo (yellow, hold EFFECT 1 + its pad), layer 7 is muted but its echo tail still rings, and FEEDBACK is past 100 %, so the echo is building up. Design: docs/dub-mixer-design.md."],
     draw() {
-      mMenu("MX", 2);
-      mField(0, "FILTER", "LOW PASS"); mField(1, "CUTOFF", "4.5K", " HZ"); mField(2, "RESONANCE", "20"); mField(3, "DRIVE", "10");
-      mField(4, "PAN", "L 12"); mField(5, "SEND A", "35", "  %"); mField(6, "SEND B", "0", "  %"); mField(7, "SEND REV", "62", "  %");
-      mLaneNames(1, [6]);
-      const cols = [["LEVEL", 305, 140], ["PAN", 465, 80], ["SEND A", 565, 90], ["SEND B", 675, 90], ["REV", 785, 90], ["FLT", 895, 33]];
-      cols.forEach(([n, x]) => P.text(n, x, 103, 5, LC.G75));
-      const val = [[82, 0, 0, 0, 5, 90], [74, -12, 35, 0, 62, 60], [60, 20, 0, 10, 8, 100], [55, 25, 0, 30, 20, 100], [70, -30, 20, 0, 55, 80], [45, 40, 0, 45, 10, 100], [66, 0, 0, 0, 30, 40], [40, -45, 10, 0, 0, 100], [50, 35, 25, 60, 15, 100], [58, 0, 50, 20, 70, 70]];
-      const meter = [70, 58, 40, 12, 50, 20, 0, 30, 8, 66];
-      for (let i = 0; i < 10; i++) {
-        const y = LANE_Y[i], dim = i === 6, c = dim ? LC.G35 : i === 1 ? LC.CY : (i % 2 ? LC.G75 : LC.W);
-        mBoxes(i, dim, true, false, c);
-        P.rect(301, y + 2, 634, 27, LC.K);
-        cols.forEach(([n, x, w], k) => {
-          const v = val[i][k];
-          P.frame(x, y + 10, w, 7, LC.G35);
-          if (k === 1) { const cx = x + (w >> 1); P.rect(cx, y + 8, 1, 11, LC.G50); P.rect(cx + Math.round(v * (w / 2 - 3) / 50) - 2, y + 11, 5, 5, c); }
-          else if (k === 5) { P.rect(x + Math.round(v * (w - 3) / 100), y + 9, 2, 9, c); }
-          else P.rect(x + 1, y + 11, Math.round(v * (w - 2) / 100), 5, c);
-        });
-        const m = dim ? 0 : meter[i];
-        P.rect(305, y + 20, Math.round(m * 140 / 100), 2, m > 65 ? LC.YE : LC.GN);
-      }
-      P.rect(SONG_X, 115, 230, 1, LC.CY);
+      mMenu("DB", 2);
+      mField(0, "LEVEL", "74"); mField(1, "FILTER", "HP 35"); mField(2, "ECHO", "35", "  %"); mField(3, "VERB", "62", "  %");
+      mField(4, "FEEDBACK", "104", "  %", LC.MA); mField(5, "ECHO RTN", "80", "  %"); mField(6, "VERB RTN", "70", "  %"); mField(7, "DUB FILTER", "HP 500", " HZ");
+      mBig();
+      const names = ["KICK 808", "SNARE TI", "HAT CLOS", "HAT OPEN", "CLAP", "RIM", "TOM LOW", "SHAKER", "COWBELL", "PERC FX", "LINE IN"];
+      //            level flt  ec  rv  bus meter
+      const ch = [[82,   0,   0,  5, 0, 70], [74,  35,  35, 62, 1, 58], [60,  60,   0,  8, 1, 40], [55,  45,  20, 20, 1, 12], [70,   0, 100, 55, 1, 50],
+                  [45,   0,  45, 10, 1, 20], [66, -40,  30, 30, 1,  0], [40,  70,  10,  0, 1, 30], [50,   0,  60, 15, 1,  8], [58, -20,  20, 70, 1, 66], [64,  25,  40, 35, 1, 44]];
+      const sel = 1, muted = 6, thrown = 4, FY0 = 204, FH = 208;
+      const bar = (x, y, w, v, c, lbl, lc) => { P.text(lbl, x, y, 5, lc); P.frame(x + 17, y, w, 7, LC.G35); if (v > 0) P.rect(x + 18, y + 1, Math.round(v * (w - 2) / 100), 5, c); };
+      const fader = (x, v, c, m) => {
+        P.rect(x + 20, FY0, 1, FH, LC.G35);
+        for (let t = 0; t <= 4; t++) P.rect(x + 13, FY0 + Math.round(t * (FH - 1) / 4), 5, 1, LC.G35);
+        P.rect(x + 12, FY0 + Math.round((100 - v) * (FH - 7) / 100), 17, 7, c);
+        P.frame(x + 38, FY0, 7, FH, LC.G25);
+        const mh = Math.round(m * (FH - 2) / 100);
+        if (mh > 0) { P.rect(x + 39, FY0 + FH - 1 - mh, 5, mh, LC.GN); if (m > 62) P.rect(x + 39, FY0 + FH - 1 - mh, 5, Math.round((m - 62) * (FH - 2) / 100), LC.YE); }
+      };
+      ch.forEach(([lv, fl, ec, rv, bus, m], i) => {
+        const x = 24 + i * 60, dim = i === muted, c = dim ? LC.G35 : i === sel ? LC.CY : (i % 2 ? LC.G75 : LC.W), lc = dim ? LC.G35 : LC.G75;
+        P.rect(x + 58, 134, 1, 304, LC.G25);
+        if (i === sel) P.rect(x, 133, 57, 1, LC.CY);
+        P.text(i < 10 ? String(i + 1).padStart(2, "0") : "LI", x + 1, 137, 7, c);
+        if (dim) P.text("MUTE", x + 28, 138, 5, LC.G75);
+        if (i === thrown) P.text("THRW", x + 28, 138, 5, LC.YE);
+        P.text(names[i], x + 1, 150, 5, c);
+        // channel filter: one knob, low-pass to the left, off in the centre, high-pass to the right
+        P.text("FL", x + 1, 162, 5, lc); P.frame(x + 18, 162, 38, 7, LC.G35); P.rect(x + 37, 161, 1, 9, LC.G50);
+        if (fl !== 0) { const cx = x + 37, w = Math.round(Math.abs(fl) * 17 / 100); P.rect(fl > 0 ? cx + 1 : cx - w, 163, w, 5, c); }
+        bar(x + 1, 174, 38, ec, i === thrown ? LC.YE : c, "EC", i === thrown ? LC.YE : lc);
+        bar(x + 1, 186, 38, rv, c, "RV", lc);
+        fader(x, lv, c, dim ? 0 : m);
+        P.text(bus ? "FILT" : "DIR", x + 1, 428, 5, lc);
+      });
+      // returns
+      const rx = [690, 766];
+      P.rect(686, 134, 1, 304, LC.G50);
+      P.text("ECHO", rx[0] + 1, 137, 7, LC.YE); P.text("3/16", rx[0] + 42, 138, 5, LC.G75);
+      P.text("TAPE", rx[0] + 1, 150, 5, LC.G75);
+      bar(rx[0] + 1, 162, 50, 100, LC.MA, "FB", LC.MA);
+      bar(rx[0] + 1, 174, 50, 55, LC.W, "TN", LC.G75);
+      bar(rx[0] + 1, 186, 50, 30, LC.W, ">R", LC.G75);
+      fader(rx[0] + 8, 80, LC.YE, 74); P.text("RETURN", rx[0] + 1, 428, 5, LC.G75);
+      P.rect(rx[1] - 4, 134, 1, 304, LC.G25);
+      P.text("VERB", rx[1] + 1, 137, 7, LC.W);
+      P.text("SPRING", rx[1] + 1, 150, 5, LC.G75);
+      bar(rx[1] + 1, 162, 50, 60, LC.W, "DC", LC.G75);
+      bar(rx[1] + 1, 174, 50, 40, LC.W, "SZ", LC.G75);
+      fader(rx[1] + 8, 70, LC.W, 48); P.text("RETURN", rx[1] + 1, 428, 5, LC.G75);
+      // the big knob and the master
+      P.rect(842, 134, 1, 304, LC.G50);
+      P.text("DUB FILTER", 891, 138, 5, LC.G75, "C");
+      const kx = 891, ky = 196, steps = 11, pos = 5;
+      P.ring(kx, ky, 30, LC.G50); P.ring(kx, ky, 29, LC.G50);
+      for (let k = 0; k < steps; k++) { const a = (-225 + k * 27) * Math.PI / 180; P.line(kx + 34 * Math.cos(a), ky + 34 * Math.sin(a), kx + 38 * Math.cos(a), ky + 38 * Math.sin(a), k === pos ? LC.CY : LC.G75); }
+      { const a = (-225 + pos * 27) * Math.PI / 180; for (const d of [-1, 0, 1]) P.line(kx + d, ky, kx + d + 27 * Math.cos(a), ky + 27 * Math.sin(a), LC.CY); P.disc(kx, ky, 4, LC.CY); }
+      P.text("OFF", 850, 232, 5, LC.G75); P.text("7.5K", 908, 232, 5, LC.G75);
+      P.text("HP 500", 891, 246, 7, LC.CY, "C");
+      P.text("MASTER", 891, 270, 5, LC.G75, "C");
+      [[866, 72], [880, 66]].forEach(([x, m]) => { P.frame(x, 282, 9, 130, LC.G25); const mh = Math.round(m * 128 / 100); P.rect(x + 1, 411 - mh, 7, mh, LC.GN); P.rect(x + 1, 411 - mh, 7, Math.round((m - 55) * 128 / 100), LC.YE); });
+      P.text("L", 868, 416, 5, LC.G75); P.text("R", 882, 416, 5, LC.G75);
+      P.frame(906, 282, 7, 130, LC.G25); P.rect(907, 283, 5, 22, LC.MA); P.text("GR", 903, 416, 5, LC.G75);
+      P.text("LIMIT -3 DB", 891, 428, 5, LC.G75, "C");
     } },
   { id: "editor", group: 0, name: "Note editor", item: "45", size: "L", today: false,
     note: ["",

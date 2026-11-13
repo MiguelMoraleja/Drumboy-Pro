@@ -104,7 +104,7 @@ Every step keeps the rules: hardware-free logic in `Core/Library/Global/*.h` wit
 4. Full-area views from [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance) that need no new engine work (Euclid rings, Song timeline, Routing, Filter curve): the owner wants the big main area used for dedicated views. Then [44](#44-notes-triggered-outside-the-main-loop-draw-budget), [46](#46-sends-a-level-per-layer-into-the-shared-effects-sends-mode) sends with the MIX page, [47](#47-channel-filter-and-drive-per-layer) channel filter, [36](#36-per-layer-panning) A pan, and the MIX view from [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance).
 5. [48](#48-master-eq-stage-stereo-returns-a-third-send-effect) only after the measurements.
 
-Open decisions for the owner: sends as a per-song mode next to today's chain (recommended) or a replacement; whether the channel filter replaces Filter 1/2; whether a third send effect is worth giving up undo history or a sample slot.
+The sends, the channel filter and the MIX view are now designed as one dub mixer page ([49](#49-dub-mixer-page-dub-mode)), in phases D1–D5; its own open decisions are listed there. Open decisions for the owner: sends as a per-song mode next to today's chain (recommended) or a replacement; whether the channel filter replaces Filter 1/2; whether a third send effect is worth giving up undo history or a sample slot.
 
 **On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
@@ -563,7 +563,7 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 
 ---
 
-## UX and signal path (items 37–48)
+## UX and signal path (items 37–49)
 
 From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-path-analysis.md), which has the facts about the screen (960×540, 16-bit colour, drawn directly, no frame buffer), the layout, the cost estimates and the reasoning. The codes in brackets (U1, E2, S1…) are that document's. Mockups of the proposed screens, drawn with the device's own fonts and frame, are in the app's **Screen ideas** tab. Nothing here was measured on the device: item 37 comes first.
 
@@ -706,3 +706,16 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 - **Master EQ:** modules run in a fixed order with EQ first, so EQ on the sum needs a separate master stage (simpler than a user-set module order, [7](#7-routing-open-design-questions)). On a stereo master it costs twice the mono EQ.
 - **Stereo returns:** stereo through the effects doubles their cost ([36](#36-per-layer-panning) B).
 - **A third send effect:** a delay plus a chorus buffer is 480 KB and about 650 KB of SDRAM is free, so one more fits; two (960 KB, [6](#6-routing-extra-effect-slots)) do not unless the undo history shrinks or a sample slot (960 KB) is given up.
+
+### 49. Dub mixer page (DUB mode)
+
+Asked by the owner on 2026-11-13: the mixer page in the fashion of a dub desk, with sends to the effects and filters. Design: [`docs/dub-mixer-design.md`](docs/dub-mixer-design.md); mockup in the app's Screen ideas tab ("Dub mixer"). It is the concrete form of [46](#46-sends-a-level-per-layer-into-the-shared-effects-sends-mode), [47](#47-channel-filter-and-drive-per-layer) and the MIX view of [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance).
+
+- **Mode per song:** CHAIN (today) or DUB. In DUB mode each layer and line-in is a strip: channel filter, level, a bus (FILT: EQ and Filter 1 as the dub filter; DIR: straight to master), sends to the echo (through Filter 2 into Effect 1), the reverb and Effect 2. The echo return can feed the reverb.
+- **Page:** MIXER → DUB → ROUTING. The lane area shows eleven strips with faders, the ECHO and VERB returns, and the DUB FILTER as a big dial over the master meters. Top row = selected strip (LEVEL, FILTER, ECHO, VERB); bottom row = the desk, always the same (FEEDBACK, ECHO RTN, VERB RTN, DUB FILTER).
+- **Gestures:** drop (MUTE + pad; tails ring on), throw (EFFECT 1 + pad or REVERB + pad opens that send fully while held, also on a muted strip), feedback past 100 % with a soft clipper, the dub filter in steps.
+- **Phases:** D1 mode, sends, returns, page, file block; D2 throws, feedback past 100 %, dotted echo times, echo into reverb; D3 channel filter and drive, page 2; D4 meters ([41](#41-live-feedback-layer-meters-and-status-indicators)) and the line-in strip; D5 pan and a filter over the whole mix ([36](#36-per-layer-panning), [48](#48-master-eq-stage-stereo-returns-a-third-send-effect)).
+- **Open decisions** (section 6 of the design): whether filters are also send destinations with a level; the throw keys; whether a throw pad plays the sound; the big knob on the bus or over the whole mix; page order; the role of Effect 2.
+
+**Done when (D1 + D2).** With a pattern playing, the snare is thrown into the echo for one hit, FEEDBACK is ridden until the echo builds and pulled back, and the dub filter thins the drums while a kick on DIR keeps its weight. A V1.14 song loads as CHAIN and sounds identical.
+

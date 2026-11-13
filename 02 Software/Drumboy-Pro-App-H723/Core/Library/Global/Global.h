@@ -2579,7 +2579,7 @@ const uint8_t kMinFilterType                        = 1;
 const uint8_t kMaxFilterType                        = 4;
 
 const uint8_t kMinFilterSlope                       = 0;
-const uint8_t kMaxFilterSlope                       = 1;
+const uint8_t kMaxFilterSlope                       = 2;                        // 06, 12, 24 dB per octave
 
 const uint8_t kMinFilterFrequency                   = 0;
 const uint8_t kMaxFilterFrequency                   = 199;
@@ -2634,7 +2634,8 @@ struct FilterSlopeData {
 
 const struct FilterSlopeData kFilterSlopeDataLibrary[] = {
     {"        06"}, 
-    {"        12"}};
+    {"        12"}, 
+    {"        24"}};
 
 struct FilterFrequencyData {
     char nameLongR[11];
@@ -2846,80 +2847,26 @@ struct Filter {
         cleanMemory();
     }
 
+    // Second section (the 24 dB slope) and its history.
+    BiquadCoef stage2;
+    uint8_t stages                                  = 1;
+    float u1                                        = 0.0f;
+    float u2                                        = 0.0f;
+    float v1                                        = 0.0f;
+    float v2                                        = 0.0f;
+
     void calculateCoef() {
-        float freq = (float)kFilterFrequencyDataLibrary[frequency].data;
-        float Q = kFilterResonanceDataLibrary[resonance].data;
-        float cosw0, alpha;
-        float b0_tmp, b1_tmp, b2_tmp; 
-        float a0_tmp, a1_tmp, a2_tmp;
-        float normFreq = freq * kInvSampleRate;
-        cosw0 = cosFast(normFreq);
-        float sinw0 = sinFast(normFreq);
-        alpha = sinw0 / (2.0f * Q);
-
-        switch (type) {
-            case FIL_OFF:
-                b0_tmp = 1.0f;
-                b1_tmp = 0.0f;
-                b2_tmp = 0.0f;
-                a0_tmp = 1.0f;
-                a1_tmp = 0.0f;
-                a2_tmp = 0.0f;
-                break;
-
-            case FIL_LPF:
-                b0_tmp = (1.0f - cosw0) * 0.5f;
-                b1_tmp = 1.0f - cosw0;
-                b2_tmp = (1.0f - cosw0) * 0.5f;
-                a0_tmp = 1.0f + alpha;
-                a1_tmp = -2.0f * cosw0;
-                a2_tmp = 1.0f - alpha;
-                break;
-
-            case FIL_HPF:
-                b0_tmp = (1.0f + cosw0) * 0.5f;
-                b1_tmp = -(1.0f + cosw0);
-                b2_tmp = (1.0f + cosw0) * 0.5f;
-                a0_tmp = 1.0f + alpha;
-                a1_tmp = -2.0f * cosw0;
-                a2_tmp = 1.0f - alpha;
-                break;
-
-            case FIL_BPF:
-                b0_tmp = alpha;
-                b1_tmp = 0.0f;
-                b2_tmp = -alpha;
-                a0_tmp = 1.0f + alpha;
-                a1_tmp = -2.0f * cosw0;
-                a2_tmp = 1.0f - alpha;
-                break;
-
-            case FIL_BSF:  // Notch
-                b0_tmp = 1.0f;
-                b1_tmp = -2.0f * cosw0;
-                b2_tmp = 1.0f;
-                a0_tmp = 1.0f + alpha;
-                a1_tmp = -2.0f * cosw0;
-                a2_tmp = 1.0f - alpha;
-                break;
-
-            default:  // Pass-through
-                b0_tmp = 1.0f;
-                b1_tmp = 0.0f;
-                b2_tmp = 0.0f;
-                a0_tmp = 1.0f;
-                a1_tmp = 0.0f;
-                a2_tmp = 0.0f;
-                break;
-        }
-
-        // Normalize
-        float invA0 = 1.0f / a0_tmp;
-        b0 = b0_tmp * invA0;
-        b1 = b1_tmp * invA0;
-        b2 = b2_tmp * invA0;
-        a1 = a1_tmp * invA0;
-        a2 = a2_tmp * invA0;
+        // The design is in FilterCurve.h, shared with the curve on the filter page.
+        BiquadCoef first, second;
+        const uint8_t count = filterDesign(type, slope, (float)kFilterFrequencyDataLibrary[frequency].data, kFilterResonanceDataLibrary[resonance].data,
+                                           AUDIO_SAMPLE_RATE, first, second);
+        b0 = first.b0;
+        b1 = first.b1;
+        b2 = first.b2;
+        a1 = first.a1;
+        a2 = first.a2;
+        stage2 = second;
+        stages = count;
     }
 
     void cleanMemory() {
@@ -2927,6 +2874,10 @@ struct Filter {
         x2 = 0.0f;
         y1 = 0.0f;
         y2 = 0.0f;
+        u1 = 0.0f;
+        u2 = 0.0f;
+        v1 = 0.0f;
+        v2 = 0.0f;
     }
 
     Filter(uint8_t num_) : num(num_) {}

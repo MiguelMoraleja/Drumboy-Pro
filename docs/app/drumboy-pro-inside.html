@@ -314,6 +314,8 @@ table.rel td.new { min-width: 280px; }
       <p class="muted" style="font-size:.85rem">Top right lists one line per entry point: the sources that enter there and the chain they travel (L = layer, MT = metronome, LI = line-in, OUT = master). A module that nothing feeds has a grey header.</p>
       <p class="muted" style="font-size:.85rem"><b>Diagram</b> (V1.14): while the ROUTING page is open, the lanes give way to the patch as a picture. The six modules and the master are boxes along the top, joined as patched: a route to the next module is a line between the boxes, a longer one goes over them. Modules that get no signal are dimmed. Below, one row per source (ten layers, metronome, line-in) with a mark under the module it enters. A picture is in Screen ideas.</p>
       <p class="muted" style="font-size:.85rem"><b>Filter curve</b> (V1.14): while a FILTER page is open, the lanes give way to that filter's response from 20 Hz to 20 kHz, drawn from the same numbers the audio uses. The page's filter is cyan (gray while it is off) with its cutoff as a dotted line; the other filter is gray behind it when it is on. TYPE, SLOPE, FREQ, RESONANCE, DRY and WET all change the curve; DRIVE does not, because it is a gain with a soft clip before the filter.</p>
+      <p class="muted" style="font-size:.85rem"><b>Slopes</b> (V1.14): SLOPE is now 06, 12 or 24 dB per octave. <b>24</b> is new: two filter sections in a row, flat up to the cutoff at the lowest RESONANCE and with one peak as you turn it up. <b>06</b> used to be the 12 dB filter mixed half and half with the unfiltered sound, which only ever took 6 dB off; it is now a real gentle filter that keeps falling 6 dB per octave (RESONANCE has no effect on it). A song that used 06 will sound different. 12 is unchanged.</p>
+      <p class="muted" style="font-size:.85rem"><b>EQ curve</b> (V1.14): while the EQ page is open, the lanes give way to the six bands together as one curve, with a small square for each band at its frequency and gain and its name above (LO, 1 to 4, HI). The curve is gray while the EQ is off.</p>
     </div>
 
     <div class="stages" id="stages"></div>
@@ -572,7 +574,7 @@ table.rel td.new { min-width: 280px; }
   <section id="view-ideas" role="tabpanel" aria-labelledby="tab-ideas" class="stagecol" hidden>
     <div class="panel intro">
       <h2>Screen ideas</h2>
-      <p>Mockups of screens the firmware could draw, at the device's real size (960×540) with its own fonts, frame and positions. Five are built in V1.14 and wait for the hardware test: the beat marks and dimmed lanes of <b>Main screen</b>, <b>Euclid rings</b>, <b>Song timeline</b>, <b>Routing</b> and <b>Filter curve</b>. The CPU and MEM monitor in the top-right corner is built too. The rest are proposals. The first group uses the big main area for one feature while its page is open; the second group are smaller additions. Each one names its backlog item; the reasoning is in <span class="mono">docs/ux-and-signal-path-analysis.md</span>.</p>
+      <p>Mockups of screens the firmware could draw, at the device's real size (960×540) with its own fonts, frame and positions. Six are built in V1.14 and wait for the hardware test: the beat marks and dimmed lanes of <b>Main screen</b>, <b>Euclid rings</b>, <b>Song timeline</b>, <b>Routing</b>, <b>Filter curve</b> and <b>EQ curve</b>. The CPU and MEM monitor in the top-right corner is built too. The rest are proposals. The first group uses the big main area for one feature while its page is open; the second group are smaller additions. Each one names its backlog item; the reasoning is in <span class="mono">docs/ux-and-signal-path-analysis.md</span>.</p>
       <p class="muted">The names, patterns and values are examples. The device's fonts have no lowercase, so everything on screen is in capitals.</p>
     </div>
     <div class="panel" style="display:grid; gap:14px">
@@ -1207,6 +1209,36 @@ const BIG = [
       for (let y = Y0; y <= bottom; y += 3) P.rect(fx(1200), y, 1, 1, LC.CY);
       P.text("FILTER 1    ", X0, 140, 7, LC.CY); P.text("FILTER 2    ", X0 + 144, 140, 7, LC.G50);
     } },
+  { id: "bigeq", group: 0, name: "EQ curve", item: "40, 45", size: "M", today: true, built: "V1.14",
+    note: ["Today the EQ page is eight fields above the lanes; each band's frequency and gain are numbers.",
+           "Built in V1.14 (waiting for the hardware test). While the EQ page is open, the lanes give way to the six bands together as one curve from 20 Hz to 20 kHz. Each band has a small square at its frequency and gain, with its name above the plot: LO and HI are the shelves, 1 to 4 the peaks. The curve is gray while the EQ is off."],
+    draw(idea) {
+      mMenu("EQ");
+      mField(0, "ACTIVE", "ON"); mField(1, "Q", "02"); mField(2, "LO-SHELF", "+4", " DB"); mField(3, "HI-SHEL", "-4", " DB");
+      mField(4, "PEAK-1", "+6", " DB"); mField(5, "PEAK-2", "-8", " DB"); mField(6, "PEAK-3", "0", " DB"); mField(7, "PEAK-4", "+3", " DB");
+      if (!idea) { mLanes(false, {}); return; }
+      mBig();
+      // Same numbers as the firmware (FilterCurve.h, lcd_drawEqViewData): +24 to -36 dB.
+      const X0 = 80, W = 840, Y0 = 160, H = 231, bottom = Y0 + H, fs = 44100;
+      const fx = f => X0 + Math.round(Math.log10(f / 20) / 3 * W), dy = db => Y0 + Math.round((24 - Math.max(-36, Math.min(24, db))) * H / 60);
+      [12, 0, -12, -24].forEach(db => { P.text((db > 0 ? "+" : db === 0 ? "  " : "") + db, X0 - 28, dy(db) - 3, 5, LC.G75); for (let x = X0; x <= X0 + W; x += (db === 0 ? 2 : 4)) P.rect(x, dy(db), 1, 1, db === 0 ? LC.G50 : LC.G25); });
+      [100, 1000, 10000].forEach(f => { for (let y = Y0; y <= bottom; y += 4) P.rect(fx(f), y, 1, 1, LC.G25); });
+      [20, 50, 200, 500, 2000, 5000, 20000].forEach(f => P.rect(fx(f), bottom + 2, 1, 3, LC.G75));
+      P.text("20", X0, 398, 5, LC.G75); P.text("100", fx(100) - 10, 398, 5, LC.G75); P.text("1K", fx(1000) - 7, 398, 5, LC.G75); P.text("10K", fx(10000) - 10, 398, 5, LC.G75); P.text("20K", X0 + W - 21, 398, 5, LC.G75);
+      const bands = [["LO", "ls", 80, 4], ["1", "pk", 200, 6], ["2", "pk", 600, -8], ["3", "pk", 2000, 0], ["4", "pk", 4000, 3], ["HI", "hs", 8000, -4]], Q = 2;
+      const coef = ([, t, f, g]) => {
+        const A = Math.pow(10, g / 40), w = 2 * Math.PI * f / fs, c = Math.cos(w), al = Math.sin(w) / (2 * (t === "pk" ? Q : 0.707)), be = 2 * Math.sqrt(A) * al;
+        if (t === "pk") return [1 + al * A, -2 * c, 1 - al * A, 1 + al / A, -2 * c, 1 - al / A];
+        if (t === "ls") return [A * ((A + 1) - (A - 1) * c + be), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - be), (A + 1) + (A - 1) * c + be, -2 * ((A - 1) + (A + 1) * c), (A + 1) + (A - 1) * c - be];
+        return [A * ((A + 1) + (A - 1) * c + be), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - be), (A + 1) - (A - 1) * c + be, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - be];
+      };
+      const cs = bands.map(coef);
+      const db = f => { const w = 2 * Math.PI * f / fs; let sum = 0; cs.forEach(([b0, b1, b2, a0, a1, a2]) => { const nr = b0 + b1 * Math.cos(w) + b2 * Math.cos(2 * w), ni = b1 * Math.sin(w) + b2 * Math.sin(2 * w), dr = a0 + a1 * Math.cos(w) + a2 * Math.cos(2 * w), di = a1 * Math.sin(w) + a2 * Math.sin(2 * w); sum += 10 * Math.log10((nr * nr + ni * ni) / (dr * dr + di * di)); }); return sum; };
+      let px = null, py = null;
+      for (let i = 0; i <= 420; i++) { const x = X0 + 2 * i, y = dy(db(20 * Math.pow(10, 3 * i / 420))); if (px !== null) { P.line(px, py, x, y, LC.CY); P.line(px, py + 1, x, y + 1, LC.CY); } px = x; py = y; }
+      bands.forEach(([n, , f, g]) => { const x = fx(f), y = dy(g); P.rect(x - 3, y - 3, 7, 7, LC.K); P.frame(x - 3, y - 3, 7, 7, LC.W); P.text(n, x - Math.floor(n.length * 7 / 2) + 1, Y0 - 9, 5, LC.W); });
+      P.text("EQ    ", X0, 140, 7, LC.CY);
+    } },
   { id: "bigsample", group: 0, name: "Sample", item: "45", size: "L", today: true,
     note: ["Today the instrument page shows the waveform as 60 bars in the small area.",
            "The waveform over the whole area with the START and END handles, the part outside them dimmed, and a cursor at the play position. Zoom and slices could follow."],
@@ -1500,7 +1532,7 @@ function drawDevice() {
 const STAGES = [
   { n: 0, label: "EQ", p: "Six biquad filters in a row: low shelf, high shelf and four peaks. Bands set to 0 dB gain are skipped.",
     li: ["Output goes to its OUT (default: Filter 1)", "Switched off: passes the signal through"] },
-  { n: 1, label: "FILTER 1", p: "Lowpass, highpass, bandpass or bandstop with 6 or 12 dB slope and an input drive.",
+  { n: 1, label: "FILTER 1", p: "Lowpass, highpass, bandpass or bandstop with a 6, 12 or 24 dB slope (24 since V1.14) and an input drive.",
     li: ["Output: Filter 2, the effects, the reverb or MASTER (default: Filter 2)", "Drive adds gain with soft saturation"] },
   { n: 2, label: "FILTER 2", p: "Same engine as Filter 1, with its own input: whatever is routed to it.",
     li: ["Output: the effects, the reverb or MASTER (default: Effect 1)"] },
@@ -2204,6 +2236,8 @@ const RELEASES = [
          "EUCLID page: the lane area shows all ten layers as rings (one turn = one loop) with an orbiting playhead marker, and every layer's beats as a row; the lanes return when you leave the page",
          "SONG page: the lane area shows the chain as a timeline (boxes as wide as their repeats, a bar that fills as the loop plays, what comes next) and the five banks as thumbnails",
          "ROUTING page: the lane area shows the patch as a diagram (modules joined as patched, a mark per source under the module it enters)",
+         "Filters: a 24 dB slope (two sections, flat to the cutoff at the lowest RESONANCE); 06 is now a real 6 dB per octave filter instead of a half-and-half mix with the unfiltered sound, so songs that used 06 sound different",
+         "EQ page: the lane area shows the six bands as one curve, with a handle per band at its frequency and gain",
          "FILTER 1 and FILTER 2 pages: the lane area shows the filter's response from 20 Hz to 20 kHz, with the cutoff marked and the other filter behind it",
          "CPU and MEM monitor in the top-right corner of every page: the audio engine's load (magenta from 80 %) and the sample memory in use",
          "Diagnostics: SAVE / SDERR while autosave writes, its duration on the Metronome page; a crash restarts the firmware and shows CRASH k AT address (details in System/Crash.log)"],

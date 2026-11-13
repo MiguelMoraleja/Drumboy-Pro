@@ -342,6 +342,10 @@ class Controller {
     uint32_t filterViewState() const;
     void lcd_drawFilterCurve(const uint16_t* y_, bool thick_);
     void lcd_drawFilterViewData();
+    uint16_t eqViewMarkX[6] = {0}, eqViewMarkY[6] = {0};  // the EQ view's band handles
+    uint32_t eqViewState() const;
+    void lcd_drawCurveAxes(float topDb_, float bottomDb_, bool labels_);
+    void lcd_drawEqViewData();
     void layerInst_setSolo(uint8_t layerNum_, bool solo_);
     void layerInst_clearSolo();
     void lcd_drawLayerInst_StyleData(uint8_t layerNum_);

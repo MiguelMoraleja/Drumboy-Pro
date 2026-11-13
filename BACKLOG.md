@@ -86,7 +86,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 4. ✅ Autosave, part A: checksum-based change detection, AUTOSAVE OFF/2/5/10/20 min, two alternating reserved files written via rename, `RESTORE AUTOSAVE?` at power-on, autosave before LOAD over unsaved work. [32](#32-autosave). (M)
 5. ✅ Hardware test with Loopy Pro → Scarlett: 30 minutes at a fractional tempo in time, no runaway with a MIDI loop set up on purpose, overrun counter at 0 with clock and dense notes, power pulled mid-session restores the autosave. Then package, app (MIDI and autosave explained in their tabs), release.
 
-*V1.14 "Notes"* (built, waiting for the hardware test). Also in V1.14, asked by the owner: undo/redo ([28](#28-undo-for-bank-edits-lxr)), SONG + pads never turn the chain off, and the left S key (STYLE) became SOLO, with STYLE moved to a field on instrument page 3. After a freeze on the owner's device (cause not found yet): the clock lock no longer speeds up the sequencer timer while stopped, autosave shows SAVE / SDERR and its duration, and a crash now restarts the firmware and leaves a record (`CrashRecord.h`, `System/Crash.log`). A watchdog for stalls that are not faults is still open. First UX items, also in V1.14: per-note marks and dimmed lanes on the main screen ([38](#38-per-note-settings-and-layer-state-visible-in-the-lanes)) and the Euclid rings view over the lane area ([45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)). The Song timeline and Routing views followed, and the CPU and MEM monitor. The Filter curve followed too. Next view: the EQ curve.
+*V1.14 "Notes"* (built, waiting for the hardware test). Also in V1.14, asked by the owner: undo/redo ([28](#28-undo-for-bank-edits-lxr)), SONG + pads never turn the chain off, and the left S key (STYLE) became SOLO, with STYLE moved to a field on instrument page 3. After a freeze on the owner's device (cause not found yet): the clock lock no longer speeds up the sequencer timer while stopped, autosave shows SAVE / SDERR and its duration, and a crash now restarts the firmware and leaves a record (`CrashRecord.h`, `System/Crash.log`). A watchdog for stalls that are not faults is still open. First UX items, also in V1.14: per-note marks and dimmed lanes on the main screen ([38](#38-per-note-settings-and-layer-state-visible-in-the-lanes)) and the Euclid rings view over the lane area ([45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)). The Song timeline and Routing views followed, and the CPU and MEM monitor. The Filter and EQ curves followed too, and the filters got a 24 dB slope and a real 6 dB one ([50](#50-filter-slopes-24-db-and-a-real-6-db)). Next view: the sample view or the dub mixer.
 6. ✅ Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)
 7. ✅ NOTE page with VEL and PROB (plus undo/redo of beat and bank edits, [28](#28-undo-for-bank-edits-lxr)); MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
 8. ✅ COND (`A:B`, `!A:B`, `1ST`, `PRE`, `FILL` and negations) with the FILL performance key. (M)
@@ -563,7 +563,7 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 
 ---
 
-## UX and signal path (items 37–49)
+## UX and signal path (items 37–50)
 
 From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-path-analysis.md), which has the facts about the screen (960×540, 16-bit colour, drawn directly, no frame buffer), the layout, the cost estimates and the reasoning. The codes in brackets (U1, E2, S1…) are that document's. Mockups of the proposed screens, drawn with the device's own fonts and frame, are in the app's **Screen ideas** tab. Nothing here was measured on the device: item 37 comes first.
 
@@ -617,7 +617,7 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 **Done when.** Turning CUTOFF or an EQ gain moves the curve as you turn, also while playing, with no audio glitches.
 
-**Status: the filter curve is built in V1.14 as a full-area view** (see [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)), waiting for the hardware test. Open: the EQ curve, and cursors on the effect and reverb pages.
+**Status: the filter curve is built in V1.14 as a full-area view** (see [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)), waiting for the hardware test. The EQ curve is built too. Open: cursors on the effect and reverb pages.
 
 ### 41. Live feedback: layer meters and status indicators
 
@@ -686,7 +686,9 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 - **Filter curve** (`FilterCurve.h`, `test_filtercurve`, `lcd_drawFilterViewData`): on the FILTER 1 and FILTER 2 pages, the response from 20 Hz to 20 kHz (+18 to -48 dB) computed from the coefficients the audio code runs, including the 6 dB setting and DRY/WET with their phase; the page's filter in cyan (gray while off) with its cutoff as a dotted line, the other filter behind it when it is on. A changed curve is erased by redrawing it in black (its points are kept in a scratch area at the end of the SDRAM), so turning FREQ does not clear the plot.
 
-Open from this item: the EQ curve, Sample, MIX (as the dub mixer, [49](#49-dub-mixer-page-dub-mode)), Note editor, Performance view.
+- **EQ curve** (`lcd_drawEqViewData`): on the EQ page, the six bands in series as one curve (+24 to -36 dB) with a handle per band at its frequency and gain and its name above the plot (LO, 1-4, HI); gray while the EQ is off.
+
+Open from this item: Sample, MIX (as the dub mixer, [49](#49-dub-mixer-page-dub-mode)), Note editor, Performance view.
 
 ### 46. Sends: a level per layer into the shared effects (SENDS mode)
 
@@ -733,4 +735,18 @@ Asked by the owner on 2026-11-13: the mixer page in the fashion of a dub desk, w
 - **Open decisions** (section 6 of the design): whether filters are also send destinations with a level; the throw keys; whether a throw pad plays the sound; the big knob on the bus or over the whole mix; page order; the role of Effect 2.
 
 **Done when (D1 + D2).** With a pattern playing, the snare is thrown into the echo for one hit, FEEDBACK is ridden until the echo builds and pulled back, and the dub filter thins the drums while a kick on DIR keeps its weight. A V1.14 song loads as CHAIN and sounds identical.
+
+### 50. Filter slopes: 24 dB and a real 6 dB
+
+Asked by the owner on 2026-11-13: "a 24 would be nice, actually the 6 is more EQ than filter".
+
+**Before:** SLOPE 12 was one biquad; SLOPE 06 was that same biquad mixed half and half with the unfiltered signal, so it never took off more than 6 dB.
+
+**Status: built in V1.14, waiting for the hardware test** (`filterDesign` in `FilterCurve.h`, `test_filtercurve`). The design moved out of `Global.h` into a hardware-free function that the audio code and the curve share.
+- **24:** two sections in series. Low- and high-pass: the first at Q 0.54, the second at 1.85 x the RESONANCE's Q, which is a Butterworth response at the lowest RESONANCE and one peak of about Q above it. Band-pass and band-stop: the same section twice. Costs one more biquad per sample for that filter.
+- **06:** low- and high-pass are a first-order filter (6 dB per octave, RESONANCE has no effect); band-pass and band-stop use one section at half the Q, a wide band. **A song that used 06 sounds different.**
+- **12:** unchanged.
+- **Files:** SLOPE is stored as before (0, 1, now also 2). Older firmware refuses the value 2 and keeps its default for that filter.
+
+To judge on the device: whether 24 dB with high RESONANCE is too loud at the peak (up to about +15 dB), and whether the old 06 sound is missed. If it is, it can come back as a separate SLOPE value.
 

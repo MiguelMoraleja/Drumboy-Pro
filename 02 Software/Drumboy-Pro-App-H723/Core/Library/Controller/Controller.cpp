@@ -341,6 +341,7 @@ void Controller::initialize() {
         startMidiClockTimer();  // Start the midi Sequencer Heartbeat
 
         // 6. Autosave: the empty song is the clean state; offer unsaved work from last time.
+        for (uint8_t i = 0; i < kLayerLibrarySize; i++) meterDrawn[i] = 0xFFFFFFFFu;  // layer meters: nothing drawn yet
         autosave_markClean();
         autosaveTiming.lastCheckMs = HAL_GetTick();
         lastInputMs = HAL_GetTick();
@@ -6543,6 +6544,10 @@ bool Controller::autosave_write() {
     autosaveLastMs = HAL_GetTick() - start;
     autosaveLastOk = ok;
     if (ok) {
+        autosaveLastAt = HAL_GetTick();
+        autosaveWritten = true;
+    }
+    if (ok) {
         textClearFlag = true;  // remove SAVE (ARMED comes back if armed)
     } else {
         textAutosaveErrFlag = true;
@@ -8213,6 +8218,8 @@ void Controller::lcd_update() {
     watchdog_stage(WD_STAGE_VIEW);
     lcd_updateLaneView();
     watchdog_stage(WD_STAGE_SCREEN);
+    lcd_drawLayerMeters();
+    lcd_drawStatusLine();
 
     // 2. TRANSPORT ICON UPDATE
     // Refresh reset/play/stop/record icons.
@@ -22159,6 +22166,7 @@ void Controller::lcd_drawEuclidViewPlay() {
 void Controller::lcd_restoreLanes() {
     /// @brief Leaving a full-area view: draws the ten lane frames again and everything in them.
     laneViewShown = INIT_MENU;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) meterDrawn[i] = 0xFFFFFFFFu;  // the lanes are drawn new: so are their meters
     viewDirty = false;
     viewFull = false;
     ringPlayShown = false;
@@ -24634,6 +24642,17 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
         // Process active layer sample playback.
         processAudioLayer();
 
+        // Layer meters: the peak of each layer's block (read and reset by the main loop).
+        for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+            float peak = layerPeak[i];
+            const float* buf = audioLayer[i];
+            for (uint16_t j = 0; j < I2S_BLOCK_SIZE; j++) {
+                const float a = fabsf(buf[j]);
+                if (a > peak) peak = a;
+            }
+            layerPeak[i] = peak;
+        }
+
         // 3. ROUTED DSP
         // Every source goes to its destination node, then the modules run in order
         // (EQ, Filter 1, Filter 2, FX 1, FX 2, Reverb), each passing its output on as set in routePatch.
@@ -24707,6 +24726,75 @@ void Controller::lcd_drawMonitor() {
     lcd.setFont(FONT_05x07);
     lcd.drawText(text, strlen(text), 480, 524);
 #endif
+}
+
+void Controller::lcd_drawLayerMeters() {
+    /// @brief The level bar in each lane, 25 times a second: the layer's peak since the last time,
+    /// rising at once and falling slowly, with a red square for a block that reached full scale.
+    if ((menu == INIT_MENU) || (menu == TEST_MENU)) return;
+    const uint32_t now = HAL_GetTick();
+    if ((now - meterTick) < 40) return;
+    meterTick = now;
+    float peak[kLayerLibrarySize];
+    __disable_irq();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        peak[i] = layerPeak[i];
+        layerPeak[i] = 0.0f;
+    }
+    __enable_irq();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        meterShown[i] = meterHold(meterShown[i], meterPixels(peak[i]));
+        if (meterClip(peak[i])) meterClipUntil[i] = now + 600;
+        const bool clip = (meterClipUntil[i] != 0) && (static_cast<int32_t>(meterClipUntil[i] - now) > 0);
+        if (!clip) meterClipUntil[i] = 0;
+        const uint32_t state = (static_cast<uint32_t>(meterShown[i]) << 1) | (clip ? 1u : 0u);
+        if (laneViewHidden() || (state == meterDrawn[i])) continue;
+        meterDrawn[i] = state;
+        const uint16_t x = kMeterX, y = static_cast<uint16_t>(kImageLayerY[i] + kMeterY);
+        if (meterShown[i] > 0) {
+            lcd.setForeColor(layerAudible(i) ? GREEN : GRAY_50);
+            lcd.fillRect(x, y, meterShown[i], kMeterHeight);
+        }
+        if (meterShown[i] < kMeterBarWidth) {
+            lcd.setForeColor(GRAY_25);
+            lcd.fillRect(x + meterShown[i], y, kMeterBarWidth - meterShown[i], kMeterHeight);
+        }
+        lcd.setForeColor(clip ? RED : GRAY_25);
+        lcd.fillRect(x + kMeterBarWidth, y, kMeterWidth - kMeterBarWidth, kMeterHeight);
+    }
+}
+
+void Controller::lcd_drawStatusLine() {
+    /// @brief The status line in the strip under the top menu: what the held modifier key does, or
+    /// the MIDI clock and the autosave. Drawn only when its text changes.
+    if ((menu == INIT_MENU) || (menu == TEST_MENU)) return;
+    const uint32_t now = HAL_GetTick();
+    if ((now - statusTick) < 100) return;
+    statusTick = now;
+    uint8_t held = 0;
+    if (keyboard.muteKeyPress) held |= HELD_MUTE;
+    if (keyboard.fillKeyPress) held |= HELD_FILL;
+    if (keyboard.styleKeyPress) held |= HELD_SOLO;
+    if (keyboard.layerInstKeyPress) held |= HELD_INST;
+    if (keyboard.layerSongKeyPress) held |= HELD_SONGP;
+    if (keyboard.bankKeyPress) held |= HELD_SONG;
+    char text[kStatusMaxChars + 1];
+    const char* hint = statusHint(held);
+    if (hint != nullptr) {
+        snprintf(text, sizeof text, "%s", hint);
+    } else {
+        const uint32_t tempo = (io.midi.clockLocked && (io.midi.clockLock.intervalUs > 0.0f)) ? statusCentiBpm(io.midi.clockLock.intervalUs) : 0;
+        const int age = (kAutosaveMinutes[autosaveTiming.interval] == 0) ? -1 : (autosaveWritten ? statusAgeMinutes(now, autosaveLastAt) : -2);
+        statusIdleText(text, sizeof text, tempo, age);
+    }
+    if (strcmp(text, statusDrawn) == 0) return;
+    snprintf(statusDrawn, sizeof statusDrawn, "%s", text);
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(kStatusClearX, kStatusY - 1, kStatusClearWidth, kStatusClearHeight);
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(RIGHT);
+    lcd.setForeColor(hint != nullptr ? YELLOW : CYAN);
+    lcd.drawText(text, static_cast<uint16_t>(strlen(text)), kStatusRightX, kStatusY);
 }
 
 void Controller::lcd_drawMonitorBar(uint16_t textY_, uint16_t barY_, uint32_t permille_, uint32_t& drawn_) {

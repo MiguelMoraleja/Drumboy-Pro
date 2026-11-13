@@ -279,7 +279,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.14</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.15 (testing)</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -851,7 +851,7 @@ const IDEAS = [
       mLanes(idea, { dim: [6], meters: true });
       if (!idea) { P.text(" UNDO", 170, 112, 5, LC.CY, "C"); return; }
       P.text("UNDO: MOVE BEAT  3 BACK  1 FWD", 305, 103, 5, LC.YE);
-      P.text("CLK 97.43 LOCKED   UNSAVED 4 MIN", 928, 103, 5, LC.CY, "R");
+      P.text("CLK 97.43 LOCKED   AUTOSAVE 4 MIN AGO", 928, 103, 5, LC.CY, "R");
     } },
   { id: "note", group: 1, name: "NOTE graph", item: "39", size: "S", today: true,
     note: ["Today the NOTE page describes the selected beat in text.",
@@ -2224,6 +2224,10 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
+  { v: "V1.15", date: "2026-11-13", status: "Testing, not published",
+    nw: ["Layer meters: a small level bar in each lane (peak, -48 to 0 dB, falling slowly) with a red square for a block that reached full scale; dimmed layers show a gray bar",
+         "Status line in the strip under the top menu: while M, F, the left S, I, the right S or SONG is held, it says what the other keys do with it; otherwise it shows the MIDI clock (tempo, LOCKED) and when the last autosave was written"],
+    fix: [] },
   { v: "V1.14", date: "2026-11-13", status: "GitHub release v1.14 · tested", pub: true,
     nw: ["NOTE page (song → EUCLID → NOTE): each beat gets its own VELOCITY, CHANCE (5 % steps), CONDITION (A:B, !A:B, 1ST, PRE, FKEY and negations) and NUDGE (±12 % of a 16th)",
          "FKEY condition: those beats play only while the F (FILL) key is held (the screen shows FKEY); !FKEY only while it is not",

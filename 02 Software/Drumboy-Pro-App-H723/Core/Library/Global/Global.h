@@ -15,6 +15,7 @@
 #include "LaneView.h"
 #include "LoadMeter.h"
 #include "FilterCurve.h"
+#include "StatusLine.h"
 #include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"

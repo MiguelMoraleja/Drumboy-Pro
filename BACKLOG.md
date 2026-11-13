@@ -629,6 +629,8 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 **Done when.** Each layer's level is visible while it plays, and the strip shows MIDI, save and undo state without opening a page.
 
+**Status: layer meters and part of the strip built in V1.15, waiting for the hardware test** (`StatusLine.h`, `test_statusline`): a peak tap per layer in the audio interrupt (one compare per sample), a 22 x 4 px bar in each lane, 25 times a second; the strip shows the MIDI clock tempo and the autosave age. Open: the compressor and limiter gain reduction, the unsaved-changes dot and the undo depth.
+
 **Status: a first indicator is built in V1.14** (asked by the owner with a picture of it): CPU and MEM bars in the top-right box of every page (`lcd_drawMonitor`). MEM is the loaded samples as a share of the ten sample slots. The rest is open.
 
 ### 42. Key hints, status line, page dots, value popup
@@ -641,6 +643,8 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 - **Value popup** while a knob turns: name, value, unit and a bar for the range.
 
 **Done when.** Holding any modifier shows its combinations for the current page, and every action confirms itself in words.
+
+**Status: key hints built in V1.15, waiting for the hardware test.** While M, F, the left S, I, the right S or SONG is held, the status line (right aligned, 5x7 font, in the strip) says what the other keys do with it. The hints are the same on every page; a table per page is open. Not built: the line replacing the 5-character spot (UNDO, COPY, FULL stay there), page dots, the value popup.
 
 ### 43. Fonts with lowercase and symbols; colour roles
 

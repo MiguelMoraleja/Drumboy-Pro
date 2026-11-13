@@ -101,6 +101,18 @@ class Controller {
     RouteFade lineInFade;                                               // line-in route fade (audio interrupt only)
     RouteFade metroFade;                                                // metronome route fade (audio interrupt only)
     // CPU and MEM monitor (LoadMeter.h): the audio engine's load, measured in every build.
+    // Layer meters and the status line (StatusLine.h).
+    volatile float layerPeak[kLayerLibrarySize] = {0};                  // peak since the last readout (audio interrupt)
+    uint16_t meterShown[kLayerLibrarySize] = {0};                       // level on the bar, in pixels
+    uint32_t meterClipUntil[kLayerLibrarySize] = {0};                   // the clip square stays until then
+    uint32_t meterDrawn[kLayerLibrarySize];                             // what the screen shows (pixels, clip), 0xFFFFFFFF = nothing
+    uint32_t meterTick = 0;
+    char statusDrawn[kStatusMaxChars + 1] = "";                         // the text on the status line
+    uint32_t statusTick = 0;
+    uint32_t autosaveLastAt = 0;                                        // when the last autosave was written
+    bool autosaveWritten = false;
+    void lcd_drawLayerMeters();
+    void lcd_drawStatusLine();
     LoadMeter dspLoad;                                                  // filled by processAudioBlock
     bool monitorFull = true;                                            // draw the labels (first time)
     uint32_t monitorTick = 0;

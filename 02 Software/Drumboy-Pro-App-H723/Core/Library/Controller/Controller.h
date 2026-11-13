@@ -314,19 +314,27 @@ class Controller {
     uint16_t soloMask = 0;
     bool layerAudible(uint8_t layerNum_) const;
     RGB16Color layerColor(uint8_t layerNum_) const;
-    // EUCLID rings: a full-area view over the lanes (LaneView.h).
-    bool ringsShown = false;                // the view is on screen (the lanes are not)
-    bool ringsDirty = false;                // beats changed: redraw rings and rows
-    bool ringsFull = false;                 // something drew over it (an alert): redraw all of it
-    uint32_t ringsDrawnMs = 0;
+    // Full-area views over the lanes (LaneView.h): EUCLID rings, SONG timeline, ROUTING diagram.
+    Menu laneViewShown = INIT_MENU;         // the page whose view is on screen (INIT_MENU: the lanes are)
+    bool viewDirty = false;                 // something the view shows changed: redraw its data
+    bool viewFull = false;                  // something drew over it (an alert): redraw all of it
+    uint32_t viewDrawnMs = 0;
     bool ringPlayShown = false;
     int16_t ringPlayX = 0, ringPlayY = 0;
     uint16_t ringPlayRowX = 0;
+    uint32_t songThumbDrawn[kChainBanks] = {0};  // what each bank's thumbnail shows (songThumbState), 0 = nothing
+    uint16_t songPlayBarX = 0, songPlayBarW = 0, songPlayShown = 0;  // the playing loop's progress bar
     bool laneViewHidden() const;
-    void lcd_drawEuclidView();
-    void lcd_drawEuclidViewData();
-    void lcd_updateEuclidView();
+    void lcd_drawLaneView();
+    void lcd_drawLaneViewData();
+    void lcd_updateLaneView();
     void lcd_restoreLanes();
+    void lcd_drawEuclidViewData();
+    void lcd_drawEuclidViewPlay();
+    uint32_t songThumbState(uint8_t bank_, uint8_t color_) const;
+    void lcd_drawSongViewData();
+    void lcd_drawSongViewPlay();
+    void lcd_drawRoutingViewData();
     void layerInst_setSolo(uint8_t layerNum_, bool solo_);
     void layerInst_clearSolo();
     void lcd_drawLayerInst_StyleData(uint8_t layerNum_);

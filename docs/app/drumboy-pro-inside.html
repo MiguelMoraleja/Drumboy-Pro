@@ -312,6 +312,7 @@ table.rel td.new { min-width: 280px; }
       <h3>The ROUTING page on the device</h3>
       <div class="device" id="device" aria-label="ROUTING page preview"></div>
       <p class="muted" style="font-size:.85rem">Top right lists one line per entry point: the sources that enter there and the chain they travel (L = layer, MT = metronome, LI = line-in, OUT = master). A module that nothing feeds has a grey header.</p>
+      <p class="muted" style="font-size:.85rem"><b>Diagram</b> (V1.14): while the ROUTING page is open, the lanes give way to the patch as a picture. The six modules and the master are boxes along the top, joined as patched: a route to the next module is a line between the boxes, a longer one goes over them. Modules that get no signal are dimmed. Below, one row per source (ten layers, metronome, line-in) with a mark under the module it enters. A picture is in Screen ideas.</p>
     </div>
 
     <div class="stages" id="stages"></div>
@@ -480,6 +481,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">↻</span><div><b>Fields:</b> STEP picks the step to edit, BANK and REPEATS set it, LENGTH adds or removes steps at the end (a new step copies the last one), END is LOOP or STOP, CHAIN ON/OFF.</div></div>
           <div class="k"><span class="keycap">⁘+</span><div><b>Picking a bank by hand</b> (SONG + pads) never turns the chain off. A bank the chain uses: the chain jumps to its step (from the loop end while playing). Any other bank plays one loop as a detour, then the chain goes on from where it was; the detour doesn't count as a repeat. Picked while stopped, it plays first. (V1.14; before, a bank outside the chain turned it off.)</div></div>
           <div class="k"><span class="keycap">⧉</span><div><b>Copy a whole bank:</b> on the SONG page hold COPY (all 10 layers of the active bank, beats and fills), pick another bank with SONG + pads, hold PASTE. Works while playing; the per-layer copy on the song page is unchanged.</div></div>
+          <div class="k"><span class="keycap">▭</span><div><b>Timeline</b> (V1.14): while the SONG page is open, the lanes give way to the chain as boxes, each as wide as its repeats. The selected step is cyan; the loop playing now has a bar that fills in yellow. The line below says where the chain is and what comes next (also a detour). Under it, the five banks as thumbnails of their ten lanes: the playing bank cyan, banks the chain uses white, the others dimmed. Leaving the page brings the lanes back. A picture is in Screen ideas.</div></div>
           <div class="k"><span class="keycap">■</span><div><b>STOP</b> keeps the chain's position; <b>RESET</b> goes back to step 1. The chain is saved with the song; older firmware ignores it.</div></div>
         </div>
       </div>
@@ -569,7 +571,7 @@ table.rel td.new { min-width: 280px; }
   <section id="view-ideas" role="tabpanel" aria-labelledby="tab-ideas" class="stagecol" hidden>
     <div class="panel intro">
       <h2>Screen ideas</h2>
-      <p>Mockups of screens the firmware could draw, at the device's real size (960×540) with its own fonts, frame and positions. Two are built in V1.14 and wait for the hardware test: the beat marks and dimmed lanes of <b>Main screen</b>, and <b>Euclid rings</b>. The rest are proposals. The first group uses the big main area for one feature while its page is open; the second group are smaller additions. Each one names its backlog item; the reasoning is in <span class="mono">docs/ux-and-signal-path-analysis.md</span>.</p>
+      <p>Mockups of screens the firmware could draw, at the device's real size (960×540) with its own fonts, frame and positions. Four are built in V1.14 and wait for the hardware test: the beat marks and dimmed lanes of <b>Main screen</b>, <b>Euclid rings</b>, <b>Song timeline</b> and <b>Routing</b>. The CPU and MEM monitor in the top-right corner is built too. The rest are proposals. The first group uses the big main area for one feature while its page is open; the second group are smaller additions. Each one names its backlog item; the reasoning is in <span class="mono">docs/ux-and-signal-path-analysis.md</span>.</p>
       <p class="muted">The names, patterns and values are examples. The device's fonts have no lowercase, so everything on screen is in capitals.</p>
     </div>
     <div class="panel" style="display:grid; gap:14px">
@@ -1103,9 +1105,9 @@ const BIG = [
         hits.forEach((h, j) => { const hgt = l === sel && !(j === 0 || j === 2) ? 6 : 9; P.rect(560 + Math.floor(h / n * 360), y + 9 - hgt, 2, hgt, col(l)); });
       });
     } },
-  { id: "bigsong", group: 0, name: "Song timeline", item: "45", size: "M–L", today: true,
+  { id: "bigsong", group: 0, name: "Song timeline", item: "45", size: "M–L", today: true, built: "V1.14",
     note: ["Today the SONG page lists the chain as text above the lanes, and you only see the bank that is playing.",
-           "The chain as a timeline across the screen, each step as wide as its repeats, with the playing step and loop marked. Below, all five banks as thumbnails of their ten lanes: the playing bank is cyan, banks the chain does not use are dimmed."],
+           "Built in V1.14 (waiting for the hardware test). While the SONG page is open, the lanes give way to the chain as a timeline: each step is a box as wide as its repeats, the selected step is cyan, and the loop playing now has a bar that fills in yellow as it goes by. The line below says where the chain is and what comes next. Under it, all five banks as thumbnails of their ten lanes: the playing bank is cyan, banks the chain uses are white, the others are dimmed."],
     draw(idea) {
       mMenu("SG");
       mField(0, "STEP", "   2 OF  4"); mField(1, "BANK", "2");
@@ -1116,37 +1118,37 @@ const BIG = [
         mOverviewText([["CHAIN ON  LOOP", LC.CY], ["1X4 2X2 1X4 3X2", LC.W], ["STEP 2: BANK 2  LOOP 1 OF 2", LC.G75], ["", LC.W], ["HOLD COPY: COPY BANK 2", LC.G75]]);
         return;
       }
-      mOverviewText([["CHAIN ON  LOOP", LC.CY], ["", LC.W], ["12 LOOPS IN ALL", LC.W], ["", LC.W], ["HOLD COPY: COPY BANK 2", LC.G75]]);
+      mOverviewText([["1X4 2X2 1X4 3X2", LC.W], ["", LC.W], ["", LC.W], ["HOLD COPY: COPY BANK 2", LC.G75], ["STEP 2/4  LOOP 1/2  BANK 2", LC.CY]]);
       mBig();
-      const steps = [[1, 4], [2, 2], [1, 4], [3, 2]], unit = 73;
+      // Same numbers as the firmware (LaneView.h, lcd_drawSongViewData).
+      const steps = [[1, 4], [2, 2], [1, 4], [3, 2]], total = 12, unit = Math.min(73, Math.floor(872 / total)), selStep = 1, playStep = 1, loopsDone = 0, playing = 1;
       let x = 40;
       steps.forEach(([bank, rep], k) => {
-        const w = rep * unit - 4, c = k === 1 ? LC.CY : LC.G75;
-        if (k === 1) P.rect(x, 146, unit - 2, 52, LC.G35);
+        const w = rep * unit - 4, c = k === selStep ? LC.CY : LC.G75;
         P.frame(x, 146, w, 52, c);
         for (let j = 1; j < rep; j++) for (let y = 152; y < 194; y += 3) P.rect(x + j * unit - 2, y, 1, 1, c);
-        P.text(String(bank), x + 8, 153, 10, c, "L", null);
-        P.text("X" + rep, x + 8, 176, 7, c, "L", null);
+        P.text(String(bank), x + 8, 153, 10, c); P.text("X" + rep, x + 8, 172, 7, c);
+        if (k === playStep) { const bx = x + loopsDone * unit + 3, bw = unit - 10; P.rect(bx, 190, bw, 4, LC.G35); P.rect(bx, 190, Math.round(bw * 0.36), 4, LC.YE); }
         x += rep * unit;
       });
-      P.rect(40, 208, 872, 1, LC.G50); P.rect(911, 198, 1, 11, LC.G50); P.rect(40, 201, 1, 8, LC.G50);
-      P.line(40, 201, 36, 205, LC.G50); P.line(40, 201, 44, 205, LC.G50);
+      P.rect(40, 209, x - 40 - 1, 1, LC.G50); P.rect(x - 2, 200, 1, 9, LC.G50); P.rect(40, 201, 1, 8, LC.G50);
+      for (let k = 1; k <= 3; k++) { P.rect(40 - k, 201 + k, 1, 1, LC.G50); P.rect(40 + k, 201 + k, 1, 1, LC.G50); }
       P.text("STEP 2 OF 4   LOOP 1 OF 2   NEXT: BANK 1 IN 2 LOOPS", 40, 220, 7, LC.CY);
       for (let b = 0; b < 5; b++) {
-        const tx = 40 + b * 178, used = b < 3, c = b === 1 ? LC.CY : used ? LC.W : LC.G35;
+        const tx = 40 + b * 178, used = b < 3, c = b === playing ? LC.CY : used ? LC.W : LC.G35;
         P.text("BANK " + (b + 1), tx, 250, 7, c);
-        P.frame(tx, 264, 166, 164, b === 1 ? LC.CY : LC.G35);
-        if (b === 4) { P.text("EMPTY", tx + 83, 340, 7, LC.G35, "C", null); continue; }
+        P.frame(tx, 264, 166, 164, b === playing ? LC.CY : LC.G35);
+        if (b === 4) { P.text("EMPTY", tx + 60, 342, 7, LC.G35); continue; }
         for (let l = 0; l < 10; l++) {
-          const y = 270 + l * 15.5, d = DEMO[(l + b * 3) % 10];
-          (d.f || []).forEach(([s, e]) => P.rect(tx + 4 + s * 4.9, y, (e - s) * 4.9, 8, c));
-          d.b.forEach(([s], k) => { if (b === 0 || (k + b) % (b + 1) === 0) P.rect(tx + 4 + ((s + b * 2) % 32) * 4.9, y, 2, 8, c); });
+          const y = 270 + l * 15, d = DEMO[(l + b * 3) % 10];
+          (d.f || []).forEach(([st, e]) => P.rect(tx + 4 + Math.floor(st * 158 / 32), y, Math.max(2, Math.floor((e - st) * 158 / 32)), 8, c));
+          d.b.forEach(([st], k) => { if (b === 0 || (k + b) % (b + 1) === 0) P.rect(tx + 4 + Math.floor(((st + b * 2) % 32) * 158 / 32), y, 2, 8, c); });
         }
       }
     } },
-  { id: "bigrouting", group: 0, name: "Routing", item: "45", size: "M–L", today: true,
+  { id: "bigrouting", group: 0, name: "Routing", item: "45", size: "M–L", today: true, built: "V1.14",
     note: ["Today the ROUTING page writes the chains as text above the lanes.",
-           "The modules along the top, joined as they are patched, and one row per layer with a mark under the module it enters. Dimmed modules receive nothing. With sends (item 46), each mark becomes a level bar and a layer can have several."],
+           "Built in V1.14 (waiting for the hardware test). While the ROUTING page is open, the lanes give way to the patch as a diagram: the six modules and the master along the top, joined as they are patched (a route to the next module is a line between the boxes, a longer one goes over them). Modules that get no signal are dimmed. Below, one row per source (the ten layers, the metronome and line-in) with a mark under the module it enters. With sends (item 46), each mark becomes a level bar and a layer can have several."],
     draw(idea) {
       mMenu("RT");
       mField(0, "EQ OUT", "FILTER-1"); mField(1, "FILTER-1", "EFFECT-1");
@@ -1157,27 +1159,29 @@ const BIG = [
         mOverviewText([["L1-L4 > EQ > F1 > FX1 > REV > OUT", LC.W], ["L5-L8 > FX1 > REV > OUT", LC.W], ["L9 L10 MET > OUT", LC.W], ["", LC.W], ["F2 FX2: NOTHING ROUTED", LC.G75]]);
         return;
       }
-      mOverviewText([["3 CHAINS", LC.CY], ["", LC.W], ["F2 FX2: NOTHING ROUTED", LC.G75]]);
+      mOverviewText([["L1-L4 > EQ > F1 > FX1 > REV > OUT", LC.W], ["L5-L8 > FX1 > REV > OUT", LC.W], ["L9 L10 MT LI > OUT", LC.W]]);
       mBig();
-      const names = ["EQ", "FILTER 1", "FILTER 2", "EFFECT 1", "EFFECT 2", "REVERB", "MASTER"], live = [1, 1, 0, 1, 0, 1, 1];
-      const cx = k => 300 + k * 96, bw = 78, bh = 22, by = 150;
-      names.forEach((n, k) => {
-        const c = live[k] ? LC.CY : LC.G35;
-        P.frame(cx(k) - bw / 2, by, bw, bh, c); P.text(n, cx(k), by + 7, 5, c, "C", null);
-        for (let y = by + bh + 12; y < 430; y += 4) P.rect(cx(k), y, 1, 1, LC.G25);
+      // Same numbers as the firmware (LaneView.h, lcd_drawRoutingViewData).
+      const names = ["EQ", "FILTER 1", "FILTER 2", "EFFECT 1", "EFFECT 2", "REVERB", "MASTER"];
+      const dest = [[1], [3], [6], [5], [6], [6]], entry = [0, 0, 0, 0, 3, 3, 3, 3, 6, 6, 6, 6], fed = [1, 1, 0, 1, 0, 1, 1];
+      const cx = k => 300 + k * 96, half = 39, by = 158, bh = 22;
+      for (const pass of [0, 1]) dest.forEach((ds, m) => {
+        if (!!fed[m] !== (pass === 1)) return;
+        const c = fed[m] ? LC.W : LC.G35;
+        ds.forEach(d => {
+          if (d === m + 1) { P.rect(cx(m) + half, by + 11, 96 - 78, 1, c); return; }
+          const off = 6 + 5 * m, y = by - 6 - 3 * m, x0 = cx(m) + off, x1 = cx(d) - off;
+          P.rect(x0, y, 1, by - y, c); P.rect(x0, y, x1 - x0 + 1, 1, c); P.rect(x1, y, 1, by - y, c);
+        });
       });
-      const flat = (a, b, c) => P.rect(cx(a) + bw / 2, by + 11, cx(b) - cx(a) - bw, 1, c);
-      const over = (a, b, y, c, off) => { P.rect(cx(a) + off, y, 1, by - y, c); P.rect(cx(a) + off, y, cx(b) - off - cx(a) - off, 1, c); P.rect(cx(b) - off, y, 1, by - y, c); };
-      const under = (a, b, y, c) => { P.rect(cx(a), by + bh, 1, y - by - bh, c); P.rect(cx(a), y, cx(b) - cx(a), 1, c); P.rect(cx(b), by + bh, 1, y - by - bh + 1, c); };
-      flat(0, 1, LC.W); over(1, 3, 141, LC.W, 8); over(3, 5, 136, LC.W, 8); flat(5, 6, LC.W);
-      under(2, 6, 180, LC.G35); under(4, 6, 176, LC.G35);
-      const entry = [0, 0, 0, 0, 3, 3, 3, 3, 6, 6];
-      for (let l = 0; l < 10; l++) {
-        const y = 196 + l * 23, c = l % 2 ? LC.G75 : LC.W;
-        P.text(String(l + 1).padStart(2, "0") + " " + LAYER_NAMES[l], 40, y, 7, c);
+      names.forEach((n, k) => { const c = fed[k] ? LC.CY : LC.G35; P.rect(cx(k) - half + 1, by + 1, 76, bh - 2, LC.K); P.frame(cx(k) - half, by, 78, bh, c); P.text(n, cx(k) - Math.floor(n.length * 7 / 2), by + 8, 5, c); });
+      const rows = LAYER_NAMES.map((n, l) => String(l + 1).padStart(2, "0") + " " + n).concat(["MT METRONOME", "LI LINE IN"]);
+      rows.forEach((t, l) => {
+        const y = 200 + l * 19, c = l >= 10 ? LC.G75 : l === 1 ? LC.CY : l === 6 ? LC.G35 : (l % 2 ? LC.G75 : LC.W);
+        P.text(t.padEnd(15), 40, y, 7, c);
         for (let x = 200; x < cx(6) + 30; x += 4) P.rect(x, y + 4, 1, 1, LC.G25);
-        P.rect(cx(entry[l]) - 6, y - 2, 13, 13, LC.K); P.rect(cx(entry[l]) - 5, y - 1, 11, 11, c);
-      }
+        P.rect(cx(entry[l]) - 5, y - 1, 11, 11, c);
+      });
     } },
   { id: "bigfilter", group: 0, name: "Filter curve", item: "40, 45", size: "M", today: true,
     note: ["Today the filter page is eight numbers above the lanes.",
@@ -2197,6 +2201,8 @@ const RELEASES = [
          "SOLO: the left S key (M F S row) + a layer pad soloes it (several at once, S + CLEAR clears); STYLE is now a field on instrument page 3 (ADD + turn: every layer)",
          "Main screen: a beat's height shows its velocity, a hollow beat has a chance below 100 %, a yellow dot marks a condition; layers that do not sound (muted, or not soloed) are dimmed",
          "EUCLID page: the lane area shows all ten layers as rings (one turn = one loop) with an orbiting playhead marker, and every layer's beats as a row; the lanes return when you leave the page",
+         "SONG page: the lane area shows the chain as a timeline (boxes as wide as their repeats, a bar that fills as the loop plays, what comes next) and the five banks as thumbnails",
+         "ROUTING page: the lane area shows the patch as a diagram (modules joined as patched, a mark per source under the module it enters)",
          "CPU and MEM monitor in the top-right corner of every page: the audio engine's load (magenta from 80 %) and the sample memory in use",
          "Diagnostics: SAVE / SDERR while autosave writes, its duration on the Metronome page; a crash restarts the firmware and shows CRASH k AT address (details in System/Crash.log)"],
     fix: ["Locked to MIDI clock but stopped, the sequencer timer ran about 15x too fast (LFOs and TIMING delays with it); since V1.13",

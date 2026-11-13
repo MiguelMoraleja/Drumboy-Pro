@@ -8166,8 +8166,8 @@ void Controller::lcd_update() {
     // Refresh playhead/progress bar visuals.
     lcd_drawPlay();
 
-    // The EUCLID page's full-area view: refresh, playhead, and the lanes back after leaving.
-    lcd_updateEuclidView();
+    // Full-area views (EUCLID, SONG, ROUTING): refresh, playhead, and the lanes back after leaving.
+    lcd_updateLaneView();
 
     // 2. TRANSPORT ICON UPDATE
     // Refresh reset/play/stop/record icons.
@@ -8448,7 +8448,7 @@ void Controller::lcd_clearAlert() {
 
     // 2. CONTENT RESTORE
     // Redraw song lane that can be overlapped by alert box (or the whole full-area view).
-    if (laneViewHidden()) ringsFull = true;
+    if (laneViewHidden()) viewFull = true;
     lcd_drawSong(4, activeSongBank);
 }
 
@@ -8678,7 +8678,7 @@ void Controller::lcd_clearSdAlert() {
 
     // 2. CONTENT RESTORE
     // Redraw song lane hidden by SD alert box (or the whole full-area view).
-    if (laneViewHidden()) ringsFull = true;
+    if (laneViewHidden()) viewFull = true;
     lcd_drawSong(4, activeSongBank);
 }
 
@@ -9058,7 +9058,7 @@ void Controller::lcd_transitionMenu() {
     /// @brief Applies menu transition cleanup and prepares target menu layout.
 
     // Leaving a full-area view: the lanes come back before the new page draws into them.
-    if (ringsShown && (menu != EUCLID_MENU)) lcd_restoreLanes();
+    if ((laneViewShown != INIT_MENU) && !laneViewHidden()) lcd_restoreLanes();
 
     // 1. PREVIOUS MENU CLEANUP
     // Clear UI artifacts based on previous menu type.
@@ -12995,7 +12995,7 @@ void Controller::lcd_drawLayerSong_BeatFillGraphData(uint8_t layerNum_) {
 void Controller::lcd_drawLayerTab(uint8_t layerNum_) {
     /// @brief Draws complete layer-tab row including indicators and song lane.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13031,7 +13031,7 @@ void Controller::lcd_drawLayerTab(uint8_t layerNum_) {
 void Controller::lcd_drawLayerBox(uint8_t layerNum_) {
     /// @brief Draws top and bottom border lines for a layer row.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13048,7 +13048,7 @@ void Controller::lcd_drawLayerBox(uint8_t layerNum_) {
 void Controller::lcd_drawLayerTab_NumData(uint8_t layerNum_) {
     /// @brief Draws layer number text in the layer tab row.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13064,7 +13064,7 @@ void Controller::lcd_drawLayerTab_NumData(uint8_t layerNum_) {
 void Controller::lcd_drawLayerTab_InstData(uint8_t layerNum_) {
     /// @brief Draws loaded instrument short name for layer row.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13084,7 +13084,7 @@ void Controller::lcd_drawLayerTab_InstData(uint8_t layerNum_) {
 void Controller::lcd_drawLayerTab_Mute(uint8_t layerNum_) {
     /// @brief Draws mute state indicator box for layer row.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13105,7 +13105,7 @@ void Controller::lcd_drawLayerTab_Mute(uint8_t layerNum_) {
 void Controller::lcd_drawLayerTab_Fill(uint8_t layerNum_) {
     /// @brief Draws fill state indicator box for layer row.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13126,7 +13126,7 @@ void Controller::lcd_drawLayerTab_Fill(uint8_t layerNum_) {
 void Controller::lcd_drawLayerTab_Style(uint8_t layerNum_) {
     /// @brief Draws the third indicator box of a layer row: SOLO since V1.14 (it showed STYLE).
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13503,7 +13503,7 @@ void Controller::lcd_calculateSongX() {
 void Controller::lcd_drawMeasureBar() {
     /// @brief Draws measure/bar grid markers across all layer song lanes.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13537,7 +13537,7 @@ void Controller::lcd_drawMeasureBar() {
 void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatNum_, bool selected_) {
     /// @brief Draws one beat cell for a layer/bank with style-aware fill rendering.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13604,7 +13604,7 @@ void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatN
 void Controller::lcd_clearBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatNum_) {
     /// @brief Clears rendered area of one beat cell for a layer/bank.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13633,7 +13633,7 @@ void Controller::lcd_clearBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beat
 void Controller::lcd_drawSong(uint8_t layerNum_, uint8_t bankNum_) {
     /// @brief Redraws all active beats for one layer in selected bank.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13664,7 +13664,7 @@ void Controller::lcd_drawSong(uint8_t layerNum_, uint8_t bankNum_) {
 void Controller::lcd_clearSong(uint8_t layerNum_, uint8_t bankNum_) {
     /// @brief Clears complete song lane region for one layer.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -13683,7 +13683,7 @@ void Controller::lcd_clearSong(uint8_t layerNum_, uint8_t bankNum_) {
 void Controller::lcd_clearInterval(uint8_t layerNum_, uint8_t bankNum_, uint16_t startInterval_, uint16_t endInterval_) {
     /// @brief Clears a specific interval segment in one layer lane.
     if (laneViewHidden()) {
-        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
         return;
     }
 
@@ -21833,6 +21833,7 @@ void Controller::lcd_drawSongOverview() {
                          : snprintf(line, sizeof(line), "HOLD COPY: COPY BANK %u", static_cast<unsigned>(activeSongBank + 1));
     lcd.setForeColor(GRAY_75);
     if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 3 * kLineStep);
+    viewDirty = true;  // the timeline below shows the same chain
 }
 
 bool Controller::layerPageMenu() const {
@@ -21858,7 +21859,7 @@ void Controller::euclid_select() {
     lcd_transitionMenu();
     lcd_transitionSelect();
     lcd_drawEuclidMenu();
-    lcd_drawEuclidView();  // the lane area shows the rings while this page is open
+    lcd_drawLaneView();  // the lane area shows the rings while this page is open
     encoder_update();
 }
 
@@ -21880,7 +21881,7 @@ void Controller::euclid_apply() {
     layerSong_commitBank(0);
     if (euclidDropped) textFullFlag = true;
     lcd_drawEuclidOverview();
-    ringsDirty = true;
+    viewDirty = true;
 }
 
 void Controller::euclid_clear() {
@@ -21937,24 +21938,43 @@ static const uint16_t kRingRowNumX = 380, kRingRowNameX = 407, kRingRowCountX = 
 static const uint16_t kRingRowY = 196, kRingRowStep = 22, kRingRowPlayY = 186;
 
 bool Controller::laneViewHidden() const {
-    /// @brief True while a full-area view has replaced the ten lanes (the EUCLID page). Everything
-    /// that draws into a lane checks it, and asks for the view to be refreshed instead.
-    return menu == EUCLID_MENU;
+    /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG and ROUTING
+    /// pages). Everything that draws into a lane checks it, and asks for the view to be refreshed
+    /// instead.
+    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU);
 }
 
-void Controller::lcd_drawEuclidView() {
-    /// @brief Draws the whole EUCLID view over the lane area: the ten layers as rings and as rows.
+void Controller::lcd_drawLaneView() {
+    /// @brief Draws the open page's full-area view from nothing: clears the lane area, then the view.
     lcd.setBackColor(BLACK);
     lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
-    ringsShown = true;
-    lcd_drawEuclidViewData();
+    laneViewShown = menu;
+    for (uint8_t b = 0; b < kChainBanks; b++) songThumbDrawn[b] = 0;  // the cleared area holds no thumbnails
+    lcd_drawLaneViewData();
+}
+
+void Controller::lcd_drawLaneViewData() {
+    /// @brief Redraws what can change on the open page's view (not the whole area).
+    viewDirty = false;
+    viewFull = false;
+    viewDrawnMs = HAL_GetTick();
+    switch (menu) {
+        case EUCLID_MENU:
+            lcd_drawEuclidViewData();
+            break;
+        case SONG_MENU:
+            lcd_drawSongViewData();
+            break;
+        case ROUTING_MENU:
+            lcd_drawRoutingViewData();
+            break;
+        default:
+            break;
+    }
 }
 
 void Controller::lcd_drawEuclidViewData() {
     /// @brief Redraws what changes on the EUCLID view: title, summary line, rings and rows.
-    ringsDirty = false;
-    ringsFull = false;
-    ringsDrawnMs = HAL_GetTick();
     ringPlayShown = false;
     if (selectedLayerNum == -1) return;
     const uint8_t sel = static_cast<uint8_t>(selectedLayerNum);
@@ -22040,21 +22060,28 @@ void Controller::lcd_drawEuclidViewData() {
     }
 }
 
-void Controller::lcd_updateEuclidView() {
-    /// @brief Main loop: keeps the EUCLID view current (it is redrawn at most every 80 ms while
-    /// knobs turn), moves its playhead markers, and gives the lanes back when the page was left.
-    if (menu != EUCLID_MENU) {
-        if (ringsShown) lcd_restoreLanes();
+void Controller::lcd_updateLaneView() {
+    /// @brief Main loop: keeps the open page's full-area view current (redrawn at most every 80 ms
+    /// while knobs turn), moves its playhead, and gives the lanes back when such a page was left.
+    if (!laneViewHidden()) {
+        if (laneViewShown != INIT_MENU) lcd_restoreLanes();
         return;
     }
-    if (!ringsShown || ringsFull) {
-        lcd_drawEuclidView();
-    } else if (ringsDirty && ((HAL_GetTick() - ringsDrawnMs) >= 80)) {
-        lcd_drawEuclidViewData();
+    if ((laneViewShown != menu) || viewFull) {
+        lcd_drawLaneView();
+    } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
+        lcd_drawLaneViewData();
     }
-    if (songInterval == 0) return;
+    if (menu == EUCLID_MENU) {
+        lcd_drawEuclidViewPlay();
+    } else if (menu == SONG_MENU) {
+        lcd_drawSongViewPlay();
+    }
+}
 
-    // Playhead: a marker that orbits outside the rings, and one above the rows.
+void Controller::lcd_drawEuclidViewPlay() {
+    /// @brief The EUCLID view's playhead: a marker that orbits outside the rings, and one above the rows.
+    if (songInterval == 0) return;
     const uint16_t at = playInterval;
     const RingPoint p = ringPoint(at, songInterval, kRingPlayRadius);
     const uint16_t rowX = static_cast<uint16_t>(kRingRowBeatX + (static_cast<uint32_t>(at % songInterval) * kRingRowBeatW) / songInterval);
@@ -22075,9 +22102,9 @@ void Controller::lcd_updateEuclidView() {
 
 void Controller::lcd_restoreLanes() {
     /// @brief Leaving a full-area view: draws the ten lane frames again and everything in them.
-    ringsShown = false;
-    ringsDirty = false;
-    ringsFull = false;
+    laneViewShown = INIT_MENU;
+    viewDirty = false;
+    viewFull = false;
     ringPlayShown = false;
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
         const RGB16Color* indexPtr = (const RGB16Color*)((i % 2) == 0 ? RAM_IMAGE_LAYER_A_PALETTE_ADDRESS : RAM_IMAGE_LAYER_B_PALETTE_ADDRESS);
@@ -22086,6 +22113,257 @@ void Controller::lcd_restoreLanes() {
     }
     lcd_drawMeasureBar();
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) lcd_drawLayerTab(i);
+}
+
+/* SONG timeline: a full-area view (LaneView.h) --------------------------------*/
+
+uint32_t Controller::songThumbState(uint8_t bank_, uint8_t color_) const {
+    /// @brief A fingerprint of what a bank's thumbnail shows (its beats, the loop length, its
+    /// colour), never 0: the thumbnail is redrawn only when this changes.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(color_);
+    mix(songInterval);
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        const Bank& bank = layerLibrary[l].bankLibrary[bank_];
+        mix(static_cast<uint32_t>(bank.lastActiveBeatNum + 1));
+        for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) {
+            const Beat& beat = bank.beatLibrary[b];
+            if (!beat.getActive()) continue;
+            mix((static_cast<uint32_t>(beat.getStartInterval()) << 16) | beat.getEndInterval());
+            mix((static_cast<uint32_t>(beat.getFillType()) << 8) | beat.getFillPattern());
+        }
+    }
+    return (h == 0) ? 1 : h;
+}
+
+void Controller::lcd_drawSongViewData() {
+    /// @brief Redraws the SONG view: the chain as boxes (each as wide as its repeats, the selected
+    /// step in cyan), the status line, and the five banks as thumbnails of their ten lanes.
+    songPlayShown = 0;
+    const uint16_t unit = songViewUnit(songChain);
+    const bool live = songChain.active;
+    char line[64];
+
+    // 1. THE CHAIN
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(kSongViewX - 6, kSongViewY - 2, kSongViewWidth + 12, (kSongViewLoopY + 3) - (kSongViewY - 2));
+    lcd.setAlignment(LEFT);
+    for (uint8_t i = 0; i < songChain.count; i++) {
+        const ChainStep& st = songChain.steps[i];
+        const uint16_t x = songViewStepX(songChain, i, unit), w = songViewBoxWidth(st.repeats, unit);
+        const RGB16Color c = (i == songStepSel) ? CYAN : GRAY_75;
+        lcd.setForeColor(c);
+        lcd.drawRect(x, kSongViewY, w, kSongViewHeight);
+        if (unit >= 12) {
+            // Dotted lines between the loops of one step.
+            for (uint8_t j = 1; j < st.repeats; j++)
+                for (uint16_t y = kSongViewY + 6; y < kSongViewY + kSongViewHeight - 4; y += 3) lcd.drawPixel(static_cast<uint16_t>(x + j * unit - 2), y);
+        }
+        if (w >= 34) {
+            line[0] = static_cast<char>('1' + st.bank);
+            lcd.setFont(FONT_10x14);
+            lcd.drawText(line, 1, x + 8, kSongViewY + 7);
+            const int len = snprintf(line, sizeof line, "X%u", static_cast<unsigned>(st.repeats));
+            lcd.setFont(FONT_07x09);
+            if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), x + 8, kSongViewY + 26);
+        } else if (w >= 13) {
+            line[0] = static_cast<char>('1' + st.bank);
+            lcd.setFont(FONT_07x09);
+            lcd.drawText(line, 1, x + 3, kSongViewY + 7);
+        }
+    }
+    // The loop playing now gets a bar inside its box; lcd_drawSongViewPlay fills it.
+    const bool onStep = live && !chainPlay.skipCount && (chainPlay.step < songChain.count);
+    if (onStep) {
+        const uint8_t loop = (chainPlay.loopsDone < songChain.steps[chainPlay.step].repeats) ? chainPlay.loopsDone : 0;
+        songPlayBarX = static_cast<uint16_t>(songViewStepX(songChain, chainPlay.step, unit) + loop * unit + songViewCellInset(unit));
+        songPlayBarW = songViewCellWidth(unit);
+        lcd.setForeColor(GRAY_35);
+        lcd.fillRect(songPlayBarX, kSongViewBarY, songPlayBarW, kSongViewBarHeight);
+    } else {
+        songPlayBarW = 0;
+    }
+    // What happens after the last step: a line back to the start (LOOP), or a stop mark.
+    const uint16_t endX = songViewStepX(songChain, songChain.count, unit);
+    lcd.setForeColor(GRAY_50);
+    if (songChain.loop) {
+        lcd.drawHLine(kSongViewX, kSongViewLoopY, static_cast<int16_t>(endX - kSongViewX - 1));
+        lcd.drawVLine(static_cast<uint16_t>(endX - 2), kSongViewY + kSongViewHeight + 2, static_cast<int16_t>(kSongViewLoopY - kSongViewY - kSongViewHeight - 2));
+        lcd.drawVLine(kSongViewX, kSongViewY + kSongViewHeight + 3, static_cast<int16_t>(kSongViewLoopY - kSongViewY - kSongViewHeight - 3));
+        for (uint16_t k = 1; k <= 3; k++) {  // arrow head pointing up at the first step
+            lcd.drawPixel(static_cast<uint16_t>(kSongViewX - k), static_cast<uint16_t>(kSongViewY + kSongViewHeight + 3 + k));
+            lcd.drawPixel(static_cast<uint16_t>(kSongViewX + k), static_cast<uint16_t>(kSongViewY + kSongViewHeight + 3 + k));
+        }
+    } else {
+        lcd.fillRect(static_cast<uint16_t>(endX - 6), kSongViewY + kSongViewHeight + 4, 5, 5);
+    }
+
+    // 2. STATUS LINE
+    int len;
+    const unsigned playing = static_cast<unsigned>(activeSongBank + 1);
+    if (!live) {
+        len = snprintf(line, sizeof line, "CHAIN OFF   %u LOOPS   BANK %u PLAYS", static_cast<unsigned>(chainTotalLoops(songChain)), playing);
+    } else if (!onStep) {
+        const uint8_t step = (chainPlay.step < songChain.count) ? chainPlay.step : 0;
+        len = snprintf(line, sizeof line, "BANK %u THIS LOOP   THEN STEP %u OF %u: BANK %u", playing, static_cast<unsigned>(step + 1), static_cast<unsigned>(songChain.count),
+                       static_cast<unsigned>(songChain.steps[step].bank + 1));
+    } else {
+        const ChainStep& now = songChain.steps[chainPlay.step];
+        const ChainNext next = chainNext(songChain, chainPlay);
+        len = snprintf(line, sizeof line, "STEP %u OF %u   LOOP %u OF %u   ", static_cast<unsigned>(chainPlay.step + 1), static_cast<unsigned>(songChain.count),
+                       static_cast<unsigned>(chainPlay.loopsDone + 1), static_cast<unsigned>(now.repeats));
+        if ((len > 0) && (len < static_cast<int>(sizeof line))) {
+            const size_t room = sizeof line - static_cast<size_t>(len);
+            int more;
+            if (chainPlay.detour >= 0) {
+                more = snprintf(line + len, room, "NEXT: BANK %u ONCE", static_cast<unsigned>(chainPlay.detour + 1));
+            } else if (next.bank < 0) {
+                more = snprintf(line + len, room, "END IN %u LOOP%s", static_cast<unsigned>(next.loops), (next.loops == 1) ? "" : "S");
+            } else {
+                more = snprintf(line + len, room, "NEXT: BANK %u IN %u LOOP%s", static_cast<unsigned>(next.bank + 1), static_cast<unsigned>(next.loops), (next.loops == 1) ? "" : "S");
+            }
+            if (more > 0) len += more;
+        }
+    }
+    const int kStatusChars = 58;
+    if (len < 0) len = 0;
+    if (len > kStatusChars) len = kStatusChars;
+    for (int i = len; i < kStatusChars; i++) line[i] = ' ';  // fixed width: overwrites the old text
+    lcd.setFont(FONT_07x09);
+    lcd.setForeColor(live ? CYAN : GRAY_75);
+    lcd.drawText(line, kStatusChars, kSongViewX, kSongViewTextY);
+
+    // 3. THE FIVE BANKS: the one playing in cyan, banks the chain uses in white, the others dimmed.
+    const uint8_t used = chainUsedBanks(songChain);
+    for (uint8_t b = 0; b < kChainBanks; b++) {
+        const uint16_t tx = songThumbX(b);
+        const uint8_t code = (b == activeSongBank) ? 2 : ((used & (1u << b)) ? 1 : 0);
+        const RGB16Color c = (code == 2) ? CYAN : ((code == 1) ? WHITE : GRAY_35);
+        const uint32_t state = songThumbState(b, code);
+        if (state == songThumbDrawn[b]) continue;
+        const bool blank = (songThumbDrawn[b] == 0);  // the whole area was just cleared
+        songThumbDrawn[b] = state;
+
+        snprintf(line, sizeof line, "BANK %u", static_cast<unsigned>(b + 1));
+        lcd.setFont(FONT_07x09);
+        lcd.setForeColor(c);
+        lcd.drawText(line, 6, tx, kSongThumbLabelY);
+        if (!blank) lcd.clearRect(tx, kSongThumbY, kSongThumbWidth, kSongThumbHeight);
+        lcd.setForeColor((code == 2) ? CYAN : GRAY_35);
+        lcd.drawRect(tx, kSongThumbY, kSongThumbWidth, kSongThumbHeight);
+        lcd.setForeColor(c);
+        bool any = false;
+        for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+            const Bank& bank = layerLibrary[l].bankLibrary[b];
+            const uint16_t y = static_cast<uint16_t>(kSongThumbRowY + l * kSongThumbRowStep);
+            for (int16_t n = 0; n <= bank.lastActiveBeatNum; n++) {
+                const Beat& beat = bank.beatLibrary[n];
+                if (!beat.getActive()) continue;
+                any = true;
+                const uint16_t x = songThumbBeatX(b, beat.getStartInterval(), songInterval);
+                if (beat.getFillType() == 0) {
+                    lcd.fillRect(x, y, 2, kSongThumbRowHeight);
+                } else {
+                    const uint16_t xe = songThumbBeatX(b, beat.getEndInterval(), songInterval);
+                    lcd.fillRect(x, y, (xe > x + 2) ? (xe - x) : 2, kSongThumbRowHeight);
+                }
+            }
+        }
+        if (!any) {
+            lcd.setForeColor(GRAY_35);
+            lcd.drawText("EMPTY", 5, tx + (kSongThumbWidth - 5 * 9) / 2, kSongThumbY + kSongThumbHeight / 2 - 4);
+        }
+    }
+}
+
+void Controller::lcd_drawSongViewPlay() {
+    /// @brief Fills the playing loop's bar in the SONG view as the loop goes by.
+    if ((songPlayBarW == 0) || (songInterval == 0) || !playActive) return;
+    uint16_t px = songViewProgress(playInterval, songInterval, songViewUnit(songChain));
+    if (px > songPlayBarW) px = songPlayBarW;
+    if (px == songPlayShown) return;
+    if (px < songPlayShown) {
+        // The loop started again before the chain's redraw arrived: empty the bar first.
+        lcd.setForeColor(GRAY_35);
+        lcd.fillRect(songPlayBarX, kSongViewBarY, songPlayBarW, kSongViewBarHeight);
+        songPlayShown = 0;
+    }
+    lcd.setForeColor(YELLOW);
+    lcd.fillRect(static_cast<uint16_t>(songPlayBarX + songPlayShown), kSongViewBarY, static_cast<uint16_t>(px - songPlayShown), kSongViewBarHeight);
+    songPlayShown = px;
+}
+
+/* ROUTING: a full-area view (LaneView.h) ---------------------------------------*/
+
+void Controller::lcd_drawRoutingViewData() {
+    /// @brief Redraws the ROUTING view: the modules joined as patched (those that get no signal
+    /// dimmed), and one row per source with a mark under the module it enters.
+    static const char* const kNodeName[kRouteNodeCount] = {"EQ", "FILTER 1", "FILTER 2", "EFFECT 1", "EFFECT 2", "REVERB", "MASTER"};
+    const uint16_t half = kRouteViewBoxWidth / 2, by = kRouteViewBoxY;
+
+    // Where each source enters, and which modules get any signal.
+    uint8_t entry[kRouteViewSources];
+    uint8_t masks[kRouteViewSources];
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) entry[i] = layerLibrary[i].mixerInMode;
+    entry[kRouteSourceMetro] = metroOut;
+    entry[kRouteSourceLineIn] = mixer.liMixerIn;
+    for (uint8_t i = 0; i < kRouteViewSources; i++) masks[i] = routeMaskFromEntry(entry[i]);
+    const uint8_t fed = static_cast<uint8_t>(routeFedModules(routePatch, masks, kRouteViewSources) | routeBit(NODE_MASTER));
+
+    // 1. MODULES: routes first (those of unfed modules below the live ones), then the boxes.
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(routeViewModuleX(0) - half - 2, kImageLayerY[0] + 2, routeViewModuleX(NODE_MASTER) - routeViewModuleX(0) + kRouteViewBoxWidth + 4, by + kRouteViewBoxHeight + 2 - (kImageLayerY[0] + 2));
+    for (uint8_t pass = 0; pass < 2; pass++) {
+        for (uint8_t m = 0; m < kRouteModuleCount; m++) {
+            const bool live = (fed & routeBit(m)) != 0;
+            if (live != (pass == 1)) continue;
+            lcd.setForeColor(live ? WHITE : GRAY_35);
+            for (uint8_t d = m + 1; d < kRouteNodeCount; d++) {
+                if (!(routePatch.moduleDest[m] & routeBit(d))) continue;
+                if (d == m + 1) {
+                    lcd.drawHLine(routeViewModuleX(m) + half, by + kRouteViewBoxHeight / 2, static_cast<int16_t>(kRouteViewModuleStep - kRouteViewBoxWidth));
+                } else {
+                    const uint16_t off = routeViewArcOffset(m), y = routeViewArcY(m);
+                    const uint16_t x0 = routeViewModuleX(m) + off, x1 = routeViewModuleX(d) - off;
+                    lcd.drawVLine(x0, y, static_cast<int16_t>(by - y));
+                    lcd.drawHLine(x0, y, static_cast<int16_t>(x1 - x0 + 1));
+                    lcd.drawVLine(x1, y, static_cast<int16_t>(by - y));
+                }
+            }
+        }
+    }
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(LEFT);
+    for (uint8_t n = 0; n < kRouteNodeCount; n++) {
+        const uint16_t len = static_cast<uint16_t>(strlen(kNodeName[n]));
+        lcd.setForeColor((fed & routeBit(n)) ? CYAN : GRAY_35);
+        lcd.drawRect(routeViewModuleX(n) - half, by, kRouteViewBoxWidth, kRouteViewBoxHeight);
+        lcd.drawText(kNodeName[n], len, static_cast<uint16_t>(routeViewModuleX(n) - (len * 7) / 2), by + 8);
+    }
+
+    // 2. SOURCES: name, a dotted guide, and a mark under the module the source enters.
+    const uint16_t guideEnd = routeViewModuleX(NODE_MASTER) + 30;
+    lcd.setFont(FONT_07x09);
+    for (uint8_t i = 0; i < kRouteViewSources; i++) {
+        const uint16_t y = routeViewRowY(i);
+        const RGB16Color c = (i < kLayerLibrarySize) ? layerColor(i) : GRAY_75;
+        char name[16];
+        if (i < kLayerLibrarySize) {
+            snprintf(name, sizeof name, "%.2s %-12.12s", kDataLayerNum[i], layerLibrary[i].instLoadedData.nameShortL);
+        } else {
+            snprintf(name, sizeof name, "%-15s", (i == kRouteSourceMetro) ? "MT METRONOME" : "LI LINE IN");
+        }
+        lcd.setForeColor(c);
+        lcd.drawText(name, 15, kRouteViewNameX, y);
+        lcd.clearRect(kRouteViewGuideX, y - 1, guideEnd - kRouteViewGuideX + 1, kRouteViewMark);
+        lcd.setForeColor(GRAY_25);
+        for (uint16_t x = kRouteViewGuideX + 4; x < guideEnd; x += 4) lcd.drawPixel(x, y + 4);
+        if (entry[i] < kRouteNodeCount) {
+            lcd.setForeColor(c);
+            lcd.fillRect(routeViewModuleX(entry[i]) - kRouteViewMark / 2, y - 1, kRouteViewMark, kRouteViewMark);
+        }
+    }
 }
 
 /* NOTE page (BeatNote.h) ----------------------------------------------------*/
@@ -22483,6 +22761,7 @@ void Controller::lcd_drawRoutingOverview() {
         lcd.setForeColor(GRAY_75);
         if (len > 0) lcd.drawText(more, (uint16_t)len, kX, kY + row * kLineStep);
     }
+    viewDirty = true;  // the diagram below shows the same patch
 }
 
 void Controller::routing_setMetroOut(uint8_t out_) {

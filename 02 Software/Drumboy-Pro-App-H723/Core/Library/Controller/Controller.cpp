@@ -1236,11 +1236,14 @@ void Controller::midi_receiveClock(uint32_t nowCycles_) {
     io.midi.rxClockTickPhase = nextPhase;
     syncOutClockTick();  // the sync output jack follows the incoming clock
 
-    if (io.midi.clockLocked) {
+    // Only while playing. Locked but stopped (a START the Drumboy didn't follow because it wasn't
+    // armed), the clocks keep counting and nothing plays them, so the period that "catches up" fell
+    // to its minimum: the timer ran at 25 kHz, with the LFOs and TIMING delays about 15x too fast.
+    if (io.midi.clockLocked && playActive) {
         const uint32_t period = clockLockPeriodUs(lock, kClockLockMinPeriodUs, kClockLockMaxPeriodUs);
         if (period) __HAL_TIM_SET_AUTORELOAD(&htim15, period - 1);
         // The sequencer was waiting for this clock: restart its timer so the tick lands on it.
-        if ((result == CLOCK_KICK) && playActive) htim15.Instance->EGR = TIM_EGR_UG;
+        if (result == CLOCK_KICK) htim15.Instance->EGR = TIM_EGR_UG;
     }
 
     // Tempo for the display, the tempo-synced effects and the clock/sync outputs: once a beat.

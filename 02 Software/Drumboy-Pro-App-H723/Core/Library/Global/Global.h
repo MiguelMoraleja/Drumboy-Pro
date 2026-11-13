@@ -11,6 +11,7 @@
 #include "MCP23017.h"
 #include "Autosave.h"
 #include "BeatNote.h"
+#include "CrashRecord.h"
 #include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"
@@ -1643,6 +1644,7 @@ typedef enum {
     ALERT_CLEARERROR                                = 0x17,
     ALERT_SHUTDOWN                                  = 0x18,
     ALERT_RESTOREAUTOSAVE                           = 0x19,
+    ALERT_CRASH                                     = 0x1A,  // the last crash (CrashRecord.h), until ADD or CLEAR
     ALERT_OFF                                       = 0x20
 } AlertType;
 

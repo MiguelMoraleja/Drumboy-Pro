@@ -289,6 +289,7 @@ void Controller::initialize() {
         HAL_HalfDuplex_EnableReceiver(&huart1);
         HAL_HalfDuplex_EnableTransmitter(&huart6);
         HAL_UART_Receive_IT(&huart1, &midiRxData, 1);
+        crashClear(reinterpret_cast<CrashRecord*>(CRASH_RECORD_ADDRESS));  // start-up done (CrashRecord.h)
     }
 
     // 5. NORMAL SYSTEM BOOT
@@ -342,7 +343,10 @@ void Controller::initialize() {
         autosave_markClean();
         autosaveTiming.lastCheckMs = HAL_GetTick();
         lastInputMs = HAL_GetTick();
-        autosave_offerRestore();
+
+        // 7. The last crash, if the firmware restarted after one (CrashRecord.h); it is shown first
+        // and the autosave question follows when it is dismissed.
+        if (!crash_report()) autosave_offerRestore();
     }
 }
 
@@ -2086,6 +2090,11 @@ void Controller::keyboard_action() {
                                             autosave_restore();
                                             break;
 
+                                        case ALERT_CRASH:
+                                            lcd_clearAlert();
+                                            autosave_offerRestore();
+                                            break;
+
                                         case ALERT_SAVEFILE:
 
                                         case ALERT_OVERWRITEFILE:
@@ -2251,8 +2260,10 @@ void Controller::keyboard_action() {
                                 if (alertFlag) {
                                     // Declining the restore: the autosaved work is not wanted.
                                     if (alertType == ALERT_RESTOREAUTOSAVE) autosave_deleteAll();
+                                    const bool wasCrash = (alertType == ALERT_CRASH);
                                     lcd_clearAlert();
                                     alertFlag = false;
+                                    if (wasCrash) autosave_offerRestore();  // the crash note is read: now the autosave
                                 } else if (keyboard.muteKeyPress) {
                                     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                                         if (layerLibrary[i].mute) layerInst_setMute(i, false);
@@ -6440,7 +6451,65 @@ void Controller::autosave_scanFile(uint8_t slot_, AutosaveFile& file_) {
     f_close(&sd.file);
 }
 
+bool Controller::crash_report() {
+    /// @brief At the end of start-up: if the firmware restarted after a crash (CrashRecord.h),
+    /// appends the record to System/Crash.log and shows "CRASH k AT address" until ADD or CLEAR.
+    /// Returns true when a crash is being shown.
+    CrashRecord* record = reinterpret_cast<CrashRecord*>(CRASH_RECORD_ADDRESS);
+    if (!crashValid(record)) {
+        crashClear(record);
+        return false;
+    }
+    const CrashRecord crash = *record;
+    crashClear(record);  // from here on a new crash restarts again
+
+    crashAlertText(&crash, crashText, sizeof crashText);
+    if (sd.ready) {
+        char line[160];
+        const int len = crashLogLine(&crash, line, sizeof line);
+        f_close(&sd.file);
+        if ((len > 0) && (f_open(&sd.file, "System/Crash.log", FA_OPEN_APPEND | FA_WRITE) == FR_OK)) {
+            UINT written = 0;
+            f_write(&sd.file, line, static_cast<UINT>(len), &written);
+        }
+        f_close(&sd.file);
+    }
+    alertFlag = true;
+    alertType = ALERT_CRASH;
+    lcd_drawAlert();
+    return true;
+}
+
+void Controller::lcd_drawStatusNow(const char* text5_, RGB16Color color_) {
+    /// @brief Draws a 5-character status text at once (the spot of COPY / PASTE / ARMED), for work
+    /// that blocks the main loop before the next screen update.
+    lcd.setBackColor(BLACK);
+    lcd.setAlignment(CENTER);
+    lcd.setFont(FONT_05x07);
+    lcd.setForeColor(color_);
+    lcd.drawText(text5_, 5, 170, 112);
+}
+
 bool Controller::autosave_write() {
+    /// @brief Autosave with its indicator: " SAVE" on screen while the SD write blocks the main loop
+    /// (keys, screen and incoming MIDI notes wait meanwhile), "SDERR" if it failed; the time it
+    /// took is shown next to AUTOSAVE on the Metronome page.
+    if (!sd.ready) return false;
+    lcd_drawStatusNow(" SAVE", YELLOW);
+    const uint32_t start = HAL_GetTick();
+    const bool ok = autosave_writeFiles();
+    autosaveLastMs = HAL_GetTick() - start;
+    autosaveLastOk = ok;
+    if (ok) {
+        textClearFlag = true;  // remove SAVE (ARMED comes back if armed)
+    } else {
+        textAutosaveErrFlag = true;
+    }
+    if (menu == METRO_MENU) lcd_drawMetro_AutosaveData();
+    return ok;
+}
+
+bool Controller::autosave_writeFiles() {
     /// @brief Writes the song to the older of the two autosave files, then seals it with the
     /// trailer (sequence + CRC of what is actually on the card). A write cut short leaves the
     /// other file as the good copy.
@@ -8291,6 +8360,10 @@ void Controller::lcd_drawAlert() {
             alertText = kAlertTextRestoreAutosave;
             break;
 
+        case ALERT_CRASH:
+            alertText = crashText;
+            break;
+
         case ALERT_SAVEFILE:
             alertText = kAlertTextSaveFile;
             break;
@@ -9001,6 +9074,10 @@ void Controller::lcd_transitionMenu() {
             for (uint8_t i = 0; i <= kMaxMenu4Tab; i++) {
                 lcd_clearTextBox(i);
             }
+            break;
+
+        case METRO_MENU:
+            lcd_clearTextBox(6);  // the last autosave's duration under AUTOSAVE
             break;
 
         case RHYTHM_MENU:
@@ -10749,6 +10826,15 @@ void Controller::lcd_drawMetro_AutosaveData() {
     lcd_setMenuDataState(WHITE);
     const uint8_t minutes = kAutosaveMinutes[(autosaveTiming.interval < kAutosaveIntervalCount) ? autosaveTiming.interval : kAutosaveDefaultInterval];
     lcd.drawText((minutes == 0) ? kDataOff : kNumberDataLibrary[minutes].nameLongR, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
+
+    // How long the last autosave held the main loop, in milliseconds (ERR: it failed).
+    char took[kMenuTextBoxTextSize + 8] = "        ";
+    if (autosaveLastMs > 0) {
+        const unsigned long ms = (autosaveLastMs > 99999) ? 99999 : autosaveLastMs;
+        autosaveLastOk ? snprintf(took, sizeof took, "%5luMS ", ms) : snprintf(took, sizeof took, "ERR%5lu", ms);
+    }
+    lcd_setMenuTextState(autosaveLastOk ? GRAY_75 : RED);
+    lcd.drawText(took, kMenuTextBoxTextSize, kMenuTextBoxX[6], kMenuTextBoxY[6]);
 }
 
 void Controller::lcd_drawMetro_PreviewData() {
@@ -13205,6 +13291,14 @@ void Controller::lcd_drawCopyPaste() {
         startTextTimer();
         lcd.setForeColor(CYAN);
         lcd.drawText("PASTE", 5, 170, 112);
+
+        // Autosave could not write to the SD card.
+    } else if (textAutosaveErrFlag) {
+        textAutosaveErrFlag = false;
+        textShow = true;
+        startTextTimer();
+        lcd.setForeColor(RED);
+        lcd.drawText("SDERR", 5, 170, 112);
 
         // F (FILL) key held: FKEY beats play, !FKEY beats rest. Shown until it is released.
     } else if (textFkeyFlag) {

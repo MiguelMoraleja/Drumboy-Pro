@@ -542,6 +542,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">⏱</span><div><b>MIDI IN with clock</b> (I/O page): the Drumboy plays only as far as each incoming clock allows and restarts its own timer on it. It can't run ahead, it is at most 1/24 of a beat behind, and nothing adds up over time. Before V1.13 it only copied the tempo (rounded to whole BPM) and then ran on its own.</div></div>
           <div class="k"><span class="keycap">⟲</span><div><b>No MIDI loops:</b> while it follows a clock it sends no clock and no start/stop of its own on MIDI OUT. Before, a setup that echoed MIDI OUT back to MIDI IN doubled the tempo and ran away to 200 BPM. The sync jack follows the incoming clock.</div></div>
           <div class="k"><span class="keycap">♪</span><div><b>Notes</b> play at their velocity; chords and fast runs (running status) all play; a note with velocity 0 is silent. Recording keeps soft notes (velocity below 64) as GHOST. MIDI OUT sends each hit's real velocity: FLAT 127, GHOST 64, fills as they play.</div></div>
+          <div class="k"><span class="keycap">↯</span><div><b>CRASH k AT address</b> (V1.14): if the firmware crashes it now restarts by itself instead of freezing, and shows this until ADD or CLEAR. The details are added to <span class="mono">System/Crash.log</span> on the SD card: send that line to find the cause.</div></div>
           <div class="k"><span class="keycap">!</span><div><b>ERR nnnn</b> instead of SLAVE on the Rhythm page counts MIDI bytes lost on the way in. It should stay at SLAVE.</div></div>
         </div>
         <div class="panel keys">
@@ -549,6 +550,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">⏲</span><div><b>AUTOSAVE</b> on the Metronome page (last field): OFF, 2, 5, 10 (default) or 20 minutes. When that time has passed and the song changed, it is written to the SD card: when stopped, or at a loop end while playing. With MIDI notes coming in it waits for STOP, so a note is never held back. It also waits while you turn knobs or press keys.</div></div>
           <div class="k"><span class="keycap">⏻</span><div><b>After a power cut or a crash:</b> at power-on the Drumboy asks RESTORE AUTOSAVE?. ADD loads it, CLEAR throws it away. Then save it into a slot as usual.</div></div>
           <div class="k"><span class="keycap">⇄</span><div><b>LOAD and NEW</b> autosave unsaved work first, so a wrong LOAD can be undone at the next power-on. <b>SAVE</b> into a slot removes the autosave files (the work is safe in the slot).</div></div>
+          <div class="k"><span class="keycap">◌</span><div><b>SAVE on screen</b> (V1.14): while an autosave writes, the status area shows SAVE; keys, the screen and incoming MIDI notes wait for that moment. SDERR in red means the write failed. The Metronome page shows under AUTOSAVE how many milliseconds the last one took.</div></div>
           <div class="k"><span class="keycap">✓</span><div><b>Two files</b> (<span class="mono">System/File/Autosave_A.rwf</span> and <span class="mono">_B</span>) are written in turn and sealed with a checksum, so pulling the power in the middle of a write still leaves the previous copy. Your numbered slots are never touched.</div></div>
         </div>
       </div>
@@ -1626,8 +1628,10 @@ const RELEASES = [
          "Saved in the song file after the chain; older firmware ignores it and old songs play as before",
          "Song mode: picking a bank by hand (SONG + pads) never turns the chain off; a bank outside the chain plays one loop as a detour, then the chain goes on",
          "Undo / redo: MUTE + LEFT / MUTE + RIGHT for beat and bank edits (64 steps, also while playing)",
-         "SOLO: the left S key (M F S row) + a layer pad soloes it (several at once, S + CLEAR clears); STYLE is now a field on instrument page 3 (ADD + turn: every layer)"],
-    fix: ["The song and NOTE pages kept the old bank's beat after a bank change at the loop end (edits went to the wrong beat)",
+         "SOLO: the left S key (M F S row) + a layer pad soloes it (several at once, S + CLEAR clears); STYLE is now a field on instrument page 3 (ADD + turn: every layer)",
+         "Diagnostics: SAVE / SDERR while autosave writes, its duration on the Metronome page; a crash restarts the firmware and shows CRASH k AT address (details in System/Crash.log)"],
+    fix: ["Locked to MIDI clock but stopped, the sequencer timer ran about 15x too fast (LFOs and TIMING delays with it); since V1.13",
+          "The song and NOTE pages kept the old bank's beat after a bank change at the loop end (edits went to the wrong beat)",
           "The NOTE page's knobs drove the global encoder bank instead of its own fields"] },
   { v: "V1.13", date: "2026-11-07", status: "GitHub release v1.13 · tested", pub: true,
     nw: ["Locked to an incoming MIDI clock: the Drumboy plays only as far as each clock allows, so fractional tempos (Loopy Pro) no longer drift",

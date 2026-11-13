@@ -337,6 +337,14 @@ class Controller {
     void autosave_markClean();
     void autosave_scanFile(uint8_t slot_, AutosaveFile& file_);
     bool autosave_write();
+    bool autosave_writeFiles();
+    uint32_t autosaveLastMs = 0;            // how long the last autosave took (Metronome page)
+    bool autosaveLastOk = true;
+    bool textAutosaveErrFlag = false;
+    void lcd_drawStatusNow(const char* text5_, RGB16Color color_);
+    // Crash record (CrashRecord.h): the last crash, shown at start-up.
+    char crashText[32] = "";
+    bool crash_report();
     void autosave_deleteAll();
     void autosave_update();
     void autosave_offerRestore();

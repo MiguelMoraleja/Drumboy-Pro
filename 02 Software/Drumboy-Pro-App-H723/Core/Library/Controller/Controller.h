@@ -100,14 +100,14 @@ class Controller {
     RouteState routeState;                                              // module output fades (audio interrupt only)
     RouteFade lineInFade;                                               // line-in route fade (audio interrupt only)
     RouteFade metroFade;                                                // metronome route fade (audio interrupt only)
-#ifdef DSP_PROFILE
-    // DSP load measurement (make PROFILE=1): CPU cycles spent in processAudioBlock
-    volatile uint32_t dspCyclesSum = 0;                                 // summed since the last readout
-    volatile uint32_t dspBlocks = 0;                                    // blocks since the last readout
-    volatile uint32_t dspCyclesPeak = 0;                                // worst block since the last readout
-    uint32_t dspCyclesPeakAll = 0;                                      // worst block since power-on
-    uint32_t dspLastDrawTick = 0;
-#endif
+    // CPU and MEM monitor (LoadMeter.h): the audio engine's load, measured in every build.
+    LoadMeter dspLoad;                                                  // filled by processAudioBlock
+    bool monitorFull = true;                                            // draw the labels (first time)
+    uint32_t monitorTick = 0;
+    uint32_t monitorCpuShown = 0;                                       // tenths of a percent on the bar
+    uint32_t monitorCpuMax = 0;                                         // worst block since power-on
+    uint32_t monitorCpuDrawn = 0xFFFFFFFFu;                             // what the screen shows (number, bar, colour)
+    uint32_t monitorMemDrawn = 0xFFFFFFFFu;
 
     /* Audio Buffers (I2s Block Processing) ---------------------- */
 
@@ -644,9 +644,8 @@ class Controller {
     // Sd functions
     void lcd_drawSdDataIntro();
     void lcd_drawSdData();
-#ifdef DSP_PROFILE
-    void lcd_drawDspProfile();
-#endif
+    void lcd_drawMonitor();
+    void lcd_drawMonitorBar(uint16_t textY_, uint16_t barY_, uint32_t permille_, uint32_t& drawn_);
     void lcd_clearSdData();
     void lcd_drawSdAlert(SdResult result_);
     void lcd_clearSdAlert();

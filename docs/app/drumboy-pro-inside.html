@@ -549,6 +549,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">⏱</span><div><b>MIDI IN with clock</b> (I/O page): the Drumboy plays only as far as each incoming clock allows and restarts its own timer on it. It can't run ahead, it is at most 1/24 of a beat behind, and nothing adds up over time. Before V1.13 it only copied the tempo (rounded to whole BPM) and then ran on its own.</div></div>
           <div class="k"><span class="keycap">⟲</span><div><b>No MIDI loops:</b> while it follows a clock it sends no clock and no start/stop of its own on MIDI OUT. Before, a setup that echoed MIDI OUT back to MIDI IN doubled the tempo and ran away to 200 BPM. The sync jack follows the incoming clock.</div></div>
           <div class="k"><span class="keycap">♪</span><div><b>Notes</b> play at their velocity; chords and fast runs (running status) all play; a note with velocity 0 is silent. Recording keeps soft notes (velocity below 64) as GHOST. MIDI OUT sends each hit's real velocity: FLAT 127, GHOST 64, fills as they play.</div></div>
+          <div class="k"><span class="keycap">▬</span><div><b>CPU and MEM</b> (V1.14): two small bars in the top-right corner of every page. <b>CPU</b> is the audio engine's load: the slowest audio block of the last quarter second as a share of the time a block may take. It rises at once and falls slowly, and turns magenta from 80 %, where dropouts get close. <b>MEM</b> is the sample memory in use: the ten layers' samples as a share of their ten slots (5.44 s each). The numbers beside them are percent.</div></div>
           <div class="k"><span class="keycap">↯</span><div><b>CRASH k AT address</b> (V1.14): if the firmware crashes it now restarts by itself instead of freezing, and shows this until ADD or CLEAR. The details are added to <span class="mono">System/Crash.log</span> on the SD card: send that line to find the cause.</div></div>
           <div class="k"><span class="keycap">!</span><div><b>ERR nnnn</b> instead of SLAVE on the Rhythm page counts MIDI bytes lost on the way in. It should stay at SLAVE.</div></div>
         </div>
@@ -769,6 +770,15 @@ function mField(tab, header, value, sign = "", valueColor = LC.W) {
   P.rect(TAB_DX[tab] - 8, TAB_HY[tab], 7, 7, LC.CY);
   if (sign) P.text(sign, TAB_DX[tab], TAB_SY[tab], 5, LC.CY, "R");
   P.text(value, TAB_DX[tab], TAB_DY[tab], 7, valueColor, "R");
+}
+// CPU and MEM monitor in the top-right box (V1.14, LoadMeter.h): same positions as the firmware.
+function mMonitor(cpu = 41, mem = 28) {
+  P.rect(845, 36, 88, 56, LC.K);
+  [["CPU", cpu, 40, 54], ["MEM", mem, 66, 80]].forEach(([n, v, ty, by]) => {
+    const warn = v >= 80, w = Math.max(v > 0 ? 1 : 0, Math.round(v * 57 / 100));
+    P.text(n, 856, ty, 5, LC.G75); P.text(String(v).padStart(3), 892, ty, 5, warn ? LC.MA : LC.G75);
+    P.rect(856, by, 57, 2, LC.G35); P.rect(856, by, Math.min(57, w), 2, warn ? LC.MA : LC.CY);
+  });
 }
 function mGraphArea() { P.rect(493, 30, 325, 60, LC.K); }
 function mBoxes(i, mute, fill, third, c) {
@@ -1227,6 +1237,7 @@ function ideaDraw() {
   lg = cv.getContext("2d"); lg.imageSmoothingEnabled = false;
   lg.fillStyle = LC.K; lg.fillRect(0, 0, 960, 540);
   if (lcdBase.complete && lcdBase.naturalWidth) lg.drawImage(lcdBase, 0, 0);
+  mMonitor(sc.id === "mix" ? 47 : 41);
   sc.draw(idea);
   cv.setAttribute("aria-label", `${sc.name}: ${idea ? "proposed screen" : "the screen today"}. ${sc.note[idea ? 1 : 0]}`);
   document.getElementById("id-cap").innerHTML = `<p style="margin:0"><b>${sc.name}, ${idea ? (sc.built ? "built in " + sc.built : "proposed") : "today"}.</b> ${sc.note[idea ? 1 : 0]}</p><p class="muted" style="margin:6px 0 0; font-size:.85rem">Backlog item ${sc.item} · size ${sc.size}${sc.today ? "" : " · a new screen, so there is no version of it today"}</p>`;
@@ -2186,6 +2197,7 @@ const RELEASES = [
          "SOLO: the left S key (M F S row) + a layer pad soloes it (several at once, S + CLEAR clears); STYLE is now a field on instrument page 3 (ADD + turn: every layer)",
          "Main screen: a beat's height shows its velocity, a hollow beat has a chance below 100 %, a yellow dot marks a condition; layers that do not sound (muted, or not soloed) are dimmed",
          "EUCLID page: the lane area shows all ten layers as rings (one turn = one loop) with an orbiting playhead marker, and every layer's beats as a row; the lanes return when you leave the page",
+         "CPU and MEM monitor in the top-right corner of every page: the audio engine's load (magenta from 80 %) and the sample memory in use",
          "Diagnostics: SAVE / SDERR while autosave writes, its duration on the Metronome page; a crash restarts the firmware and shows CRASH k AT address (details in System/Crash.log)"],
     fix: ["Locked to MIDI clock but stopped, the sequencer timer ran about 15x too fast (LFOs and TIMING delays with it); since V1.13",
           "The song and NOTE pages kept the old bank's beat after a bank change at the loop end (edits went to the wrong beat)",

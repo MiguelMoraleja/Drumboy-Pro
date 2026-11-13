@@ -44,6 +44,7 @@ The MCU sits at the center of six subsystems: an NT35510 display driven over a 1
 - **Undo / redo** (V1.14): MUTE + LEFT undoes, MUTE + RIGHT redoes the last beat or bank edit (MOVE, SHIFT ALL, insert, CLEAR, fills, paste, whole-bank paste, EUCLID, NOTE, a recording take), up to 64 steps; a knob gesture or an EUCLID visit is one step; works while playing
 - **Per-note marks and dimmed lanes** (V1.14): on the main screen a beat's height shows its velocity, a hollow beat has a chance below 100 %, a yellow dot above marks a condition, and a layer that does not sound (muted, or another layer is soloed) is drawn dimmed.
 - **Euclid rings** (V1.14): while the EUCLID page is open, the lane area shows all ten layers as rings around one centre (layer 1 outside, one turn = one loop, a yellow marker orbits with the playhead) and every layer's beats as a row; leaving the page brings the lanes back.
+- **CPU and MEM monitor** (V1.14): two bars with their percentage in the top-right corner of every page. CPU is the audio engine's load (the slowest audio block of the last quarter second as a share of the block time, magenta from 80 %); MEM is the sample memory in use.
 - **Diagnostics** (V1.14): the screen shows SAVE while an autosave writes to the SD card (SDERR if it fails) and the Metronome page shows how long the last one took; after a crash the firmware restarts by itself, shows `CRASH k AT address` and appends the details to `System/Crash.log` on the SD card
 - **Autosave** (V1.13): every 2–20 minutes (AUTOSAVE on the Metronome page, default 10) the song goes to two reserved files on the SD card; after a power cut or crash the Drumboy offers RESTORE AUTOSAVE? at power-on (ADD restores, CLEAR discards); LOAD and NEW autosave unsaved work first
 - **SD-card firmware updates** via a dedicated bootloader with CRC-32 verified staged writes
@@ -92,7 +93,7 @@ make package        # build/Drumboy_Pro_Fw_01_04.bin, ready for the SD card
 make -C "../tests"  # fill engine tests, run on the PC
 ```
 
-For performance work, `make BUILD=build-profile PROFILE=1 package` makes a measurement build (`Drumboy_Pro_Fw_01_04_dsp.bin`) that shows the DSP load and I2S error counts at the bottom of the screen. Normal builds don't include it.
+For performance work, `make BUILD=build-profile PROFILE=1 package` makes a measurement build (`Drumboy_Pro_Fw_01_04_dsp.bin`) that shows the DSP load (average, peak, maximum) and I2S error counts as text at the bottom of the screen. Normal builds show the load as the CPU bar in the top-right corner (since V1.14), not the text.
 
 This needs `arm-none-eabi-gcc` (on Ubuntu: `apt install gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib`). `02 Software/tools/package_firmware.py --check <file>` validates a package the same way the bootloader does.
 

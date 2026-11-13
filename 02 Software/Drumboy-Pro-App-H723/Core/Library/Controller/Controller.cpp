@@ -382,9 +382,8 @@ void Controller::update() {
         // Write the song to the autosave files when due and safe (Autosave.h).
         autosave_update();
 
-#ifdef DSP_PROFILE
-        lcd_drawDspProfile();
-#endif
+        // CPU and MEM bars in the top-right box (LoadMeter.h).
+        lcd_drawMonitor();
 
         // 4. FILESYSTEM MAINTENANCE
         // Recover SD subsystem if media access is lost.
@@ -24097,9 +24096,7 @@ void Controller::triggerReset() {
 void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffer_) {
     /// @brief Orchestrates the complete real-time audio processing pipeline, managing signal generation, sequential DSP stages, and final output buffering.
 
-#ifdef DSP_PROFILE
-    const uint32_t dspStart = DWT_CYCCNT;
-#endif
+    const uint32_t dspStart = DWT_CYCCNT;  // for the CPU monitor (LoadMeter.h)
 
     // 0. I2S ERROR FLAG POLL
     // Count and clear overrun/underrun. The HAL never enables these interrupts, so polling
@@ -24137,42 +24134,58 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
         processAudioSend(outputBuffer_);
     }
 
-#ifdef DSP_PROFILE
     // 5. LOAD MEASUREMENT
     // Unsigned subtraction handles the 32-bit cycle counter wrapping.
-    const uint32_t dspCycles = DWT_CYCCNT - dspStart;
-    dspCyclesSum += dspCycles;
-    dspBlocks += 1;
-    if (dspCycles > dspCyclesPeak) dspCyclesPeak = dspCycles;
-#endif
+    dspLoad.add(DWT_CYCCNT - dspStart);
 }
 
-#ifdef DSP_PROFILE
-void Controller::lcd_drawDspProfile() {
-    /// @brief Shows DSP load as a share of the audio block time, refreshed twice a second.
-    ///        AVG and PEAK cover the last half second, MAX everything since power-on.
+void Controller::lcd_drawMonitor() {
+    /// @brief The CPU and MEM bars in the top-right box, on every page, four times a second.
+    ///        CPU: the worst audio block of the last quarter second as a share of the block time
+    ///        (magenta from 80%). MEM: the loaded samples as a share of the sample memory.
 
     if ((menu == INIT_MENU) || (menu == TEST_MENU)) return;
-    if ((HAL_GetTick() - dspLastDrawTick) < 500) return;
-    dspLastDrawTick = HAL_GetTick();
+    const uint32_t now = HAL_GetTick();
+    if (!monitorFull && ((now - monitorTick) < kMonitorPeriodMs)) return;
+    monitorTick = now;
 
-    // Snapshot and reset the interval counters with the audio interrupt held off.
+    // Read and restart the meter with the audio interrupt held off.
     __disable_irq();
-    const uint32_t sum = dspCyclesSum, blocks = dspBlocks, peak = dspCyclesPeak;
-    dspCyclesSum = 0;
-    dspBlocks = 0;
-    dspCyclesPeak = 0;
+    const LoadReading load = loadMeterTake(dspLoad);
     __enable_irq();
-    if (blocks == 0) return;
-    if (peak > dspCyclesPeakAll) dspCyclesPeakAll = peak;
 
-    // Cycles available per block: core clock x block length.
-    const float budget = (float)SystemCoreClock * (float)I2S_BLOCK_SIZE / AUDIO_SAMPLE_RATE;
-    // Tenths of a percent as integers: newlib-nano's printf has no %f.
-    const unsigned long avg = (unsigned long)(1000.0f * ((float)sum / (float)blocks) / budget);
-    const unsigned long pk = (unsigned long)(1000.0f * (float)peak / budget);
-    const unsigned long mx = (unsigned long)(1000.0f * (float)dspCyclesPeakAll / budget);
+    // 1. FRAME: the labels, once (over the four dots of the frame image).
+    lcd.setBackColor(BLACK);
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(LEFT);
+    if (monitorFull) {
+        monitorFull = false;
+        lcd.clearRect(kMonitorClearX, kMonitorClearY, kMonitorClearW, kMonitorClearH);
+        lcd.setForeColor(GRAY_75);
+        lcd.drawText("CPU", 3, kMonitorX, kMonitorCpuTextY);
+        lcd.drawText("MEM", 3, kMonitorX, kMonitorMemTextY);
+        monitorCpuDrawn = 0xFFFFFFFFu;
+        monitorMemDrawn = 0xFFFFFFFFu;
+    }
 
+    // 2. CPU
+    const uint32_t budget = loadBlockBudget(SystemCoreClock, I2S_BLOCK_SIZE, static_cast<uint32_t>(AUDIO_SAMPLE_RATE));
+    if (load.blocks > 0) {
+        const uint32_t peak = loadPermille(load.peak, budget);
+        monitorCpuShown = monitorHold(monitorCpuShown, peak);
+        if (peak > monitorCpuMax) monitorCpuMax = peak;
+    }
+    lcd_drawMonitorBar(kMonitorCpuTextY, kMonitorCpuBarY, monitorCpuShown, monitorCpuDrawn);
+
+    // 3. MEM
+    uint32_t sizes[kLayerLibrarySize];
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) sizes[i] = layerLibrary[i].sampleLoadedData.sampleSize;
+    lcd_drawMonitorBar(kMonitorMemTextY, kMonitorMemBarY, sampleMemPermille(sizes, kLayerLibrarySize, kSampleSize), monitorMemDrawn);
+
+#ifdef DSP_PROFILE
+    // 4. MEASUREMENT BUILD (make PROFILE=1): the figures as text, and the I2S error counts.
+    if (load.blocks == 0) return;
+    const unsigned long avg = loadPermille(load.average, budget), pk = loadPermille(load.peak, budget), mx = monitorCpuMax;
     char text[96];
     int len = snprintf(text, sizeof(text), "DSP AVG %3lu.%lu%%  PEAK %3lu.%lu%%  MAX %3lu.%lu%%  UDR %3lu  OVR %3lu",
                        avg / 10, avg % 10, pk / 10, pk % 10, mx / 10, mx % 10, (unsigned long)i2sUdrCount, (unsigned long)i2sOvrCount);
@@ -24183,8 +24196,35 @@ void Controller::lcd_drawDspProfile() {
     lcd.setAlignment(CENTER);
     lcd.setFont(FONT_05x07);
     lcd.drawText(text, strlen(text), 480, 524);
-}
 #endif
+}
+
+void Controller::lcd_drawMonitorBar(uint16_t textY_, uint16_t barY_, uint32_t permille_, uint32_t& drawn_) {
+    /// @brief One row of the monitor: the percentage beside its label and the bar below. Draws
+    ///        only when the number, the bar or the colour changed since the last time.
+    const uint16_t fill = monitorBarFill(permille_, kMonitorBarWidth);
+    const uint16_t percent = monitorPercent(permille_);
+    const bool warn = monitorWarn(permille_);
+    const uint32_t state = (static_cast<uint32_t>(percent) << 16) | (static_cast<uint32_t>(fill) << 1) | (warn ? 1u : 0u);
+    if (state == drawn_) return;
+    drawn_ = state;
+
+    char number[8];
+    snprintf(number, sizeof number, "%3u", static_cast<unsigned>(percent));
+    lcd.setBackColor(BLACK);
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(LEFT);
+    lcd.setForeColor(warn ? MAGENTA : GRAY_75);
+    lcd.drawText(number, 3, kMonitorValueX, textY_);
+    if (fill > 0) {
+        lcd.setForeColor(warn ? MAGENTA : CYAN);
+        lcd.fillRect(kMonitorX, barY_, fill, kMonitorBarHeight);
+    }
+    if (fill < kMonitorBarWidth) {
+        lcd.setForeColor(GRAY_35);
+        lcd.fillRect(kMonitorX + fill, barY_, kMonitorBarWidth - fill, kMonitorBarHeight);
+    }
+}
 
 // Scale applied to the summed L+R input. 2^-32 maps a full-scale ADC pair to 1.0, which is
 // the natural mapping and costs nothing in SNR - it undoes an attenuation rather than adding

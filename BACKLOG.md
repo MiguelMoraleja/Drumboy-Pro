@@ -578,6 +578,8 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 **Done when.** The four numbers are in this file, and a draw budget per main-loop pass is set from them.
 
+**Status: the audio load is now on screen in every build** (V1.14, `LoadMeter.h`, `test_loadmeter`): the CPU bar in the top-right box shows the worst audio block of the last quarter second as a share of the block time, with its percentage, magenta from 80%. So the audio-load figure can be read on real songs without a special build; `make PROFILE=1` still adds average, peak, maximum and the I2S error counts as text. Open: the drawing benchmark, the main-loop pass time and the data-cache experiment.
+
 ### 38. Per-note settings and layer state visible in the lanes
 
 [U1, U6.] **Today:** a beat with velocity 20, chance 30% and a condition looks the same as a plain beat; a muted or non-soloed layer differs only by a 10 px box.
@@ -624,6 +626,8 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 - **Indicators** in the strip between the top menu and the lanes: MIDI in / out / clock (locked or free, tempo with decimals, error count), unsaved-changes dot and time since the last autosave, undo depth.
 
 **Done when.** Each layer's level is visible while it plays, and the strip shows MIDI, save and undo state without opening a page.
+
+**Status: a first indicator is built in V1.14** (asked by the owner with a picture of it): CPU and MEM bars in the top-right box of every page (`lcd_drawMonitor`). MEM is the loaded samples as a share of the ten sample slots. The rest is open.
 
 ### 42. Key hints, status line, page dots, value popup
 

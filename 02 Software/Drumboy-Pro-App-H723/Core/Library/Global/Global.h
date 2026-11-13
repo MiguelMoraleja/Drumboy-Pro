@@ -13,6 +13,7 @@
 #include "BeatNote.h"
 #include "CrashRecord.h"
 #include "LaneView.h"
+#include "LoadMeter.h"
 #include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"

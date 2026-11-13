@@ -21938,10 +21938,10 @@ static const uint16_t kRingRowNumX = 380, kRingRowNameX = 407, kRingRowCountX = 
 static const uint16_t kRingRowY = 196, kRingRowStep = 22, kRingRowPlayY = 186;
 
 bool Controller::laneViewHidden() const {
-    /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG and ROUTING
-    /// pages). Everything that draws into a lane checks it, and asks for the view to be refreshed
-    /// instead.
-    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU);
+    /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG, ROUTING and
+    /// FILTER pages). Everything that draws into a lane checks it, and asks for the view to be
+    /// refreshed instead.
+    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU);
 }
 
 void Controller::lcd_drawLaneView() {
@@ -21950,6 +21950,7 @@ void Controller::lcd_drawLaneView() {
     lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
     laneViewShown = menu;
     for (uint8_t b = 0; b < kChainBanks; b++) songThumbDrawn[b] = 0;  // the cleared area holds no thumbnails
+    filterViewDrawn = false;                                          // and no curves
     lcd_drawLaneViewData();
 }
 
@@ -21967,6 +21968,10 @@ void Controller::lcd_drawLaneViewData() {
             break;
         case ROUTING_MENU:
             lcd_drawRoutingViewData();
+            break;
+        case FILTER_0_MENU:
+        case FILTER_1_MENU:
+            lcd_drawFilterViewData();
             break;
         default:
             break;
@@ -22067,6 +22072,8 @@ void Controller::lcd_updateLaneView() {
         if (laneViewShown != INIT_MENU) lcd_restoreLanes();
         return;
     }
+    // The filter pages have no draw call to hook: watch both filters' settings instead.
+    if (((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)) && (filterViewState() != filterViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -22364,6 +22371,103 @@ void Controller::lcd_drawRoutingViewData() {
             lcd.fillRect(routeViewModuleX(entry[i]) - kRouteViewMark / 2, y - 1, kRouteViewMark, kRouteViewMark);
         }
     }
+}
+
+/* FILTER curve: a full-area view (FilterCurve.h) --------------------------------*/
+
+uint32_t Controller::filterViewState() const {
+    /// @brief A fingerprint of everything the curves show: both filters' settings.
+    uint32_t h = 2166136261u;
+    for (uint8_t n = 0; n < 2; n++) {
+        const Filter& f = filter[n];
+        const uint8_t v[7] = {f.type, f.slope, f.frequency, f.resonance, f.dry, f.wet, static_cast<uint8_t>(f.active ? 1 : 0)};
+        for (uint8_t k = 0; k < 7; k++) h = (h ^ v[k]) * 16777619u;
+    }
+    return h;
+}
+
+void Controller::lcd_drawFilterCurve(const uint16_t* y_, bool thick_) {
+    /// @brief Draws one stored curve in the current colour, point to point.
+    for (uint16_t p = 1; p < kCurvePoints; p++) {
+        lcd.drawLine(curvePointX(p - 1), y_[p - 1], curvePointX(p), y_[p]);
+        if (thick_) lcd.drawLine(curvePointX(p - 1), y_[p - 1] + 1, curvePointX(p), y_[p] + 1);
+    }
+}
+
+void Controller::lcd_drawFilterViewData() {
+    /// @brief Redraws the FILTER view: this page's filter as a curve from 20 Hz to 20 kHz (cyan,
+    /// gray while the filter is off), the other filter behind it when it is on, and the cutoff as
+    /// a dotted line. A changed curve is erased by redrawing it in black, not by clearing the plot.
+    const uint8_t cur = (menu == FILTER_1_MENU) ? 1 : 0, other = static_cast<uint8_t>(1 - cur);
+    uint16_t* const store = reinterpret_cast<uint16_t*>(RAM_VIEW_SCRATCH_ADDRESS);  // [2][kCurvePoints], this page's filter first
+    const uint16_t bottom = kCurveY + kCurveHeight;
+    filterViewStateDrawn = filterViewState();
+    lcd.setBackColor(BLACK);
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(LEFT);
+
+    // 1. WHAT WAS THERE
+    if (filterViewDrawn) {
+        lcd.setForeColor(BLACK);
+        lcd_drawFilterCurve(store, true);
+        if (filterViewOther) lcd_drawFilterCurve(store + kCurvePoints, false);
+        for (uint16_t y = kCurveY; y <= bottom; y += 3) lcd.drawPixel(filterViewMarkX, y);
+    } else {
+        // The axis labels, once: they lie outside the plot.
+        static const int8_t kLabelDb[5] = {12, 0, -12, -24, -36};
+        static const char* const kLabelDbText[5] = {"+12", "  0", "-12", "-24", "-36"};
+        lcd.setForeColor(GRAY_75);
+        for (uint8_t k = 0; k < 5; k++) lcd.drawText(kLabelDbText[k], 3, kCurveX - 28, curveYOfDb(kLabelDb[k]) - 3);
+        lcd.drawText("20", 2, kCurveX, kCurveLabelY);
+        lcd.drawText("100", 3, curveXOfHz(100) - 10, kCurveLabelY);
+        lcd.drawText("1K", 2, curveXOfHz(1000) - 7, kCurveLabelY);
+        lcd.drawText("10K", 3, curveXOfHz(10000) - 10, kCurveLabelY);
+        lcd.drawText("20K", 3, kCurveX + kCurveWidth - 21, kCurveLabelY);
+        static const uint16_t kTickHz[7] = {20, 50, 200, 500, 2000, 5000, 20000};
+        for (uint8_t k = 0; k < 7; k++) lcd.drawVLine(curveXOfHz(kTickHz[k]), bottom + 2, 3);
+    }
+
+    // 2. GRID: dotted lines every 12 dB (0 dB brighter) and at 100 Hz, 1 kHz and 10 kHz.
+    static const int8_t kGridDb[5] = {12, 0, -12, -24, -36};
+    for (uint8_t k = 0; k < 5; k++) {
+        const uint16_t y = curveYOfDb(kGridDb[k]);
+        lcd.setForeColor((kGridDb[k] == 0) ? GRAY_50 : GRAY_25);
+        for (uint16_t x = kCurveX; x <= kCurveX + kCurveWidth; x += ((kGridDb[k] == 0) ? 2 : 4)) lcd.drawPixel(x, y);
+    }
+    static const uint16_t kGridHz[3] = {100, 1000, 10000};
+    lcd.setForeColor(GRAY_25);
+    for (uint8_t k = 0; k < 3; k++) {
+        const uint16_t x = curveXOfHz(kGridHz[k]);
+        for (uint16_t y = kCurveY; y <= bottom; y += 4) lcd.drawPixel(x, y);
+    }
+
+    // 3. THE CURVES: the other filter behind (only when it is on), this page's filter in front.
+    for (uint8_t k = 0; k < 2; k++) {
+        const Filter& f = filter[k ? other : cur];
+        const FilterShape shape = {f.b0, f.b1, f.b2, f.a1, f.a2, f.slope != 0, f.wetFloat, f.dryFloat, true};
+        uint16_t* y = store + k * kCurvePoints;
+        for (uint16_t p = 0; p < kCurvePoints; p++) y[p] = curveYOfDb(filterShapeDb(shape, curvePointHz(p), AUDIO_SAMPLE_RATE));
+    }
+    filterViewOther = filter[other].active;
+    if (filterViewOther) {
+        lcd.setForeColor(GRAY_50);
+        lcd_drawFilterCurve(store + kCurvePoints, false);
+    }
+    const RGB16Color c = filter[cur].active ? CYAN : GRAY_75;
+    lcd.setForeColor(c);
+    lcd_drawFilterCurve(store, true);
+    filterViewMarkX = curveXOfHz(static_cast<float>(kFilterFrequencyDataLibrary[filter[cur].frequency].data));
+    for (uint16_t y = kCurveY; y <= bottom; y += 3) lcd.drawPixel(filterViewMarkX, y);
+    filterViewDrawn = true;
+
+    // 4. LEGEND
+    char text[16];
+    lcd.setFont(FONT_07x09);
+    snprintf(text, sizeof text, "FILTER %u %-3s", static_cast<unsigned>(cur + 1), filter[cur].active ? "" : "OFF");
+    lcd.drawText(text, 12, kCurveX, kCurveLegendY);
+    snprintf(text, sizeof text, "FILTER %u %-3s", static_cast<unsigned>(other + 1), filter[other].active ? "" : "OFF");
+    lcd.setForeColor(filter[other].active ? GRAY_50 : GRAY_35);
+    lcd.drawText(text, 12, kCurveX + 16 * 9, kCurveLegendY);
 }
 
 /* NOTE page (BeatNote.h) ----------------------------------------------------*/

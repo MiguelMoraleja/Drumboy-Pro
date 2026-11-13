@@ -335,6 +335,13 @@ class Controller {
     void lcd_drawSongViewData();
     void lcd_drawSongViewPlay();
     void lcd_drawRoutingViewData();
+    bool filterViewDrawn = false;           // curves are on screen (and stored in the view scratch)
+    bool filterViewOther = false;           // the other filter's curve is among them
+    uint16_t filterViewMarkX = 0;           // the cutoff line
+    uint32_t filterViewStateDrawn = 0;      // the settings those curves were drawn from
+    uint32_t filterViewState() const;
+    void lcd_drawFilterCurve(const uint16_t* y_, bool thick_);
+    void lcd_drawFilterViewData();
     void layerInst_setSolo(uint8_t layerNum_, bool solo_);
     void layerInst_clearSolo();
     void lcd_drawLayerInst_StyleData(uint8_t layerNum_);

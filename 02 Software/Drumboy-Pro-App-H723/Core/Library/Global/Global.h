@@ -14,6 +14,7 @@
 #include "CrashRecord.h"
 #include "LaneView.h"
 #include "LoadMeter.h"
+#include "FilterCurve.h"
 #include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"
@@ -402,6 +403,11 @@ static_assert(0xC0EA6000u + kPreviewRingSize * 4u <= 0xC0FB9640u, "preview ring 
 #define RAM_IMAGE_LAYER_B_DATA_ADDRESS              0xC0FEBEBC + 128            // 28.520 bytes
 
 //                                                  0xC0FF2EA4 - 0xC0FFFFFF     : 53.595 bytes free
+
+// Scratch for the full-area views, in that free tail: the two filter curves as drawn (their y per
+// point), so a changed curve is erased by redrawing it instead of clearing the whole plot.
+#define RAM_VIEW_SCRATCH_ADDRESS                    0xC0FF3000u
+static_assert((RAM_VIEW_SCRATCH_ADDRESS >= 0xC0FF2EA4u) && (RAM_VIEW_SCRATCH_ADDRESS + 2u * kCurvePoints * sizeof(uint16_t) <= 0xC0FFFFF0u), "view scratch must fit the free tail of the SDRAM");
 
 ////////////////////////////////////////////////////////////////////////////////
 /* Sdram Constants -----------------------------------------------------------*/

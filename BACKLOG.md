@@ -86,7 +86,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 4. ✅ Autosave, part A: checksum-based change detection, AUTOSAVE OFF/2/5/10/20 min, two alternating reserved files written via rename, `RESTORE AUTOSAVE?` at power-on, autosave before LOAD over unsaved work. [32](#32-autosave). (M)
 5. ✅ Hardware test with Loopy Pro → Scarlett: 30 minutes at a fractional tempo in time, no runaway with a MIDI loop set up on purpose, overrun counter at 0 with clock and dense notes, power pulled mid-session restores the autosave. Then package, app (MIDI and autosave explained in their tabs), release.
 
-*V1.14 "Notes"* (built, waiting for the hardware test). Also in V1.14, asked by the owner: undo/redo ([28](#28-undo-for-bank-edits-lxr)), SONG + pads never turn the chain off, and the left S key (STYLE) became SOLO, with STYLE moved to a field on instrument page 3. After a freeze on the owner's device (cause not found yet): the clock lock no longer speeds up the sequencer timer while stopped, autosave shows SAVE / SDERR and its duration, and a crash now restarts the firmware and leaves a record (`CrashRecord.h`, `System/Crash.log`). A watchdog for stalls that are not faults is still open. First UX items, also in V1.14: per-note marks and dimmed lanes on the main screen ([38](#38-per-note-settings-and-layer-state-visible-in-the-lanes)) and the Euclid rings view over the lane area ([45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)). The Song timeline and Routing views followed, and the CPU and MEM monitor. Next view: the Filter and EQ curves.
+*V1.14 "Notes"* (built, waiting for the hardware test). Also in V1.14, asked by the owner: undo/redo ([28](#28-undo-for-bank-edits-lxr)), SONG + pads never turn the chain off, and the left S key (STYLE) became SOLO, with STYLE moved to a field on instrument page 3. After a freeze on the owner's device (cause not found yet): the clock lock no longer speeds up the sequencer timer while stopped, autosave shows SAVE / SDERR and its duration, and a crash now restarts the firmware and leaves a record (`CrashRecord.h`, `System/Crash.log`). A watchdog for stalls that are not faults is still open. First UX items, also in V1.14: per-note marks and dimmed lanes on the main screen ([38](#38-per-note-settings-and-layer-state-visible-in-the-lanes)) and the Euclid rings view over the lane area ([45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)). The Song timeline and Routing views followed, and the CPU and MEM monitor. The Filter curve followed too. Next view: the EQ curve.
 6. ✅ Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)
 7. ✅ NOTE page with VEL and PROB (plus undo/redo of beat and bank edits, [28](#28-undo-for-bank-edits-lxr)); MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
 8. ✅ COND (`A:B`, `!A:B`, `1ST`, `PRE`, `FILL` and negations) with the FILL performance key. (M)
@@ -617,6 +617,8 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 **Done when.** Turning CUTOFF or an EQ gain moves the curve as you turn, also while playing, with no audio glitches.
 
+**Status: the filter curve is built in V1.14 as a full-area view** (see [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)), waiting for the hardware test. Open: the EQ curve, and cursors on the effect and reverb pages.
+
 ### 41. Live feedback: layer meters and status indicators
 
 [U14–U18, E4.]
@@ -682,7 +684,9 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 - **Song timeline** (`lcd_drawSongViewData`): the chain as boxes as wide as their repeats (the selected step cyan), a bar in the playing loop that fills in yellow, a line back to the start for LOOP or a stop mark, a status line (step, loop, what comes next, also a detour), and the five banks as thumbnails. A thumbnail is redrawn only when its beats or its colour change (a fingerprint per bank), so a bank change at a loop end redraws two thumbnails, not five.
 - **Routing** (`lcd_drawRoutingViewData`): the six modules and the master as boxes joined as patched (next module: a line between the boxes; further: over them, each module at its own height), unfed modules dimmed, and one row per source (ten layers, metronome, line-in) with a mark under the module it enters. With sends ([49](#49-dub-mixer-page-dub-mode)) the marks become level bars.
 
-Open from this item: Filter and EQ curves, Sample, MIX (as the dub mixer, [49](#49-dub-mixer-page-dub-mode)), Note editor, Performance view.
+- **Filter curve** (`FilterCurve.h`, `test_filtercurve`, `lcd_drawFilterViewData`): on the FILTER 1 and FILTER 2 pages, the response from 20 Hz to 20 kHz (+18 to -48 dB) computed from the coefficients the audio code runs, including the 6 dB setting and DRY/WET with their phase; the page's filter in cyan (gray while off) with its cutoff as a dotted line, the other filter behind it when it is on. A changed curve is erased by redrawing it in black (its points are kept in a scratch area at the end of the SDRAM), so turning FREQ does not clear the plot.
+
+Open from this item: the EQ curve, Sample, MIX (as the dub mixer, [49](#49-dub-mixer-page-dub-mode)), Note editor, Performance view.
 
 ### 46. Sends: a level per layer into the shared effects (SENDS mode)
 

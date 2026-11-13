@@ -44,6 +44,18 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 34 | [MIDI clock slave: drift and 200 BPM runaway](#34-midi-clock-slave-drift-and-200-bpm-runaway) | Bug | M |
 | 35 | [LFO destinations for the per-note settings](#35-lfo-destinations-for-the-per-note-settings) | Feature | M |
 | 36 | [Per-layer panning](#36-per-layer-panning) | Feature | A: S–M, B: L |
+| 37 | [Measure first: drawing speed, loop time, audio load](#37-measure-first-drawing-speed-loop-time-audio-load) | Groundwork | S |
+| 38 | [Per-note settings and layer state visible in the lanes](#38-per-note-settings-and-layer-state-visible-in-the-lanes) | UX | S–M |
+| 39 | [Graphic overviews: NOTE, EUCLID, SONG, ROUTING](#39-graphic-overviews-note-euclid-song-routing) | UX | M |
+| 40 | [Curves and cursors on the sound pages](#40-curves-and-cursors-on-the-sound-pages) | UX | M |
+| 41 | [Live feedback: layer meters and status indicators](#41-live-feedback-layer-meters-and-status-indicators) | UX | M |
+| 42 | [Key hints, status line, page dots, value popup](#42-key-hints-status-line-page-dots-value-popup) | UX | M |
+| 43 | [Fonts with lowercase and symbols; colour roles](#43-fonts-with-lowercase-and-symbols-colour-roles) | UX | M |
+| 44 | [Notes triggered outside the main loop; draw budget](#44-notes-triggered-outside-the-main-loop-draw-budget) | Groundwork | M |
+| 45 | [Full-area views: MIX, note editor, sample editor, patchbay, performance](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance) | UX | L each |
+| 46 | [Sends: a level per layer into the shared effects (SENDS mode)](#46-sends-a-level-per-layer-into-the-shared-effects-sends-mode) | Feature | M |
+| 47 | [Channel filter and drive per layer](#47-channel-filter-and-drive-per-layer) | Feature | M |
+| 48 | [Master EQ stage, stereo returns, a third send effect](#48-master-eq-stage-stereo-returns-a-third-send-effect) | Feature | M–L |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -84,6 +96,15 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 Every step keeps the rules: hardware-free logic in `Core/Library/Global/*.h` with host tests, `make WERROR=1` clean, and songs from V1.12 load unchanged. Left for after sprint 4: phase B of 33 (PITCH, DECAY per beat), 14 part B (EUCLID VELOCITY, now just a way to fill VEL), CC input from 30, autosave history (32 B).
 
 **After sprint 4 (ideas from the LXR firmware):** [18](#18-swing--shuffle-lxr) swing, [19](#19-choke-groups-lxr) choke groups, [22](#22-live-roll-lxr) live roll, [25](#25-lfo-retrigger-and-free-running-lxr) LFO retrigger, [27](#27-erase-while-recording-lxr) erase while recording. Later, together with [14](#14-euclid-velocity-and-variance) part B (they share one per-beat data extension and one file format bump): [20](#20-parameter-locks-per-beat-lxr), [21](#21-probability-per-beat-lxr), [24](#24-velocity-modulates-a-parameter-lxr).
+
+**UX and signal path (analysis of 2026-11-13, [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-path-analysis.md); mockups in the app's Screen ideas tab).** Suggested order:
+1. [37](#37-measure-first-drawing-speed-loop-time-audio-load) measurements, then [38](#38-per-note-settings-and-layer-state-visible-in-the-lanes) and [39](#39-graphic-overviews-note-euclid-song-routing): what V1.10–V1.14 added becomes visible.
+2. [42](#42-key-hints-status-line-page-dots-value-popup) and [43](#43-fonts-with-lowercase-and-symbols-colour-roles): the device explains itself.
+3. [40](#40-curves-and-cursors-on-the-sound-pages) and [41](#41-live-feedback-layer-meters-and-status-indicators): sound pages and live feedback.
+4. [44](#44-notes-triggered-outside-the-main-loop-draw-budget), then [46](#46-sends-a-level-per-layer-into-the-shared-effects-sends-mode) sends with the MIX page, [47](#47-channel-filter-and-drive-per-layer) channel filter, [36](#36-per-layer-panning) A pan, and the MIX view from [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance).
+5. [48](#48-master-eq-stage-stereo-returns-a-third-send-effect) only after the measurements.
+
+Open decisions for the owner: sends as a per-song mode next to today's chain (recommended) or a replacement; whether the channel filter replaces Filter 1/2; whether a third send effect is worth giving up undo history or a sample slot.
 
 **On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
@@ -540,3 +561,139 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 
 **Done when (A).** Hats panned left and a shaker panned right are heard on their sides through headphones while kick and snare (through the EQ) stay centred. The mixer PAN still balances everything. CPU is measured before and after. Songs from V1.14 load centred and sound the same.
 
+---
+
+## UX and signal path (items 37–48)
+
+From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-path-analysis.md), which has the facts about the screen (960×540, 16-bit colour, drawn directly, no frame buffer), the layout, the cost estimates and the reasoning. The codes in brackets (U1, E2, S1…) are that document's. Mockups of the proposed screens, drawn with the device's own fonts and frame, are in the app's **Screen ideas** tab. Nothing here was measured on the device: item 37 comes first.
+
+### 37. Measure first: drawing speed, loop time, audio load
+
+[E1, S0, analysis section 5.] Every size and viability claim in items 38–48 rests on estimates.
+
+- **Drawing benchmark** on the test page: fill, text and image speed in megapixels per second (DWT cycle counter).
+- **Main-loop pass time** while idle, while playing, and during a full lane redraw; shown like the DSP profile.
+- **Audio load today** on full songs with `make PROFILE=1`: average, peak, UDR/OVR. The last figure is 34% worst case at V1.04, before the routing engine.
+- **Data cache experiment** (separate): is `SCB_EnableDCache()` safe with the DMA buffers for audio, SD and MIDI, and what does it save.
+
+**Done when.** The four numbers are in this file, and a draw budget per main-loop pass is set from them.
+
+### 38. Per-note settings and layer state visible in the lanes
+
+[U1, U6.] **Today:** a beat with velocity 20, chance 30% and a condition looks the same as a plain beat; a muted or non-soloed layer differs only by a 10 px box.
+
+- **Beats** (`lcd_drawBeat`): height or brightness = velocity; hollow = chance below 100%; a dot above = has a condition; drawn at its nudged position.
+- **Lanes:** a muted layer, or a layer silenced by another layer's solo, is drawn dimmed (name and beats).
+- Hardware-free helper for the beat's look (velocity → height, flags) with a host test.
+
+**Done when.** On the main screen you can tell loud from soft beats, see which beats are uncertain or conditional, and see at a glance which layers sound.
+
+### 39. Graphic overviews: NOTE, EUCLID, SONG, ROUTING
+
+[U2–U5.] The 325×60 area on tabs 2–3 shows text on these four pages.
+
+- **NOTE:** one bar per beat (height = velocity, hatch = chance, tag = condition), the selected beat highlighted. 64 beats fit at 5 px each.
+- **EUCLID:** the pattern on a ring (radius about 28 px) with hits, accents and rotation, next to the linear row.
+- **SONG:** one block per chain step, width = repeats, colour = bank, the playing step highlighted with its loop count.
+- **ROUTING:** boxes for EQ, F1, F2, FX1, FX2, REV, OUT joined by lines; modules nothing feeds are dimmed.
+
+**Done when.** Each page can be read without parsing text, and the drawing stays inside the 325×60 area and the draw budget from 37.
+
+### 40. Curves and cursors on the sound pages
+
+[U7–U13.] All drawn in the 325×60 area, computed in the main loop when a field changes (no audio cost).
+
+- **Filter:** response curve from type, cutoff, resonance and slope (magnitude at about 160 frequencies).
+- **EQ:** the six bands summed, a marker per band.
+- **Compressor / expander:** transfer curve; a live gain-reduction bar (needs a value from the audio interrupt, see 41).
+- **Delay:** taps on a beat grid. **Reverb:** pre-delay gap and decay slope.
+- **LFO:** a phase dot moving on the existing shape while playing, and the list of what the LFO modulates.
+- **Sample waveform:** play cursor, start and end handles, direction.
+- Curve maths in hardware-free headers with host tests (known filter magnitudes at known frequencies).
+
+**Done when.** Turning CUTOFF or an EQ gain moves the curve as you turn, also while playing, with no audio glitches.
+
+### 41. Live feedback: layer meters and status indicators
+
+[U14–U18, E4.]
+
+- **Meter taps in the audio interrupt:** peak per layer per block (one compare per sample), gain reduction of the compressor and limiter; read and reset by the main loop.
+- **Layer meters** in the lanes with a clip mark. The master already has the two 12-LED meters.
+- **Indicators** in the strip between the top menu and the lanes: MIDI in / out / clock (locked or free, tempo with decimals, error count), unsaved-changes dot and time since the last autosave, undo depth.
+
+**Done when.** Each layer's level is visible while it plays, and the strip shows MIDI, save and undo state without opening a page.
+
+### 42. Key hints, status line, page dots, value popup
+
+[U19–U22.] The confusion met while testing V1.14 (two S keys, hidden combinations, FILL meaning two things, a 5-character status spot) is about finding functions, not about missing ones.
+
+- **Key-hint line:** while ADD, M, F, S, SONG, L, I, the right S or the encoder key is held, show what the other keys do on the current page (a table per page and modifier, in flash).
+- **Status line** instead of the 5-character spot: "UNDO: MOVE", "CHAIN: BANK 3 FOR 1 LOOP", "FKEY HELD", "SAVING".
+- **Page dots** for pages that cycle (instrument 1/2/3, song / EUCLID / NOTE).
+- **Value popup** while a knob turns: name, value, unit and a bar for the range.
+
+**Done when.** Holding any modifier shows its combinations for the current page, and every action confirms itself in words.
+
+### 43. Fonts with lowercase and symbols; colour roles
+
+[U23, U24.]
+
+- **Glyphs:** lowercase for the 7×9 and 10×14 fonts, and symbols (arrows, note, mute, solo, lock, ghost). About 256 KB of flash is free. Removes workarounds such as `+` for ghost hits and uppercase-only text.
+- **Colour roles:** one colour per meaning (header, value, status, error, selected, modulated), and optionally a colour per layer, applied across all pages.
+
+**Done when.** `X.xX.xx.` shows as written on the EUCLID page, and the same colour always means the same thing.
+
+### 44. Notes triggered outside the main loop; draw budget
+
+[E2, E3.] **Today:** pad and MIDI-in notes are triggered from the main loop, the same loop that draws, reads keys, writes to the SD card and runs autosave, so anything slow there delays notes.
+
+- **Trigger notes from an interrupt** (a short timer tick reading the MIDI note queue and the pad events), keeping recording and undo capture in the main loop.
+- **Draw budget:** a small queue of dirty regions, drawn a few per pass, so a large redraw never holds the loop.
+- Check the shared state touched by `layer_playBeat` (it already runs from the sequencer interrupt) and the recording path.
+
+**Done when.** A note from Loopy sounds at the same time whether or not an autosave, a bank redraw or a sample load is running; the loop-time figure from 37 stays under the budget during a full redraw. Required for 45.
+
+### 45. Full-area views: MIX, note editor, sample editor, patchbay, performance
+
+[U25–U29.] Views that take over the lane area (920×310) while a page is open. Needs 44.
+
+- **MIX view:** the ten lanes become channel strips: level, pan, sends and filter as bars with live meters (41). The home of the sends (46).
+- **Note editor:** one layer across the full width, beats as blocks, a velocity lane and a chance lane below.
+- **Sample editor:** the waveform at full width with zoom, start and end; later slices. The waveform shown today has 60 points, so this needs a pass over the sample in SDRAM.
+- **Routing patchbay:** sources as rows, destinations as columns, a cell per send level.
+- **Performance view:** large mute and solo states, chain progress, bar counter and tempo.
+
+Build the MIX view first, with 46.
+
+### 46. Sends: a level per layer into the shared effects (SENDS mode)
+
+[S1.] Finishes [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels): the routing engine already sends one source to several destinations with a gain per sample; the UI and the file side are missing.
+
+- **Per layer:** dry to MASTER plus SEND A (Effect 1), SEND B (Effect 2) and SEND REV, each with a level that follows the knob with a short ramp.
+- **Per song:** a mode, CHAIN (today) or SENDS. In SENDS mode Effect 1, Effect 2 and Reverb return to MASTER, and an effect's DRY is off (its WET is the return level). Old songs load as CHAIN and sound the same.
+- **Files:** about 8 bytes per layer for sends, pan (36) and the channel filter (47) in one block after the song's `CHN` and `BTX` blocks; older firmware ignores it. The same block serves [3](#3-lfos-cant-modulate-filters-or-effects), [24](#24-velocity-modulates-a-parameter-lxr), [35](#35-lfo-destinations-for-the-per-note-settings).
+- **UI:** a MIX page per layer (a fourth instrument page): FILTER TYPE, CUTOFF, RESONANCE, DRIVE | PAN, SEND A, SEND B, SEND REV. The ROUTING page shows the mode.
+- **Gain staging:** dry plus three returns is louder than the serial chain; set return levels and the limiter ceiling by ear.
+- **Cost (estimate):** 1–2% of the audio block. Host tests in `test_routing` for levels, ramps and the mode.
+
+**Done when.** The snare has a long reverb and the kick almost none, on the same reverb; a V1.14 song loads as CHAIN and sounds identical.
+
+### 47. Channel filter and drive per layer
+
+[S2.] The part that makes it "per-channel effects".
+
+- **Per layer:** one multimode filter (12 dB) and a drive stage, processed on the layer's own buffer before routing. State in the unused DTCM RAM (128 KB, the fastest memory), since internal RAM is nearly full.
+- **Modulation:** LFO → cutoff per layer, a first part of [3](#3-lfos-cant-modulate-filters-or-effects).
+- **Not per layer:** delay, chorus and reverb (384 KB and 96 KB of SDRAM per instance, and ten times the cost); the sends cover them.
+- **Decide:** whether Filter 1 and Filter 2 stay as bus filters or go.
+- **Cost (estimate):** filter 1.6–3.2% of the audio block, drive under 1%; idle layers cost nothing. A 2-band EQ per layer would add 3–6.5%.
+
+**Done when.** A low-pass on the hats does not touch the snare routed the same way; load measured before and after stays under the 80% gate.
+
+### 48. Master EQ stage, stereo returns, a third send effect
+
+[S5.] Only after the measurements of 37 and the experience of 46–47.
+
+- **Master EQ:** modules run in a fixed order with EQ first, so EQ on the sum needs a separate master stage (simpler than a user-set module order, [7](#7-routing-open-design-questions)). On a stereo master it costs twice the mono EQ.
+- **Stereo returns:** stereo through the effects doubles their cost ([36](#36-per-layer-panning) B).
+- **A third send effect:** a delay plus a chorus buffer is 480 KB and about 650 KB of SDRAM is free, so one more fits; two (960 KB, [6](#6-routing-extra-effect-slots)) do not unless the undo history shrinks or a sample slot (960 KB) is given up.

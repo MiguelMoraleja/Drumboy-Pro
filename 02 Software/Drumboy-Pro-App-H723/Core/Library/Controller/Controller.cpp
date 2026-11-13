@@ -22839,7 +22839,7 @@ void Controller::lcd_drawDub_Data() {
     if (echo.type == EF_DELAY) {
         snprintf(text[5], sizeof text[5], "%10u", static_cast<unsigned>(echo.subEffect[EF_DELAY].cData));
     } else {
-        snprintf(text[5], sizeof text[5], "%10s", "-");
+        snprintf(text[5], sizeof text[5], "%10s", "NO DELAY");
     }
     snprintf(text[6], sizeof text[6], "%10u", static_cast<unsigned>(echo.subEffect[echo.type].fData));
     snprintf(text[7], sizeof text[7], "%10u", static_cast<unsigned>(reverb.wet));
@@ -22875,6 +22875,13 @@ void Controller::dub_step(EncoderFunc function_, bool up_) {
             break;
         case ENC_DUB_MODE:
             dubMix.on = !dubMix.on;
+            if (dubMix.on) {
+                // The echo and the reverb are what the sends feed: Effect 1 is the delay, and both are
+                // on (effects start switched off, and a send into a switched-off effect is silent).
+                if (effect[0].type != EF_DELAY) effect_setType(0, EF_DELAY);
+                if (!effect[0].active) effect_setActive(0, true);
+                if (!reverb.active) reverb_setActive(true);
+            }
             break;
         case ENC_DUB_FEEDBACK:
             if (effect[0].type == EF_DELAY) {

@@ -21991,9 +21991,9 @@ static const uint16_t kRingRowY = 196, kRingRowStep = 22, kRingRowPlayY = 186;
 
 bool Controller::laneViewHidden() const {
     /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG, ROUTING,
-    /// FILTER and EQ pages). Everything that draws into a lane checks it, and asks for the view to be
+    /// FILTER, EQ and instrument page 2 pages). Everything that draws into a lane checks it, and asks for the view to be
     /// refreshed instead.
-    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU);
+    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU);
 }
 
 void Controller::lcd_drawLaneView() {
@@ -22003,6 +22003,7 @@ void Controller::lcd_drawLaneView() {
     laneViewShown = menu;
     for (uint8_t b = 0; b < kChainBanks; b++) songThumbDrawn[b] = 0;  // the cleared area holds no thumbnails
     filterViewDrawn = false;                                          // and no curves
+    sampleViewKey = 0;                                                // and no waveform
     lcd_drawLaneViewData();
 }
 
@@ -22027,6 +22028,9 @@ void Controller::lcd_drawLaneViewData() {
             break;
         case EQ_MENU:
             lcd_drawEqViewData();
+            break;
+        case LAYER_INST_1_MENU:
+            lcd_drawSampleViewData();
             break;
         default:
             break;
@@ -22130,6 +22134,7 @@ void Controller::lcd_updateLaneView() {
     // The filter pages have no draw call to hook: watch both filters' settings instead.
     if (((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)) && (filterViewState() != filterViewStateDrawn)) viewDirty = true;
     if ((menu == EQ_MENU) && (eqViewState() != filterViewStateDrawn)) viewDirty = true;
+    if ((menu == LAYER_INST_1_MENU) && (sampleViewState() != sampleViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -22603,6 +22608,142 @@ void Controller::lcd_drawEqViewData() {
     lcd.setFont(FONT_07x09);
     lcd.setForeColor(c);
     lcd.drawText(eq.active ? "EQ    " : "EQ OFF", 6, kCurveX, kCurveLegendY);
+}
+
+/* SAMPLE view: a full-area view (SampleView.h) ---------------------------------*/
+
+uint32_t Controller::sampleViewState() const {
+    /// @brief A fingerprint of everything the sample view shows.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(static_cast<uint32_t>(selectedLayerNum + 1));
+    if (selectedLayerNum < 0) return h;
+    const Layer& layer = layerLibrary[selectedLayerNum];
+    mix(layer.start);
+    mix(layer.end);
+    mix(layer.direction);
+    mix(layer.pitch);
+    mix(layer.sampleLoadedData.sampleSize);
+    mix(static_cast<uint32_t>(layer.playSampleSector + 1));
+    const int8_t sector = layer.playSampleSector;
+    mix((sector >= 0) && sampleSectorLibrary[sector].writeMode);
+    for (const char* c = layer.sampleLoadedData.fileName; *c; c++) mix(static_cast<uint8_t>(*c));
+    return h;
+}
+
+void Controller::lcd_drawSampleColumns(uint16_t from_, uint16_t to_, uint8_t start_, uint8_t end_) {
+    /// @brief Draws columns from_..to_ of the waveform: cleared first, cyan inside START..END, gray outside.
+    const uint8_t* peaks = reinterpret_cast<const uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS + 2048);
+    for (uint16_t c = from_; c <= to_ && c < kSampleCols; c++) {
+        const uint16_t x = kSampleX + c;
+        lcd.clearVLine(x, kSampleCenterY - kSampleHalf, 2 * kSampleHalf + 1);
+        lcd.setForeColor(sampleColumnActive(c, start_, end_) ? CYAN : GRAY_50);
+        const uint8_t h = peaks[c];
+        if (h > 0) {
+            lcd.drawVLine(x, kSampleCenterY - h, 2 * h + 1);
+        } else {
+            lcd.drawPixel(x, kSampleCenterY);
+        }
+    }
+}
+
+void Controller::lcd_drawSampleHandles(uint8_t start_, uint8_t end_, bool clear_) {
+    /// @brief The START and END handles with their values above the plot (clear_: erase them).
+    lcd.setFont(FONT_05x07);
+    lcd.setBackColor(BLACK);
+    const uint16_t xs = sampleXOfPercent(start_), xe = sampleXOfPercent(end_);
+    if (clear_) {
+        lcd.clearVLine(xs, kSampleHandleTop, kSampleHandleBottom - kSampleHandleTop + 1);
+        lcd.clearVLine(xe, kSampleHandleTop, kSampleHandleBottom - kSampleHandleTop + 1);
+        lcd.clearRect(kSampleX - 4, kSampleHandleTop - 12, kSampleCols + 8, 9);
+        return;
+    }
+    lcd.setForeColor(YELLOW);
+    lcd.drawVLine(xs, kSampleHandleTop, kSampleHandleBottom - kSampleHandleTop + 1);
+    lcd.drawVLine(xe, kSampleHandleTop, kSampleHandleBottom - kSampleHandleTop + 1);
+    char text[16];
+    snprintf(text, sizeof text, "START %u", static_cast<unsigned>(start_));
+    lcd.setAlignment(RIGHT);
+    lcd.drawText(text, static_cast<uint16_t>(strlen(text)), xs - 4, kSampleHandleTop - 11);
+    snprintf(text, sizeof text, "END %u", static_cast<unsigned>(end_));
+    lcd.setAlignment(LEFT);
+    lcd.drawText(text, static_cast<uint16_t>(strlen(text)), xe + 5, kSampleHandleTop - 11);
+}
+
+void Controller::lcd_drawSampleViewData() {
+    /// @brief Redraws the SAMPLE view of the selected layer: the waveform (peaks of 840 stretches,
+    /// computed again only when the sample changes), cyan between START and END and gray outside,
+    /// the two handles, the title and the length of the played part. When only START or END moved,
+    /// just the columns they crossed are drawn again.
+    sampleViewStateDrawn = sampleViewState();
+    if (selectedLayerNum < 0) return;
+    const Layer& layer = layerLibrary[selectedLayerNum];
+    uint8_t* const peaks = reinterpret_cast<uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS + 2048);
+    const int8_t sector = layer.playSampleSector;
+    const bool ready = (sector >= 0) && !sampleSectorLibrary[sector].writeMode && (layer.sampleLoadedData.sampleSize > 0);
+
+    // 1. THE PEAKS: again only for another sample (or when it has just finished loading)
+    uint32_t key = 2166136261u;
+    for (const char* c = layer.sampleLoadedData.fileName; *c; c++) key = (key ^ static_cast<uint8_t>(*c)) * 16777619u;
+    key = (key ^ layer.sampleLoadedData.sampleSize) * 16777619u;
+    key = (key ^ static_cast<uint32_t>(selectedLayerNum + 1)) * 16777619u;
+    key = (key ^ (ready ? 1u : 2u)) * 16777619u;
+    if (key == 0) key = 1;
+    const bool full = (key != sampleViewKey);
+    if (full) {
+        sampleViewKey = key;
+        if (ready) {
+            samplePeakColumns(reinterpret_cast<const float*>(RAM_SAMPLE_ADDRESS + static_cast<uint32_t>(sector) * kSampleByteSize), layer.sampleLoadedData.sampleSize,
+                              sampleSectorLibrary[sector].normMultiplier, peaks, kSampleCols);
+        } else {
+            memset(peaks, 0, kSampleCols);
+        }
+    }
+
+    // 2. THE PLOT
+    lcd.setBackColor(BLACK);
+    if (full) {
+        lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
+        // Centre line and a tick every 25 % with its label.
+        lcd.setForeColor(GRAY_25);
+        for (uint16_t x = kSampleX; x < kSampleX + kSampleCols; x += 4) lcd.drawPixel(x, kSampleCenterY);
+        lcd.setFont(FONT_05x07);
+        lcd.setAlignment(LEFT);
+        static const char* const kTick[5] = {"0", "25", "50", "75", "100"};
+        for (uint8_t k = 0; k < 5; k++) {
+            const uint16_t x = sampleXOfPercent(static_cast<uint8_t>(k * 25));
+            lcd.setForeColor(GRAY_75);
+            lcd.drawVLine(x, kSampleScaleY + 1, 3);
+            const uint16_t len = static_cast<uint16_t>(strlen(kTick[k]));
+            lcd.drawText(kTick[k], len, static_cast<uint16_t>((k == 0) ? x : ((k == 4) ? x - len * 7 + 2 : x - (len * 7) / 2)), kSampleScaleY + 7);
+        }
+        lcd_drawSampleColumns(0, kSampleCols - 1, layer.start, layer.end);
+    } else {
+        uint16_t from, to;
+        if (sampleDirtyColumns(sampleViewStart, sampleViewEnd, layer.start, layer.end, from, to)) {
+            lcd_drawSampleHandles(sampleViewStart, sampleViewEnd, true);
+            lcd_drawSampleColumns(from, to, layer.start, layer.end);
+        }
+    }
+    lcd_drawSampleHandles(layer.start, layer.end, false);
+    sampleViewStart = layer.start;
+    sampleViewEnd = layer.end;
+
+    // 3. TITLE AND LENGTH (fixed width, so the old text is overwritten)
+    char line[48];
+    int len = snprintf(line, sizeof line, "LAYER %.2s  %.12s  %.10s", kDataLayerNum[selectedLayerNum], layer.instLoadedData.nameShortL, ready ? layer.sampleLoadedData.nameShortR : "LOADING");
+    for (int i = (len > 0 ? len : 0); i < 34; i++) line[i] = ' ';
+    lcd.setFont(FONT_10x14);
+    lcd.setAlignment(LEFT);
+    lcd.setForeColor(CYAN);
+    lcd.drawText(line, 34, kSampleX, kSampleTitleY);
+    const uint32_t centi = sampleSecondsCenti(layer.sampleLoadedData.timeData, layer.start, layer.end, ::pitchFactor(layer.pitch));
+    len = snprintf(line, sizeof line, "%lu.%02lu SEC%s", static_cast<unsigned long>(centi / 100), static_cast<unsigned long>(centi % 100), (layer.direction == 1 || layer.direction == 3) ? "  REVERSE" : "         ");
+    lcd.clearRect(kSampleX + kSampleCols - 200, kSampleTitleY + 3, 200, 9);
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(RIGHT);
+    lcd.setForeColor(WHITE);
+    lcd.drawText(line, static_cast<uint16_t>(len > 0 ? len : 0), kSampleX + kSampleCols, kSampleTitleY + 3);
 }
 
 /* NOTE page (BeatNote.h) ----------------------------------------------------*/

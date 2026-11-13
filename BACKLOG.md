@@ -692,7 +692,9 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 - **EQ curve** (`lcd_drawEqViewData`): on the EQ page, the six bands in series as one curve (+24 to -36 dB) with a handle per band at its frequency and gain and its name above the plot (LO, 1-4, HI); gray while the EQ is off.
 
-Open from this item: Sample, MIX (as the dub mixer, [49](#49-dub-mixer-page-dub-mode)), Note editor, Performance view.
+- **Sample** (V1.15, waiting for the hardware test; `SampleView.h`, `test_sampleview`, `lcd_drawSampleViewData`): on instrument page 2 (START, END) the sample at full width: 840 columns, each the peak of its stretch (read from the sample's SDRAM sector, at most 64 reads per column, computed again only when the sample changes), cyan between START and END and gray outside, yellow handles with their values, title and length of the played part. Moving START or END redraws only the columns the handle crossed. Not built: a play cursor, zoom, slices; instrument pages 1 and 3 do not use the view.
+
+Open from this item: MIX (as the dub mixer, [49](#49-dub-mixer-page-dub-mode)), Note editor, Performance view.
 
 ### 46. Sends: a level per layer into the shared effects (SENDS mode)
 

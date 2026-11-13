@@ -358,6 +358,13 @@ class Controller {
     uint32_t eqViewState() const;
     void lcd_drawCurveAxes(float topDb_, float bottomDb_, bool labels_);
     void lcd_drawEqViewData();
+    uint32_t sampleViewKey = 0;             // which sample the peak columns belong to (0 = none)
+    uint32_t sampleViewStateDrawn = 0;      // the settings the view was drawn from
+    uint8_t sampleViewStart = 0, sampleViewEnd = 100;  // the handles as drawn
+    uint32_t sampleViewState() const;
+    void lcd_drawSampleViewData();
+    void lcd_drawSampleColumns(uint16_t from_, uint16_t to_, uint8_t start_, uint8_t end_);
+    void lcd_drawSampleHandles(uint8_t start_, uint8_t end_, bool clear_);
     void layerInst_setSolo(uint8_t layerNum_, bool solo_);
     void layerInst_clearSolo();
     void lcd_drawLayerInst_StyleData(uint8_t layerNum_);

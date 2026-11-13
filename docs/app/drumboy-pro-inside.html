@@ -958,7 +958,7 @@ const IDEAS = [
     } },
   { id: "mix", group: 0, name: "Dub mixer", item: "45, 46, 47, 49", size: "L, in phases", today: false,
     note: ["",
-           "The lane area becomes a desk: one strip per layer and one for line-in, each with its channel filter (FL), echo send (EC), reverb send (RV), fader and meter; then the ECHO and VERB returns, and the big DUB FILTER knob over the master meters. The top row edits the selected strip (2, cyan); the bottom row is always the desk: FEEDBACK, the two returns and the dub filter. Layer 5 is being thrown into the echo (yellow, hold EFFECT 1 + its pad), layer 7 is muted but its echo tail still rings, and FEEDBACK is past 100 %, so the echo is building up. Design: docs/dub-mixer-design.md."],
+           "The lane area becomes a desk: one strip per layer and one for line-in, each with its channel filter (FL), echo send (EC), reverb send (RV), fader and meter; then the ECHO and VERB returns, and the big DUB FILTER knob over the master meters. The top row edits the selected strip (2, cyan); the bottom row is always the desk: FEEDBACK, the two returns and the dub filter. Layer 5 is being thrown into the echo (yellow, hold EFFECT 1 + its pad), layer 7 is muted but its echo tail still rings, and FEEDBACK is past 100 %, so the echo is building up. The echo is ping-pong (its repeats alternate left and right), and strips that go straight to the master (DIR: 1 and 4) can be panned. Design: docs/dub-mixer-design.md."],
     draw() {
       mMenu("DB", 2);
       mField(0, "LEVEL", "74"); mField(1, "FILTER", "HP 35"); mField(2, "ECHO", "35", "  %"); mField(3, "VERB", "62", "  %");
@@ -966,7 +966,7 @@ const IDEAS = [
       mBig();
       const names = ["KICK 808", "SNARE TI", "HAT CLOS", "HAT OPEN", "CLAP", "RIM", "TOM LOW", "SHAKER", "COWBELL", "PERC FX", "LINE IN"];
       //            level flt  ec  rv  bus meter
-      const ch = [[82,   0,   0,  5, 0, 70], [74,  35,  35, 62, 1, 58], [60,  60,   0,  8, 1, 40], [55,  45,  20, 20, 1, 12], [70,   0, 100, 55, 1, 50],
+      const ch = [[82,   0,   0,  5, 0, 70], [74,  35,  35, 62, 1, 58], [60,  60,   0,  8, 1, 40], [55,  45,  20, 20, 0, 12], [70,   0, 100, 55, 1, 50],
                   [45,   0,  45, 10, 1, 20], [66, -40,  30, 30, 1,  0], [40,  70,  10,  0, 1, 30], [50,   0,  60, 15, 1,  8], [58, -20,  20, 70, 1, 66], [64,  25,  40, 35, 1, 44]];
       const sel = 1, muted = 6, thrown = 4, FY0 = 204, FH = 208;
       const bar = (x, y, w, v, c, lbl, lc) => { P.text(lbl, x, y, 5, lc); P.frame(x + 17, y, w, 7, LC.G35); if (v > 0) P.rect(x + 18, y + 1, Math.round(v * (w - 2) / 100), 5, c); };
@@ -992,17 +992,17 @@ const IDEAS = [
         bar(x + 1, 174, 38, ec, i === thrown ? LC.YE : c, "EC", i === thrown ? LC.YE : lc);
         bar(x + 1, 186, 38, rv, c, "RV", lc);
         fader(x, lv, c, dim ? 0 : m);
-        P.text(bus ? "FILT" : "DIR", x + 1, 428, 5, lc);
+        P.text(bus ? "FILT" : (i === 3 ? "DIR  R30" : "DIR    C"), x + 1, 428, 5, lc);
       });
       // returns
       const rx = [690, 766];
       P.rect(686, 134, 1, 304, LC.G50);
-      P.text("ECHO", rx[0] + 1, 137, 7, LC.YE); P.text("3/16", rx[0] + 42, 138, 5, LC.G75);
-      P.text("TAPE", rx[0] + 1, 150, 5, LC.G75);
+      P.text("ECHO", rx[0] + 1, 137, 7, LC.YE); P.text(" 3/4", rx[0] + 42, 138, 5, LC.G75);
+      P.text("PING-PONG", rx[0] + 1, 150, 5, LC.G75);
       bar(rx[0] + 1, 162, 50, 100, LC.MA, "FB", LC.MA);
       bar(rx[0] + 1, 174, 50, 55, LC.W, "TN", LC.G75);
       bar(rx[0] + 1, 186, 50, 30, LC.W, ">R", LC.G75);
-      fader(rx[0] + 8, 80, LC.YE, 74); P.text("RETURN", rx[0] + 1, 428, 5, LC.G75);
+      fader(rx[0] + 8, 80, LC.YE, 74); P.frame(rx[0] + 56, FY0, 7, FH, LC.G25); P.rect(rx[0] + 57, FY0 + FH - 1 - 96, 5, 96, LC.GN); P.text("RETURN L R", rx[0] + 1, 428, 5, LC.G75);
       P.rect(rx[1] - 4, 134, 1, 304, LC.G25);
       P.text("VERB", rx[1] + 1, 137, 7, LC.W);
       P.text("SPRING", rx[1] + 1, 150, 5, LC.G75);

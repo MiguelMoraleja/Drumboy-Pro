@@ -40,7 +40,18 @@ line-in ────►                          ├─ BUS: DIR ─────
 
 - **Reverb into the echo.** The reverb runs last, so only echo into reverb is possible.
 - **The dub filter over the returns.** Filter 1 runs before the echo and the reverb. On a real desk the big knob also sat on a group, not on the whole mix. A filter over everything needs the master stage of backlog 48.
-- **Stereo.** The path is mono until the reverb, as today, so the first version has no pan per strip. Pan needs a stereo bus through the EQ and the dub filter (backlog 36).
+- **Stereo on the FILT bus.** The EQ and the dub filter are mono, as today, so a strip on FILT stays centred. Pan there needs both to run twice (phase D5).
+
+### Stereo: what the design adds (owner, 2026-11-13: yes, if the processing room allows)
+
+Today every layer and module is mono; only the reverb's SURROUND makes a right channel. Two cheap additions give the desk width without making the whole path stereo:
+
+- **Pan on DIR strips.** A strip that goes straight to the master gets a left and a right gain. Cost: one more multiply and add per sample per strip, under 0.5 % of the audio block for ten strips.
+- **Ping-pong echo.** The repeats alternate left and right: the first on the left, the second on the right, and so on. It needs no second delay line: the delay reads its buffer at two points (one echo time back for the left, two for the right) and feeds back from the second. Cost: one more memory read per sample, about 0.1–0.3 %. ECHO WIDTH sets how far apart the repeats sit (0 = centre, as today).
+  - The two read points must fit the delay's buffer (2.18 s), so ping-pong works while two echo times are shorter than that: at 1 beat down to 55 BPM, at 1 1/2 beats down to 83 BPM. Below that the echo falls back to the centre.
+  - The level into the reverb takes both sides added together.
+
+**Processing room.** Together these add under 1 % to an estimated 40 % for the whole dub mixer, against the 80 % gate. These are estimates from counting operations; the measurement of backlog 37 confirms or corrects them before D2 ships.
 
 ## 3. The page
 
@@ -48,8 +59,8 @@ Reached with MIXER: MIXER → DUB → ROUTING → MIXER. While the page is open,
 
 ### 3.1 Screen
 
-- **Eleven strips of 60 px:** layers 1–10 and LINE IN. From the top: number, state (MUTE, THRW), name, the channel filter (FL: off in the centre, low-pass to the left, high-pass to the right), echo send (EC), reverb send (RV), the fader with a meter beside it, and the bus (FILT or DIR).
-- **ECHO return:** time, FEEDBACK (magenta past 100 %), TONE, the level into the reverb, the return fader and meter.
+- **Eleven strips of 60 px:** layers 1–10 and LINE IN. From the top: number, state (MUTE, THRW), name, the channel filter (FL: off in the centre, low-pass to the left, high-pass to the right), echo send (EC), reverb send (RV), the fader with a meter beside it, and the bus (FILT, or DIR with its pan).
+- **ECHO return:** time, centre or ping-pong, FEEDBACK (magenta past 100 %), TONE, the level into the reverb, the return fader and meter.
 - **VERB return:** decay, size, the return fader and meter.
 - **DUB FILTER and master:** the big knob as a dial with its steps and the current frequency, master meters L and R, limiter gain reduction.
 - **Colours:** the selected strip is cyan, a muted strip is dimmed, a thrown send is yellow.
@@ -69,14 +80,17 @@ The top row edits the selected strip. The bottom row is the desk and never chang
 - **DUB FILTER** moves in steps: OFF, then a high-pass at 70, 100, 150, 250, 500 Hz, 1, 2, 3, 5 and 7.5 kHz (the steps usually quoted for King Tubby's filter). FILTER 1's own page still sets type, slope and resonance, so it can also be a low-pass.
 - **ADD + turn** changes every strip, as on the other pages.
 
-Second page (tap MIXER again from DUB, or a DUB 2 step in the cycle):
+Second page (the next step in the MIXER cycle):
 
 | | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|
-| **Top: selected strip** | BUS (FILT / DIR) | RESONANCE | DRIVE | FX SEND |
-| **Bottom: the desk** | ECHO TIME | ECHO TONE | ECHO > VERB | FX RTN |
+| **Top: selected strip** | BUS (FILT / DIR) | PAN | DRIVE | FX SEND |
+| **Bottom: the echo** | ECHO TIME | ECHO TONE | ECHO WIDTH | ECHO > VERB |
 
-- **ECHO TIME** gains the dotted values dub uses most: 3/16 and 3/8, next to 1/8, 1/6, 1/4, 1/3, 1/2 and 1/1.
+- **PAN** acts on a strip whose BUS is DIR. On a FILT strip it shows CENTRE until the bus is stereo (D5).
+- **ECHO TIME** is a fraction of a beat today (1/8, 1/6, 1/4, 1/3, 1/2, 1/1). It gains the dotted values dub uses most: 3/4 of a beat (a dotted eighth) and 1 1/2 beats (a dotted quarter).
+- **ECHO WIDTH** 0–100 %: 0 is the centred echo of today, 100 is full ping-pong.
+- **The channel filter's resonance is fixed** at a moderate value, as on a one-knob DJ filter, to keep the page at eight fields. Effect 2's return level stays on its own page (WET).
 
 ### 3.3 Keys and pads
 
@@ -103,22 +117,24 @@ Second page (tap MIXER again from DUB, or a DUB 2 step in the cycle):
 | Throws: a momentary send that ignores fader and mute | S | The destination is latched when a note starts, which suits a throw |
 | Channel filter per layer, one knob | M | Backlog 47. State in the unused DTCM RAM |
 | Echo: feedback to 110 % with a soft clipper, dotted times | S | In the delay |
+| Ping-pong echo: a second read point, a stereo output into the master | S | The delay's output stage and one more 32-sample buffer; no second delay line |
+| Pan on DIR strips: a left and a right gain into the master | S | Backlog 36 A |
 | Meters: a peak per strip, return and master from the audio engine | M | Backlog 41 |
 | File block for the strip settings | S | After the song's `CHN` and `BTX` blocks; older firmware ignores it |
 
-**Cost (estimates):** sends 1–2 % of the audio block, channel filters 1.6–3.2 %, the rest under 1 %. With the 34 % measured at V1.04 that lands around 40 %, under the 80 % gate. Measure first (backlog 37).
+**Cost (estimates):** sends 1–2 % of the audio block, channel filters 1.6–3.2 %, pan and ping-pong under 1 % together, the rest under 1 %. With the 34 % measured at V1.04 that lands around 40 %, under the 80 % gate. Measure first (backlog 37).
 
 ## 5. Phases
 
 | Phase | Content | You can then |
 |---|---|---|
 | D1 | DUB mode, send levels, returns, the page with strips and faders (no meters), file block | Give each layer its own amount of echo and reverb, and ride FEEDBACK and the dub filter |
-| D2 | Throws, feedback past 100 %, dotted echo times, ECHO > VERB | Play the desk: drops, throws, runaway echo |
-| D3 | Channel filter and drive per strip, page 2 | Filter one layer without touching the others |
+| D2 | Throws, feedback past 100 %, dotted echo times, ECHO > VERB, ping-pong echo (ECHO WIDTH) | Play the desk: drops, throws, runaway echo bouncing left and right |
+| D3 | Channel filter and drive per strip, pan on DIR strips, page 2 | Filter one layer without touching the others; place DIR strips left and right |
 | D4 | Meters, line-in strip | See levels; dub external audio |
-| D5 | Pan and a stereo bus; a filter over the whole mix (backlog 36, 48) | Place strips left and right |
+| D5 | A stereo FILT bus (EQ and dub filter run twice); a filter over the whole mix (backlog 36, 48) | Pan every strip, also through the dub filter |
 
-Each phase is a release that can be tested on its own. D1 and D2 need no new DSP beyond the echo's clipper.
+Each phase is a release that can be tested on its own. D1 and D2 need no new DSP beyond the echo's clipper and second read point.
 
 ## 6. Open decisions for the owner
 

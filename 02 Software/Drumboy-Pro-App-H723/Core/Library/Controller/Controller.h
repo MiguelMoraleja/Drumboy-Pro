@@ -314,6 +314,19 @@ class Controller {
     uint16_t soloMask = 0;
     bool layerAudible(uint8_t layerNum_) const;
     RGB16Color layerColor(uint8_t layerNum_) const;
+    // EUCLID rings: a full-area view over the lanes (LaneView.h).
+    bool ringsShown = false;                // the view is on screen (the lanes are not)
+    bool ringsDirty = false;                // beats changed: redraw rings and rows
+    bool ringsFull = false;                 // something drew over it (an alert): redraw all of it
+    uint32_t ringsDrawnMs = 0;
+    bool ringPlayShown = false;
+    int16_t ringPlayX = 0, ringPlayY = 0;
+    uint16_t ringPlayRowX = 0;
+    bool laneViewHidden() const;
+    void lcd_drawEuclidView();
+    void lcd_drawEuclidViewData();
+    void lcd_updateEuclidView();
+    void lcd_restoreLanes();
     void layerInst_setSolo(uint8_t layerNum_, bool solo_);
     void layerInst_clearSolo();
     void lcd_drawLayerInst_StyleData(uint8_t layerNum_);

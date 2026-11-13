@@ -444,6 +444,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">S</span><div><b>Hold S</b> (right side, the L I S row) <b>and press a layer pad</b>: that layer's song page. <b>Tap S</b> on its own: EUCLID. Tap again: back to the song page. Holding S and pressing the same pad again also opens EUCLID.</div></div>
           <div class="k"><span class="keycap">I</span><div><b>Tap I</b>: the same layer's instrument pages, 1 → 2 → 3 → 1. From an instrument page, tap S for the song page.</div></div>
           <div class="k"><span class="keycap">7</span><div><b>ACCENTS</b> (V1.11) is the last field on the EUCLID page's bottom row. On the device the pattern line shows X for accented hits and + for ghost hits (e.g. <span class="mono">X.+X.++.</span>).</div></div>
+          <div class="k"><span class="keycap">◎</span><div><b>Rings</b> (V1.14): while the EUCLID page is open, the ten lanes give way to all ten layers as rings around one centre, layer 1 outside. One turn is one loop, starting at the top; a yellow marker orbits with the playhead. The selected layer is cyan, with its grid as ticks. On the right, every layer's beats as a row with their count. Leaving the page brings the lanes back. A picture is in Screen ideas.</div></div>
           <div class="k"><span class="keycap">C</span><div><b>CLEAR on EUCLID</b>: the layer gets back the beats it had when you opened the page. Nothing changes until you turn a field; after that the pattern is rebuilt live, also while playing.</div></div>
           <div class="k"><span class="keycap">+</span><div><b>Song page</b>: MOVE and SHIFT ALL are the last two fields on the bottom row (or hold ADD and press ◀ ▶ to move). A short ADD press inserts a beat. A bank holds 64 beats; when full, FULL is shown.</div></div>
         </div>
@@ -515,6 +516,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">♪</span><div><b>VELOCITY</b> 1–127 for that beat; until you turn it, the beat plays as FLAT, GHOST or MUTED as before. On a fill it scales every hit. MIDI recording stores each note's velocity here.</div></div>
           <div class="k"><span class="keycap">%</span><div><b>CHANCE</b> 0–100 % in 5 % steps, rolled every loop, on top of the layer's PROB. A fill plays or not as a whole.</div></div>
           <div class="k"><span class="keycap">?</span><div><b>CONDITION:</b> <span class="mono">A:B</span> plays on loop A of every B (1:4 = first of four), <span class="mono">!A:B</span> the other loops, <span class="mono">1ST</span> only the first loop after START or a bank change, <span class="mono">PRE</span> if the layer's last conditioned beat played, <span class="mono">FKEY</span> only while you hold the F (FILL) key, and <span class="mono">!FKEY</span> only when you don't; the screen shows FKEY while it is held. It is not the layer's FILL switch (F + pad).</div></div>
+          <div class="k"><span class="keycap">▮</span><div><b>In the lanes</b> you can see these settings on every layer: a beat's height is its velocity (FLAT full, GHOST two thirds), a hollow beat has a chance below 100 %, and a yellow dot above marks a condition. A layer that does not sound (muted, or another layer is soloed) is dimmed.</div></div>
           <div class="k"><span class="keycap">↔</span><div><b>NUDGE</b> plays a plain beat up to 12 % of a 16th early or late, without moving it on the grid. Fills keep their timing.</div></div>
           <div class="k"><span class="keycap">↶</span><div><b>UNDO / REDO:</b> MUTE (the M on the left) + LEFT undoes, MUTE + RIGHT redoes the last beat or bank edit, on any page and while playing: MOVE, SHIFT ALL, insert, CLEAR, fills, paste, whole-bank paste, EUCLID, these NOTE settings and a recording take. Up to 64 steps; one knob gesture or one EUCLID visit is one step. Knob settings of the sound are not undone. LOAD, NEW and changing MEASURE/BAR/QUANTIZE start a new history.</div></div>
           <div class="k"><span class="keycap">ADD</span><div><b>ADD + turn</b> changes every beat of the bank by the same amount (CONDITION: sets them all). <b>CLEAR</b> resets the selected beat, <b>ADD + CLEAR</b> the whole bank. Songs from older firmware play exactly as before.</div></div>
@@ -566,7 +568,7 @@ table.rel td.new { min-width: 280px; }
   <section id="view-ideas" role="tabpanel" aria-labelledby="tab-ideas" class="stagecol" hidden>
     <div class="panel intro">
       <h2>Screen ideas</h2>
-      <p>Mockups of screens the firmware could draw, at the device's real size (960×540) with its own fonts, frame and positions. None of this is built yet. The first group uses the big main area for one feature while its page is open; the second group are smaller additions. Each one names its backlog item; the reasoning is in <span class="mono">docs/ux-and-signal-path-analysis.md</span>.</p>
+      <p>Mockups of screens the firmware could draw, at the device's real size (960×540) with its own fonts, frame and positions. Two are built in V1.14 and wait for the hardware test: the beat marks and dimmed lanes of <b>Main screen</b>, and <b>Euclid rings</b>. The rest are proposals. The first group uses the big main area for one feature while its page is open; the second group are smaller additions. Each one names its backlog item; the reasoning is in <span class="mono">docs/ux-and-signal-path-analysis.md</span>.</p>
       <p class="muted">The names, patterns and values are examples. The device's fonts have no lowercase, so everything on screen is in capitals.</p>
     </div>
     <div class="panel" style="display:grid; gap:14px">
@@ -828,7 +830,7 @@ function mOverviewText(lines) { lines.forEach(([t, c], k) => P.text(t, 494, 32 +
 const IDEAS = [
   { id: "lanes", group: 0, name: "Main screen", item: "38, 41, 42", size: "S–M each", today: true,
     note: ["Today every beat is the same mark, a muted layer differs only by its box, and messages get a 5-character spot.",
-           "Beat height shows velocity, a hollow beat has a chance below 100 %, a yellow dot marks a condition. The muted layer (7) is dimmed, each layer has a small meter, and a status line names the last action, the MIDI clock and unsaved work."],
+           "Built in V1.14 (waiting for the hardware test): beat height shows velocity, a hollow beat has a chance below 100 %, a yellow dot marks a condition, and the muted layer (7) is dimmed. Still proposals: each layer has a small meter, and a status line names the last action, the MIDI clock and unsaved work."],
     draw(idea) {
       mLanes(idea, { dim: [6], meters: true });
       if (!idea) { P.text(" UNDO", 170, 112, 5, LC.CY, "C"); return; }
@@ -1013,9 +1015,9 @@ function mBig() { P.rect(21, 132, 918, 308, LC.K); }
 function euclidHits(n, k, rot) { const h = []; for (let i = 0; i < k; i++) h.push((Math.floor(i * n / k) + rot) % n); return h; }
 const EUC = [[16, 4, 0], [8, 2, 2], [16, 8, 0], [8, 3, 3], [16, 5, 2], [12, 7, 0], [16, 3, 6], [16, 9, 1], [5, 2, 0], [4, 1, 2]];
 const BIG = [
-  { id: "bigeuclid", group: 0, name: "Euclid rings", item: "45", size: "M–L", today: true,
+  { id: "bigeuclid", group: 0, name: "Euclid rings", item: "45", size: "M–L", today: true, built: "V1.14",
     note: ["Today the EUCLID page shows one layer's pattern as a row of characters above the lanes.",
-           "All ten layers as rings around one centre, the outer ring being layer 1, with the playhead sweeping like a clock hand. The selected layer (5) is cyan; large dots are accents. On the right, every layer's pattern as a row, so different lengths (5, 12 or 16 steps) can be compared."],
+           "Built in V1.14 (waiting for the hardware test). While the EUCLID page is open, the lanes give way to this view: all ten layers as rings around one centre, the outer ring being layer 1. One turn is one loop, starting at the top; a yellow marker orbits with the playhead. The selected layer (5) is cyan, with its grid as ticks and larger dots for louder beats; a muted layer (8) is dimmed. On the right, every layer's beats as a row with their count, so layers can be compared. Leaving the page brings the lanes back."],
     draw(idea) {
       mMenu("EU", 5);
       mField(0, "STEPS", "16"); mField(1, "HITS", "5");
@@ -1028,29 +1030,27 @@ const BIG = [
       }
       mOverviewText([["E 5/16  ROT 2  ACC 2", LC.CY], ["", LC.W], ["REPLACE", LC.W], ["", LC.W], ["5 BEATS  CLEAR: UNDO", LC.G75]]);
       mBig();
-      const xc = 200, yc = 286, sel = 4;
-      const play = 0.36;  // position in the loop
+      // Same numbers as the firmware (LaneView.h, lcd_drawEuclidViewData).
+      const xc = 200, yc = 286, sel = 4, play = 0.36;
+      const pt = (turn, r) => [Math.round(xc + r * Math.sin(turn * 2 * Math.PI)), Math.round(yc - r * Math.cos(turn * 2 * Math.PI))];
+      const col = l => l === sel ? LC.CY : (l === 7 ? LC.G35 : (l % 2 ? LC.G75 : LC.W));  // layer 8 is muted here
+      P.text("LAYER 05  CLAP", 380, 146, 10, LC.CY);
+      P.text("5 HITS IN 16 STEPS  ROT 2  ACC 2", 380, 168, 7, LC.W);
       EUC.forEach(([n, k, rot], l) => {
-        const r = 140 - l * 12, c = l === sel ? LC.CY : (l % 2 ? LC.G75 : LC.W), hits = euclidHits(n, k, rot);
+        const r = 140 - l * 12, hits = euclidHits(n, k, rot);
         P.ring(xc, yc, r, l === sel ? LC.G50 : LC.G25);
-        for (let i = 0; i < n; i++) {
-          const a = (i / n) * 2 * Math.PI - Math.PI / 2, x = Math.round(xc + r * Math.cos(a)), y = Math.round(yc + r * Math.sin(a));
-          if (hits.includes(i)) P.disc(x, y, l === sel ? (i === hits[0] || i === hits[2] ? 4 : 3) : 2, c); else P.rect(x, y, 1, 1, LC.G50);
-        }
+        if (l === sel) for (let i = 0; i < n; i++) { const [x, y] = pt(i / n, r); P.rect(x, y, 1, 1, LC.W); }
+        hits.forEach((h, j) => { const [x, y] = pt(h / n, r); P.disc(x, y, l === sel ? (j === 0 || j === 2 ? 4 : 3) : 2, col(l)); });
       });
-      const pa = play * 2 * Math.PI - Math.PI / 2;
-      P.line(xc, yc, xc + 146 * Math.cos(pa), yc + 146 * Math.sin(pa), LC.YE);
-      P.rect(xc, yc - 150, 1, 8, LC.G75);
-      P.text("LAYER 5  CLAP", 380, 146, 10, LC.CY);
-      P.text("5 HITS IN 16 STEPS, ROTATED 2, 2 ACCENTS", 380, 168, 7, LC.W);
+      const [mx, my] = pt(play, 150);
+      P.rect(mx - 1, my - 1, 3, 3, LC.YE);
+      P.rect(560 + Math.floor(play * 360), 186, 3, 5, LC.YE);
       EUC.forEach(([n, k, rot], l) => {
-        const y = 196 + l * 22, c = l === sel ? LC.CY : (l % 2 ? LC.G75 : LC.W), hits = euclidHits(n, k, rot), cw = 272 / n;
-        P.text(String(l + 1).padStart(2, "0") + " " + LAYER_NAMES[l].padEnd(11) + (k + "/" + n).padStart(5), 380, y, 7, c);
-        for (let i = 0; i < n; i++) {
-          const x = 650 + Math.round(i * cw);
-          if (hits.includes(i)) P.rect(x, y - 1, Math.max(3, Math.round(cw) - 3), 10, c); else P.rect(x + 1, y + 7, 2, 2, LC.G50);
-        }
-        P.rect(650 + Math.round(play * 272), y - 3, 1, 14, LC.YE);
+        const y = 196 + l * 22, hits = euclidHits(n, k, rot);
+        P.text(String(l + 1).padStart(2, "0"), 380, y, 7, col(l));
+        P.text(LAYER_NAMES[l].padEnd(12), 407, y, 7, col(l));
+        P.text(String(k).padStart(2), 525, y, 7, col(l));
+        hits.forEach((h, j) => { const hgt = l === sel && !(j === 0 || j === 2) ? 6 : 9; P.rect(560 + Math.floor(h / n * 360), y + 9 - hgt, 2, hgt, col(l)); });
       });
     } },
   { id: "bigsong", group: 0, name: "Song timeline", item: "45", size: "M–L", today: true,
@@ -1189,7 +1189,7 @@ function ideaDraw() {
   if (lcdBase.complete && lcdBase.naturalWidth) lg.drawImage(lcdBase, 0, 0);
   sc.draw(idea);
   cv.setAttribute("aria-label", `${sc.name}: ${idea ? "proposed screen" : "the screen today"}. ${sc.note[idea ? 1 : 0]}`);
-  document.getElementById("id-cap").innerHTML = `<p style="margin:0"><b>${sc.name}, ${idea ? "proposed" : "today"}.</b> ${sc.note[idea ? 1 : 0]}</p><p class="muted" style="margin:6px 0 0; font-size:.85rem">Backlog item ${sc.item} · size ${sc.size}${sc.today ? "" : " · a new screen, so there is no version of it today"}</p>`;
+  document.getElementById("id-cap").innerHTML = `<p style="margin:0"><b>${sc.name}, ${idea ? (sc.built ? "built in " + sc.built : "proposed") : "today"}.</b> ${sc.note[idea ? 1 : 0]}</p><p class="muted" style="margin:6px 0 0; font-size:.85rem">Backlog item ${sc.item} · size ${sc.size}${sc.today ? "" : " · a new screen, so there is no version of it today"}</p>`;
   document.querySelectorAll("#id-scene button, #id-scene2 button").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.i === ideaState.scene)));
   document.querySelectorAll("#id-mode button").forEach((b, i) => { b.setAttribute("aria-pressed", String((i === 1) === idea)); b.disabled = !sc.today; });
 }
@@ -2144,6 +2144,8 @@ const RELEASES = [
          "Song mode: picking a bank by hand (SONG + pads) never turns the chain off; a bank outside the chain plays one loop as a detour, then the chain goes on",
          "Undo / redo: MUTE + LEFT / MUTE + RIGHT for beat and bank edits (64 steps, also while playing)",
          "SOLO: the left S key (M F S row) + a layer pad soloes it (several at once, S + CLEAR clears); STYLE is now a field on instrument page 3 (ADD + turn: every layer)",
+         "Main screen: a beat's height shows its velocity, a hollow beat has a chance below 100 %, a yellow dot marks a condition; layers that do not sound (muted, or not soloed) are dimmed",
+         "EUCLID page: the lane area shows all ten layers as rings (one turn = one loop) with an orbiting playhead marker, and every layer's beats as a row; the lanes return when you leave the page",
          "Diagnostics: SAVE / SDERR while autosave writes, its duration on the Metronome page; a crash restarts the firmware and shows CRASH k AT address (details in System/Crash.log)"],
     fix: ["Locked to MIDI clock but stopped, the sequencer timer ran about 15x too fast (LFOs and TIMING delays with it); since V1.13",
           "The song and NOTE pages kept the old bank's beat after a bank change at the loop end (edits went to the wrong beat)",

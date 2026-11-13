@@ -8167,6 +8167,9 @@ void Controller::lcd_update() {
     // Refresh playhead/progress bar visuals.
     lcd_drawPlay();
 
+    // The EUCLID page's full-area view: refresh, playhead, and the lanes back after leaving.
+    lcd_updateEuclidView();
+
     // 2. TRANSPORT ICON UPDATE
     // Refresh reset/play/stop/record icons.
     lcd_drawIcon();
@@ -8445,7 +8448,8 @@ void Controller::lcd_clearAlert() {
     lcd.clearRect(355, 260, 250, 20);
 
     // 2. CONTENT RESTORE
-    // Redraw song lane that can be overlapped by alert box.
+    // Redraw song lane that can be overlapped by alert box (or the whole full-area view).
+    if (laneViewHidden()) ringsFull = true;
     lcd_drawSong(4, activeSongBank);
 }
 
@@ -8674,7 +8678,8 @@ void Controller::lcd_clearSdAlert() {
     lcd.clearRect(355, 260, 250, 20);
 
     // 2. CONTENT RESTORE
-    // Redraw song lane hidden by SD alert box.
+    // Redraw song lane hidden by SD alert box (or the whole full-area view).
+    if (laneViewHidden()) ringsFull = true;
     lcd_drawSong(4, activeSongBank);
 }
 
@@ -9052,6 +9057,9 @@ void Controller::lcd_clearSignBox(uint8_t menuTab_) {
 
 void Controller::lcd_transitionMenu() {
     /// @brief Applies menu transition cleanup and prepares target menu layout.
+
+    // Leaving a full-area view: the lanes come back before the new page draws into them.
+    if (ringsShown && (menu != EUCLID_MENU)) lcd_restoreLanes();
 
     // 1. PREVIOUS MENU CLEANUP
     // Clear UI artifacts based on previous menu type.
@@ -12987,6 +12995,10 @@ void Controller::lcd_drawLayerSong_BeatFillGraphData(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerTab(uint8_t layerNum_) {
     /// @brief Draws complete layer-tab row including indicators and song lane.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ROW BORDER DRAW
     // Draw top/bottom layer row borders.
@@ -13019,6 +13031,10 @@ void Controller::lcd_drawLayerTab(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerBox(uint8_t layerNum_) {
     /// @brief Draws top and bottom border lines for a layer row.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. COLOR SELECT
     // Use selected or default row color.
@@ -13032,6 +13048,10 @@ void Controller::lcd_drawLayerBox(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerTab_NumData(uint8_t layerNum_) {
     /// @brief Draws layer number text in the layer tab row.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. STYLE SETUP
     // Configure layer-tab text style.
@@ -13044,6 +13064,10 @@ void Controller::lcd_drawLayerTab_NumData(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerTab_InstData(uint8_t layerNum_) {
     /// @brief Draws loaded instrument short name for layer row.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. STYLE SETUP
     // Configure layer-tab text style.
@@ -13060,6 +13084,10 @@ void Controller::lcd_drawLayerTab_InstData(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerTab_Mute(uint8_t layerNum_) {
     /// @brief Draws mute state indicator box for layer row.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. STYLE SETUP
     // Configure box color from layer-tab state.
@@ -13077,6 +13105,10 @@ void Controller::lcd_drawLayerTab_Mute(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerTab_Fill(uint8_t layerNum_) {
     /// @brief Draws fill state indicator box for layer row.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. STYLE SETUP
     // Configure box color from layer-tab state.
@@ -13094,6 +13126,10 @@ void Controller::lcd_drawLayerTab_Fill(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerTab_Style(uint8_t layerNum_) {
     /// @brief Draws the third indicator box of a layer row: SOLO since V1.14 (it showed STYLE).
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. STYLE SETUP
     // Configure box color from layer-tab state.
@@ -13467,6 +13503,10 @@ void Controller::lcd_calculateSongX() {
 
 void Controller::lcd_drawMeasureBar() {
     /// @brief Draws measure/bar grid markers across all layer song lanes.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. GRID SPACING PRE-CALC
     // Calculate bar and measure spacing in pixels.
@@ -13497,6 +13537,10 @@ void Controller::lcd_drawMeasureBar() {
 
 void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatNum_, bool selected_) {
     /// @brief Draws one beat cell for a layer/bank with style-aware fill rendering.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ACTIVE BANK GUARD
     // Render only for currently active song bank.
@@ -13560,6 +13604,10 @@ void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatN
 
 void Controller::lcd_clearBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatNum_) {
     /// @brief Clears rendered area of one beat cell for a layer/bank.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ACTIVE BANK GUARD
     // Clear only when request targets currently active bank.
@@ -13585,6 +13633,10 @@ void Controller::lcd_clearBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beat
 
 void Controller::lcd_drawSong(uint8_t layerNum_, uint8_t bankNum_) {
     /// @brief Redraws all active beats for one layer in selected bank.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ACTIVE BANK GUARD
     // Draw only for currently active bank.
@@ -13612,6 +13664,10 @@ void Controller::lcd_drawSong(uint8_t layerNum_, uint8_t bankNum_) {
 
 void Controller::lcd_clearSong(uint8_t layerNum_, uint8_t bankNum_) {
     /// @brief Clears complete song lane region for one layer.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ACTIVE BANK GUARD
     // Clear only when request belongs to active bank.
@@ -13627,6 +13683,10 @@ void Controller::lcd_clearSong(uint8_t layerNum_, uint8_t bankNum_) {
 
 void Controller::lcd_clearInterval(uint8_t layerNum_, uint8_t bankNum_, uint16_t startInterval_, uint16_t endInterval_) {
     /// @brief Clears a specific interval segment in one layer lane.
+    if (laneViewHidden()) {
+        ringsDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ACTIVE BANK GUARD
     // Clear only when request belongs to active bank.
@@ -21799,6 +21859,7 @@ void Controller::euclid_select() {
     lcd_transitionMenu();
     lcd_transitionSelect();
     lcd_drawEuclidMenu();
+    lcd_drawEuclidView();  // the lane area shows the rings while this page is open
     encoder_update();
 }
 
@@ -21820,6 +21881,7 @@ void Controller::euclid_apply() {
     layerSong_commitBank(0);
     if (euclidDropped) textFullFlag = true;
     lcd_drawEuclidOverview();
+    ringsDirty = true;
 }
 
 void Controller::euclid_clear() {
@@ -21867,6 +21929,164 @@ void Controller::euclid_step(EncoderFunc function_, bool up_) {
     }
     lcd_drawEuclid_Data();
     euclid_apply();
+}
+
+/* EUCLID rings: a full-area view (LaneView.h) --------------------------------*/
+
+// The view's rows on the right: layer number, name, beat count, the layer's beats as a row.
+static const uint16_t kRingRowNumX = 380, kRingRowNameX = 407, kRingRowCountX = 525, kRingRowBeatX = 560, kRingRowBeatW = 360;
+static const uint16_t kRingRowY = 196, kRingRowStep = 22, kRingRowPlayY = 186;
+
+bool Controller::laneViewHidden() const {
+    /// @brief True while a full-area view has replaced the ten lanes (the EUCLID page). Everything
+    /// that draws into a lane checks it, and asks for the view to be refreshed instead.
+    return menu == EUCLID_MENU;
+}
+
+void Controller::lcd_drawEuclidView() {
+    /// @brief Draws the whole EUCLID view over the lane area: the ten layers as rings and as rows.
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
+    ringsShown = true;
+    lcd_drawEuclidViewData();
+}
+
+void Controller::lcd_drawEuclidViewData() {
+    /// @brief Redraws what changes on the EUCLID view: title, summary line, rings and rows.
+    ringsDirty = false;
+    ringsFull = false;
+    ringsDrawnMs = HAL_GetTick();
+    ringPlayShown = false;
+    if (selectedLayerNum == -1) return;
+    const uint8_t sel = static_cast<uint8_t>(selectedLayerNum);
+
+    // 1. TITLE (the selected layer) AND SUMMARY
+    char line[48];
+    int len = snprintf(line, sizeof line, "LAYER %.2s  %.12s", kDataLayerNum[sel], layerLibrary[sel].instLoadedData.nameShortL);
+    for (int i = (len > 0 ? len : 0); i < 22; i++) line[i] = ' ';  // fixed width: overwrites the old text
+    lcd.setBackColor(BLACK);
+    lcd.setFont(FONT_10x14);
+    lcd.setAlignment(LEFT);
+    lcd.setForeColor(CYAN);
+    lcd.drawText(line, 22, kRingRowNumX, 146);
+    len = snprintf(line, sizeof line, "%u HITS IN %u STEPS  ROT %u  ACC %u", static_cast<unsigned>(euclidHits), static_cast<unsigned>(euclidSteps),
+                             static_cast<unsigned>(euclidRotate), static_cast<unsigned>(euclidAccentCount));
+    for (int i = (len > 0 ? len : 0); i < 40; i++) line[i] = ' ';
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(LEFT);
+    lcd.setForeColor(WHITE);
+    lcd.drawText(line, 40, kRingRowNumX, 168);
+
+    // 2. RINGS: one turn = one loop, starting at the top; layer 1 is the outer ring.
+    lcd.clearRect(kRingCenterX - kRingPlayRadius - 4, kRingCenterY - kRingPlayRadius - 3, 2 * kRingPlayRadius + 8, 2 * kRingPlayRadius + 6);
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        const uint16_t r = ringRadius(l);
+        lcd.setForeColor((l == sel) ? GRAY_50 : GRAY_25);
+        lcd.drawCircle(kRingCenterX, kRingCenterY, r);
+        if (l == sel) {
+            // The EUCLID grid as ticks on the selected ring.
+            const uint16_t grid = kQuantizeInterval[euclidGrid];
+            if ((grid > 0) && (songInterval / grid <= 128)) {
+                lcd.setForeColor(WHITE);
+                for (uint32_t at = 0; at < songInterval; at += grid) {
+                    const RingPoint p = ringPoint(at, songInterval, r);
+                    lcd.drawPixel(static_cast<uint16_t>(p.x), static_cast<uint16_t>(p.y));
+                }
+            }
+        }
+        const Bank& bank = layerLibrary[l].bankLibrary[activeSongBank];
+        lcd.setForeColor(layerColor(l));
+        for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) {
+            const Beat& beat = bank.beatLibrary[b];
+            if (!beat.getActive()) continue;
+            const RingPoint p = ringPoint(beat.getStartInterval(), songInterval, r);
+            const bool plain = (beat.getFillType() == 0) && (beat.getFillPattern() <= 2);
+            if (plain && (beat.getFillPattern() == 2)) {
+                lcd.drawPixel(static_cast<uint16_t>(p.x), static_cast<uint16_t>(p.y));  // MUTED
+            } else {
+                const uint8_t level = (plain && (beat.getFillPattern() == 1)) ? 50 : 100;
+                lcd.fillCircle(static_cast<uint16_t>(p.x), static_cast<uint16_t>(p.y), ringDotRadius(l == sel, beat.getVelocity(), level));
+            }
+        }
+    }
+
+    // 3. ROWS: every layer's beats on a line, so layers can be compared.
+    lcd.clearRect(kRingRowBeatX, kRingRowPlayY, kRingRowBeatW + 3, 5);  // the playhead marker above them
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        const uint16_t y = static_cast<uint16_t>(kRingRowY + l * kRingRowStep);
+        const Bank& bank = layerLibrary[l].bankLibrary[activeSongBank];
+        lcd.setFont(FONT_07x09);
+        lcd.setAlignment(LEFT);
+        lcd.setForeColor(layerColor(l));
+        lcd.drawText(kDataLayerNum[l], 2, kRingRowNumX, y);
+        lcd.drawText(layerLibrary[l].instLoadedData.nameShortL, 12, kRingRowNameX, y);
+        char count[8];
+        snprintf(count, sizeof count, "%2d", static_cast<int>(bank.lastActiveBeatNum + 1));
+        lcd.drawText(count, 2, kRingRowCountX, y);
+        lcd.clearRect(kRingRowBeatX, y, kRingRowBeatW + 3, kSongHeight + 1);
+        for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) {
+            const Beat& beat = bank.beatLibrary[b];
+            if (!beat.getActive() || (songInterval == 0)) continue;
+            const uint16_t x = static_cast<uint16_t>(kRingRowBeatX + (static_cast<uint32_t>(beat.getStartInterval()) * kRingRowBeatW) / songInterval);
+            if ((beat.getFillType() == 0) && (beat.getFillPattern() < 2)) {
+                const uint8_t h = laneMarkHeight(beat.getVelocity(), (beat.getFillPattern() == 0) ? 100 : 50);
+                lcd.fillRect(x, y + kSongHeight - h, 2, h);
+            } else if ((beat.getFillType() == 0) && (beat.getFillPattern() == 2)) {
+                lcd.drawPixel(x, y + kSongHeight - 1);
+            } else {
+                const uint16_t xe = static_cast<uint16_t>(kRingRowBeatX + (static_cast<uint32_t>(beat.getEndInterval()) * kRingRowBeatW) / songInterval);
+                lcd.fillRect(x, y, (xe > x + 2) ? (xe - x - 1) : 2, kSongHeight);
+            }
+        }
+    }
+}
+
+void Controller::lcd_updateEuclidView() {
+    /// @brief Main loop: keeps the EUCLID view current (it is redrawn at most every 80 ms while
+    /// knobs turn), moves its playhead markers, and gives the lanes back when the page was left.
+    if (menu != EUCLID_MENU) {
+        if (ringsShown) lcd_restoreLanes();
+        return;
+    }
+    if (!ringsShown || ringsFull) {
+        lcd_drawEuclidView();
+    } else if (ringsDirty && ((HAL_GetTick() - ringsDrawnMs) >= 80)) {
+        lcd_drawEuclidViewData();
+    }
+    if (songInterval == 0) return;
+
+    // Playhead: a marker that orbits outside the rings, and one above the rows.
+    const uint16_t at = playInterval;
+    const RingPoint p = ringPoint(at, songInterval, kRingPlayRadius);
+    const uint16_t rowX = static_cast<uint16_t>(kRingRowBeatX + (static_cast<uint32_t>(at % songInterval) * kRingRowBeatW) / songInterval);
+    if (ringPlayShown && (p.x == ringPlayX) && (p.y == ringPlayY) && (rowX == ringPlayRowX)) return;
+    lcd.setBackColor(BLACK);
+    if (ringPlayShown) {
+        lcd.clearRect(static_cast<uint16_t>(ringPlayX - 1), static_cast<uint16_t>(ringPlayY - 1), 3, 3);
+        lcd.clearRect(ringPlayRowX, kRingRowPlayY, 3, 5);
+    }
+    lcd.setForeColor(YELLOW);
+    lcd.fillRect(static_cast<uint16_t>(p.x - 1), static_cast<uint16_t>(p.y - 1), 3, 3);
+    lcd.fillRect(rowX, kRingRowPlayY, 3, 5);
+    ringPlayX = p.x;
+    ringPlayY = p.y;
+    ringPlayRowX = rowX;
+    ringPlayShown = true;
+}
+
+void Controller::lcd_restoreLanes() {
+    /// @brief Leaving a full-area view: draws the ten lane frames again and everything in them.
+    ringsShown = false;
+    ringsDirty = false;
+    ringsFull = false;
+    ringPlayShown = false;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const RGB16Color* indexPtr = (const RGB16Color*)((i % 2) == 0 ? RAM_IMAGE_LAYER_A_PALETTE_ADDRESS : RAM_IMAGE_LAYER_B_PALETTE_ADDRESS);
+        const uint8_t* dataPtr = (const uint8_t*)((i % 2) == 0 ? RAM_IMAGE_LAYER_A_DATA_ADDRESS : RAM_IMAGE_LAYER_B_DATA_ADDRESS);
+        lcd.drawRGB16Image(indexPtr, dataPtr, 64, kImageLayerX, kImageLayerY[i], kImageLayerWidth, kImageLayerHeight);
+    }
+    lcd_drawMeasureBar();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) lcd_drawLayerTab(i);
 }
 
 /* NOTE page (BeatNote.h) ----------------------------------------------------*/

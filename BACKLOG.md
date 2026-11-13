@@ -86,7 +86,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 4. ✅ Autosave, part A: checksum-based change detection, AUTOSAVE OFF/2/5/10/20 min, two alternating reserved files written via rename, `RESTORE AUTOSAVE?` at power-on, autosave before LOAD over unsaved work. [32](#32-autosave). (M)
 5. ✅ Hardware test with Loopy Pro → Scarlett: 30 minutes at a fractional tempo in time, no runaway with a MIDI loop set up on purpose, overrun counter at 0 with clock and dense notes, power pulled mid-session restores the autosave. Then package, app (MIDI and autosave explained in their tabs), release.
 
-*V1.14 "Notes"* (built, waiting for the hardware test). Also in V1.14, asked by the owner: undo/redo ([28](#28-undo-for-bank-edits-lxr)), SONG + pads never turn the chain off, and the left S key (STYLE) became SOLO, with STYLE moved to a field on instrument page 3. After a freeze on the owner's device (cause not found yet): the clock lock no longer speeds up the sequencer timer while stopped, autosave shows SAVE / SDERR and its duration, and a crash now restarts the firmware and leaves a record (`CrashRecord.h`, `System/Crash.log`). A watchdog for stalls that are not faults is still open.
+*V1.14 "Notes"* (built, waiting for the hardware test). Also in V1.14, asked by the owner: undo/redo ([28](#28-undo-for-bank-edits-lxr)), SONG + pads never turn the chain off, and the left S key (STYLE) became SOLO, with STYLE moved to a field on instrument page 3. After a freeze on the owner's device (cause not found yet): the clock lock no longer speeds up the sequencer timer while stopped, autosave shows SAVE / SDERR and its duration, and a crash now restarts the firmware and leaves a record (`CrashRecord.h`, `System/Crash.log`). A watchdog for stalls that are not faults is still open. First UX items, also in V1.14: per-note marks and dimmed lanes on the main screen ([38](#38-per-note-settings-and-layer-state-visible-in-the-lanes)) and the Euclid rings view over the lane area ([45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)). Next view: the Song timeline.
 6. ✅ Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)
 7. ✅ NOTE page with VEL and PROB (plus undo/redo of beat and bank edits, [28](#28-undo-for-bank-edits-lxr)); MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
 8. ✅ COND (`A:B`, `!A:B`, `1ST`, `PRE`, `FILL` and negations) with the FILL performance key. (M)
@@ -588,6 +588,8 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 **Done when.** On the main screen you can tell loud from soft beats, see which beats are uncertain or conditional, and see at a glance which layers sound.
 
+**Status: built in V1.14, waiting for the hardware test** (`LaneView.h`, `test_laneview`). Height = velocity (FLAT 9 px, GHOST 6 px, velocity 1 = 2 px), hollow = chance below 100%, a yellow dot above = condition; a layer that is muted or silenced by a solo is drawn in dark gray (number, name, beats). A beat without note settings looks as before. Open: drawing a beat at its nudged position (a nudge is at most 2 px on a 32-step loop).
+
 ### 39. Graphic overviews: NOTE, EUCLID, SONG, ROUTING
 
 [U2–U5.] The 325×60 area on tabs 2–3 shows text on these four pages.
@@ -669,6 +671,8 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 **Cost.** Opening such a view draws the whole area once (about 285,000 pixels, like a bank change today), then only what changes: a playhead, a bar, a handle. That does not need [44](#44-notes-triggered-outside-the-main-loop-draw-budget). Continuous animation of the whole area does. Measure the page-open time in [37](#37-measure-first-drawing-speed-loop-time-audio-load) first.
 
 **Order.** Euclid rings and Song timeline first (the data exists, no new engine work), then Routing and the Filter curve, then MIX with 46, then the editors.
+
+**Status: Euclid rings built in V1.14, waiting for the hardware test** (`LaneView.h`, `lcd_drawEuclidView`). While the EUCLID page is open the lane area shows the ten layers as rings (layer 1 outside, one turn = one loop from the top, the selected layer cyan with its grid as ticks, larger dots for louder beats) and every layer's beats as a row with its count. The playhead is a marker that orbits outside the rings and one above the rows, not a clock hand: a hand would have to be erased and redrawn across all the dots. Everything that draws into a lane is held back while the view is shown (`laneViewHidden()`) and asks for a refresh of the view instead, at most every 80 ms; leaving the page redraws the lane frames, measure marks and lanes (`lcd_restoreLanes`). The other views can use the same mechanism. To check on the device: how long the view takes to open and to refresh while a knob turns, and whether pads still feel immediate meanwhile.
 
 ### 46. Sends: a level per layer into the shared effects (SENDS mode)
 

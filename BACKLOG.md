@@ -694,6 +694,8 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 - **Sample** (V1.15, waiting for the hardware test; `SampleView.h`, `test_sampleview`, `lcd_drawSampleViewData`): on instrument page 2 (START, END) the sample at full width: 840 columns, each the peak of its stretch (read from the sample's SDRAM sector, at most 64 reads per column, computed again only when the sample changes), cyan between START and END and gray outside, yellow handles with their values, title and length of the played part. Moving START or END redraws only the columns the handle crossed. Not built: a play cursor, zoom, slices; instrument pages 1 and 3 do not use the view.
 
+- **Step edit screen** (V1.15, waiting for the hardware test; `NoteView.h`, `test_noteview`, `lcd_drawNoteViewData`): the NOTE page's view. The layer's beats across the full width (852 px; 1/32 steps of a two-bar loop still get 13 px each): blocks (a fill as long as it lasts, a muted beat an outline, a ghost half height), a velocity lane and a chance lane under them (a hollow bar below 100 %), a yellow dot for a condition, a ruler with a tick per beat and the bar numbers, the selected beat in magenta and its details at the top right. A knob turn or another selected beat draws only the changed columns (a fingerprint per beat, kept in the SDRAM scratch); ADD + turn, a new layer or bank draws everything. Selecting and editing still use the NOTE fields (beat, velocity, chance, condition, nudge). Not built: placing and moving beats from this screen, pad entry and a play cursor.
+
 Open from this item: MIX (as the dub mixer, [49](#49-dub-mixer-page-dub-mode)), Note editor, Performance view.
 
 ### 46. Sends: a level per layer into the shared effects (SENDS mode)

@@ -19,6 +19,7 @@
 #include "SampleView.h"
 #include "DubMix.h"
 #include "DubView.h"
+#include "NoteView.h"
 #include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"

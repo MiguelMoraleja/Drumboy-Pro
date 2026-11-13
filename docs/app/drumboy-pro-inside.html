@@ -1040,9 +1040,9 @@ const IDEAS = [
       P.frame(906, 282, 7, 130, LC.G25); P.rect(907, 283, 5, 22, LC.MA); P.text("GR", 903, 416, 5, LC.G75);
       P.text("LIMIT -3 DB", 891, 428, 5, LC.G75, "C");
     } },
-  { id: "editor", group: 0, name: "Note editor", item: "45", size: "L", today: false,
+  { id: "editor", group: 0, name: "Step edit", item: "45", size: "L", today: false, built: "V1.15",
     note: ["",
-           "One layer across the whole lane area: its beats, a velocity lane and a chance lane, with conditions as tags. The selected beat is magenta; the eight fields edit it as on the NOTE page."],
+           "Built in V1.15 (waiting for the hardware test), as the NOTE page's view: one layer across the whole lane area: its beats as blocks (a fill is as long as it lasts, a muted beat is an outline, a ghost beat is half height), a velocity lane and a chance lane below (a hollow bar is a chance under 100 %), a yellow dot under a beat with a condition, and a ruler with the bar numbers. The selected beat is magenta, and the top right says what it is: its number, position, velocity, chance, condition and nudge. The NOTE fields choose and edit the beat; only the changed columns are drawn again. The picture is the first design: in the firmware the condition is a dot (the name is at the top right) and the bars are thinner."],
     draw() {
       mMenu("NT", 3);
       mField(0, "NOTE", "   8 OF 16"); mField(1, "VELOCITY", "55");
@@ -2229,6 +2229,7 @@ const RELEASES = [
   { v: "V1.15", date: "2026-11-13", status: "Testing, not published",
     nw: ["Layer meters: a small level bar in each lane (peak, -48 to 0 dB, falling slowly) with a red square for a block that reached full scale; dimmed layers show a gray bar",
          "Instrument page 2 (START, END): the lane area shows the sample at full width (peaks of 840 stretches), cyan between START and END, gray outside, with both handles and their values; turning START or END redraws only the columns the handle crossed",
+         "Step edit screen: while the NOTE page is open, the lane area shows the layer's beats across the full width, with a velocity lane and a chance lane under them, a dot under beats with a condition, a bar ruler, and the selected beat in magenta with its details at the top right",
          "DUB desk: while the DUB page is open, the lane area shows a strip per layer (number, name, ECHO and VERB send bars, a LEVEL fader with a live level meter, the bus) and the ECHO and VERB returns (fader for the WET, FEEDBACK bar on the echo); a pad press selects the strip, and a strip is drawn again only when something on it changes",
          "DUB mixer, first step: MIXER, then DUB, then ROUTING. DUB mode per song (MODE field, CHAIN or DUB): every layer is a strip with a BUS (FILT through EQ and Filter 1, or DIR straight to the master) and ECHO and VERB sends (0 to 100 %) into Effect 1 (through Filter 2) and the reverb; the effects and the reverb then run without their DRY, and their WET is the return level (ECHO RTN, VERB RTN). Turning MODE to DUB makes Effect 1 a delay and switches it and the reverb on. A pad press selects the strip; FEEDBACK is the delay's. Saved in the song file (older firmware ignores it)",
          "Status line in the strip under the top menu: while M, F, the left S, I, the right S or SONG is held, it says what the other keys do with it; otherwise it shows the MIDI clock (tempo, LOCKED) and when the last autosave was written"],

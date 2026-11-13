@@ -22046,7 +22046,7 @@ bool Controller::laneViewHidden() const {
     /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG, ROUTING,
     /// FILTER, EQ and instrument page 2 pages). Everything that draws into a lane checks it, and asks for the view to be
     /// refreshed instead.
-    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU);
+    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU);
 }
 
 void Controller::lcd_drawLaneView() {
@@ -22062,6 +22062,7 @@ void Controller::lcd_drawLaneView() {
         dubMeterDrawn[i] = 0xFFFF;
     }
     dubReturnDrawn[0] = dubReturnDrawn[1] = 0;
+    noteViewKey = 0;                                                  // and no step edit screen
     lcd_drawLaneViewData();
 }
 
@@ -22092,6 +22093,9 @@ void Controller::lcd_drawLaneViewData() {
             break;
         case DUB_MENU:
             lcd_drawDubViewData();
+            break;
+        case NOTE_MENU:
+            lcd_drawNoteViewData();
             break;
         default:
             break;
@@ -22197,6 +22201,7 @@ void Controller::lcd_updateLaneView() {
     if ((menu == EQ_MENU) && (eqViewState() != filterViewStateDrawn)) viewDirty = true;
     if ((menu == LAYER_INST_1_MENU) && (sampleViewState() != sampleViewStateDrawn)) viewDirty = true;
     if ((menu == DUB_MENU) && (dubViewState() != dubViewStateDrawn)) viewDirty = true;
+    if ((menu == NOTE_MENU) && (noteViewState() != noteViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -22968,6 +22973,222 @@ void Controller::lcd_drawDubMeters() {
             }
         }
     }
+}
+
+/* NOTE: the step edit screen (NoteView.h) ----------------------------------------*/
+
+static uint32_t* noteViewFingerprints() { return reinterpret_cast<uint32_t*>(RAM_VIEW_SCRATCH_ADDRESS + 3072); }  // [kBeatLibrarySize]
+static uint16_t* noteViewOldX() { return reinterpret_cast<uint16_t*>(RAM_VIEW_SCRATCH_ADDRESS + 3328); }          // [kBeatLibrarySize][2]: x and block width
+
+uint32_t Controller::noteViewState() const {
+    /// @brief A fingerprint of everything the step edit screen shows.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(static_cast<uint32_t>(selectedLayerNum + 1));
+    mix(static_cast<uint32_t>(selectedBeatNum + 2));
+    mix(activeSongBank);
+    mix(songInterval);
+    if (selectedLayerNum < 0) return h;
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    mix(static_cast<uint32_t>(bank.lastActiveBeatNum + 2));
+    for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) {
+        const Beat& beat = bank.beatLibrary[b];
+        if (!beat.getActive()) continue;
+        mix((static_cast<uint32_t>(beat.getStartInterval()) << 16) | beat.getEndInterval());
+        mix((static_cast<uint32_t>(beat.getFillType()) << 24) | (static_cast<uint32_t>(beat.getFillPattern()) << 16) | beat.getVelocity());
+        mix(beat.getNote());
+    }
+    return h;
+}
+
+void Controller::lcd_drawNoteViewBeat(uint8_t beatNum_, bool selected_) {
+    /// @brief One beat of the step edit screen: its block, condition dot, velocity bar and chance bar.
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    const Beat& beat = bank.beatLibrary[beatNum_];
+    if (!beat.getActive()) return;
+    const bool fill = (beat.getFillType() != 0);
+    const uint16_t x = noteViewX(beat.getStartInterval(), songInterval);
+    const uint16_t bw = noteViewBlockWidth(fill, beat.getStartInterval(), beat.getEndInterval(), songInterval);
+    const RGB16Color c = selected_ ? MAGENTA : CYAN;
+    const bool muted = !fill && (beat.getFillPattern() == 2), ghost = !fill && (beat.getFillPattern() == 1);
+
+    // 1. THE BLOCK: muted = outline, ghost = half height
+    lcd.setForeColor(c);
+    if (muted) {
+        lcd.drawRect(x, kNoteViewBlockY, bw, kNoteViewBlockHeight);
+    } else if (ghost) {
+        lcd.fillRect(x, kNoteViewBlockY + kNoteViewBlockHeight / 2, bw, kNoteViewBlockHeight / 2);
+    } else {
+        lcd.fillRect(x, kNoteViewBlockY, bw, kNoteViewBlockHeight);
+    }
+    // 2. A CONDITION: a yellow dot under the block
+    if (noteCondCode(beat.getNote()) != 0) {
+        lcd.setForeColor(YELLOW);
+        lcd.fillRect(x + bw / 2 - 1, kNoteViewDotY, 3, 3);
+    }
+    // 3. VELOCITY AND CHANCE: bars centred on the block
+    const uint16_t bx = x + (bw > kNoteViewBarWidth ? (bw - kNoteViewBarWidth) / 2 : 0);
+    const uint16_t vh = noteViewVelHeight(note_effectiveVelocity(beat));
+    lcd.setForeColor(c);
+    if (vh > 0) lcd.fillRect(bx, kNoteViewVelBase - vh, kNoteViewBarWidth, vh);
+    const uint8_t chance = noteChancePercent(beat.getNote());
+    const uint16_t ch = noteViewChanceHeight(chance);
+    if (ch > 0) {
+        if (chance < 100) {
+            lcd.drawRect(bx, kNoteViewChanceBase - ch, kNoteViewBarWidth, ch);
+        } else {
+            lcd.setForeColor(selected_ ? MAGENTA : GRAY_75);
+            lcd.fillRect(bx, kNoteViewChanceBase - ch, kNoteViewBarWidth, ch);
+        }
+    }
+}
+
+void Controller::lcd_drawNoteViewData() {
+    /// @brief Redraws the step edit screen of the selected layer and bank: the beats across the full
+    /// width with their velocity and chance. When only a few beats changed (a knob turn, another beat
+    /// selected) just their columns are drawn again; a new layer, bank or beat count draws it all.
+    noteViewStateDrawn = noteViewState();
+    if (selectedLayerNum < 0) return;
+    const Layer& layer = layerLibrary[selectedLayerNum];
+    const Bank& bank = layer.bankLibrary[activeSongBank];
+    uint32_t* const fingerprint = noteViewFingerprints();
+    uint16_t* const oldX = noteViewOldX();
+    lcd.setBackColor(BLACK);
+
+    // 1. THE LAYOUT KEY: another layer, bank, loop length or beat count draws everything
+    uint32_t key = 2166136261u;
+    const uint32_t keyParts[6] = {static_cast<uint32_t>(selectedLayerNum + 1), activeSongBank, songInterval, barInterval, measureInterval, static_cast<uint32_t>(bank.lastActiveBeatNum + 2)};
+    for (uint8_t k = 0; k < 6; k++) key = (key ^ keyParts[k]) * 16777619u;
+    for (const char* c = layer.instLoadedData.nameShortL; *c; c++) key = (key ^ static_cast<uint8_t>(*c)) * 16777619u;
+    if (key == 0) key = 1;
+    bool full = (key != noteViewKey);
+
+    // 2. WHICH BEATS CHANGED (and where they were)
+    uint8_t changed[kBeatLibrarySize];
+    uint8_t changedCount = 0;
+    uint32_t now[kBeatLibrarySize];
+    for (int16_t b = 0; b < kBeatLibrarySize; b++) {
+        uint32_t fp = 0;
+        if ((b <= bank.lastActiveBeatNum) && bank.beatLibrary[b].getActive()) {
+            const Beat& beat = bank.beatLibrary[b];
+            fp = 2166136261u;
+            const uint32_t parts[6] = {beat.getStartInterval(), beat.getEndInterval(), (static_cast<uint32_t>(beat.getFillType()) << 8) | beat.getFillPattern(), beat.getVelocity(), beat.getNote(),
+                                       (b == selectedBeatNum) ? 1u : 0u};
+            for (uint8_t k = 0; k < 6; k++) fp = (fp ^ parts[k]) * 16777619u;
+            if (fp == 0) fp = 1;
+        }
+        now[b] = fp;
+        if (!full && (fp != fingerprint[b])) changed[changedCount++] = static_cast<uint8_t>(b);
+    }
+    if (changedCount > 8) full = true;
+
+    // 3. THE FRAME
+    if (full) {
+        noteViewKey = key;
+        lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
+        char title[48];
+        snprintf(title, sizeof title, "LAYER %.2s  %.12s   BANK %u", kDataLayerNum[selectedLayerNum], layer.instLoadedData.nameShortL, static_cast<unsigned>(activeSongBank + 1));
+        lcd.setFont(FONT_07x09);
+        lcd.setAlignment(LEFT);
+        lcd.setForeColor(CYAN);
+        lcd.drawText(title, static_cast<uint16_t>(strlen(title)), 30, kNoteViewTitleY);
+        lcd.setFont(FONT_05x07);
+        lcd.setForeColor(GRAY_75);
+        lcd.drawText("BEAT", 4, 30, kNoteViewBlockY + 8);
+        lcd.drawText("VEL", 3, 30, kNoteViewVelBase - 60);
+        lcd.drawText("CHANCE", 6, 30, kNoteViewChanceBase - 40);
+        lcd.setAlignment(RIGHT);
+        lcd.drawText("127", 3, kNoteViewX - 4, kNoteViewVelBase - kNoteViewVelHeight - 3);
+        lcd.drawText("100", 3, kNoteViewX - 4, kNoteViewChanceBase - kNoteViewChanceHeight - 3);
+        lcd.setAlignment(LEFT);
+        lcd.setForeColor(GRAY_50);
+        noteViewRuler(songInterval, barInterval, measureInterval, [this](uint16_t x, bool bar, uint16_t number) {
+            lcd.setForeColor(bar ? GRAY_75 : GRAY_50);
+            lcd.drawVLine(x, kNoteViewTickY, bar ? kNoteViewTickHeight + 3 : kNoteViewTickHeight);
+            if (bar) {
+                char n[8];
+                snprintf(n, sizeof n, "%u", static_cast<unsigned>(number));
+                lcd.setFont(FONT_05x07);
+                lcd.setForeColor(GRAY_75);
+                lcd.drawText(n, static_cast<uint16_t>(strlen(n)), x + 3, kNoteViewRulerY);
+            }
+        });
+        lcd.setForeColor(GRAY_50);
+        lcd.drawHLine(kNoteViewX - 2, kNoteViewVelBase + 1, kNoteViewWidth + 4);
+        lcd.drawHLine(kNoteViewX - 2, kNoteViewChanceBase + 1, kNoteViewWidth + 4);
+        for (int16_t b = 0; b < kBeatLibrarySize; b++) fingerprint[b] = 0;
+        changedCount = 0;
+        for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) changed[changedCount++] = static_cast<uint8_t>(b);
+    } else if (changedCount > 0) {
+        // Clear the columns of the changed beats, where they were and where they are, in the three lanes.
+        uint16_t from = 0xFFFF, to = 0;
+        for (uint8_t i = 0; i < changedCount; i++) {
+            const uint8_t b = changed[i];
+            uint16_t f, t;
+            if (fingerprint[b] != 0) {
+                noteViewSpan(oldX[2 * b], oldX[2 * b + 1], f, t);
+                if (f < from) from = f;
+                if (t > to) to = t;
+            }
+            if (now[b] != 0) {
+                const Beat& beat = bank.beatLibrary[b];
+                noteViewSpan(noteViewX(beat.getStartInterval(), songInterval),
+                             noteViewBlockWidth(beat.getFillType() != 0, beat.getStartInterval(), beat.getEndInterval(), songInterval), f, t);
+                if (f < from) from = f;
+                if (t > to) to = t;
+            }
+        }
+        lcd.clearRect(from, kNoteViewBlockY, to - from + 1, kNoteViewDotY + 4 - kNoteViewBlockY);
+        lcd.clearRect(from, kNoteViewVelBase - kNoteViewVelHeight, to - from + 1, kNoteViewVelHeight);
+        lcd.clearRect(from, kNoteViewChanceBase - kNoteViewChanceHeight, to - from + 1, kNoteViewChanceHeight);
+        // Every beat that touches the cleared strip is drawn again, not only the changed ones.
+        changedCount = 0;
+        for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) {
+            if (now[b] == 0) continue;
+            const Beat& beat = bank.beatLibrary[b];
+            uint16_t f, t;
+            noteViewSpan(noteViewX(beat.getStartInterval(), songInterval), noteViewBlockWidth(beat.getFillType() != 0, beat.getStartInterval(), beat.getEndInterval(), songInterval), f, t);
+            if ((t >= from) && (f <= to)) changed[changedCount++] = static_cast<uint8_t>(b);
+        }
+    }
+
+    // 4. THE BEATS
+    for (uint8_t i = 0; i < changedCount; i++) lcd_drawNoteViewBeat(changed[i], changed[i] == selectedBeatNum);
+    for (int16_t b = 0; b < kBeatLibrarySize; b++) {
+        fingerprint[b] = now[b];
+        if (now[b] != 0) {
+            const Beat& beat = bank.beatLibrary[b];
+            oldX[2 * b] = noteViewX(beat.getStartInterval(), songInterval);
+            oldX[2 * b + 1] = noteViewBlockWidth(beat.getFillType() != 0, beat.getStartInterval(), beat.getEndInterval(), songInterval);
+        }
+    }
+    // The lane baselines the clearing may have cut.
+    lcd.setForeColor(GRAY_50);
+    lcd.drawHLine(kNoteViewX - 2, kNoteViewVelBase + 1, kNoteViewWidth + 4);
+    lcd.drawHLine(kNoteViewX - 2, kNoteViewChanceBase + 1, kNoteViewWidth + 4);
+
+    // 5. THE SELECTED BEAT IN WORDS (top right)
+    char line[72];
+    int len = 0;
+    if (note_validSelection()) {
+        const Beat& beat = bank.beatLibrary[selectedBeatNum];
+        char position[32], cond[12];
+        beatListPosition(beat.getStartInterval(), barInterval, measureInterval, position, sizeof(position));
+        noteCondName(noteCondCode(beat.getNote()), cond, sizeof(cond));
+        const char* cn = cond;
+        while (*cn == ' ') cn++;
+        const int nudge = noteNudgePercent(beat.getNote());
+        len = snprintf(line, sizeof line, "NOTE %d OF %d  AT %s  VEL %u  %u%%  %s  NUDGE %+d", selectedBeatNum + 1, bank.lastActiveBeatNum + 1, position,
+                       static_cast<unsigned>(note_effectiveVelocity(beat)), static_cast<unsigned>(noteChancePercent(beat.getNote())), (*cn) ? cn : "-", nudge);
+    } else {
+        len = snprintf(line, sizeof line, "NO BEATS IN THIS BANK");
+    }
+    if (len < 0) len = 0;
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(RIGHT);
+    lcd.clearRect(kNoteViewX + 250, kNoteViewTitleY, 610, 9);
+    lcd.setForeColor(WHITE);
+    lcd.drawText(line, static_cast<uint16_t>(len), kNoteViewX + kNoteViewWidth, kNoteViewTitleY);
 }
 
 void Controller::dub_select() {

@@ -563,7 +563,7 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 
 ---
 
-## UX and signal path (items 37–50)
+## UX and signal path (items 37–52)
 
 From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-path-analysis.md), which has the facts about the screen (960×540, 16-bit colour, drawn directly, no frame buffer), the layout, the cost estimates and the reasoning. The codes in brackets (U1, E2, S1…) are that document's. Mockups of the proposed screens, drawn with the device's own fonts and frame, are in the app's **Screen ideas** tab. Nothing here was measured on the device: item 37 comes first.
 
@@ -763,4 +763,8 @@ To judge on the device: whether 24 dB with high RESONANCE is too loud at the pea
 ### 51. Watchdog for stalls
 
 **Status: built in V1.14, tested on hardware, released in V1.14.** The independent watchdog (IWDG1) starts when start-up ends (start-up, with its animation and SD scan, is not watched) and is fed once per main-loop pass; 6 seconds without a feed restarts the device. The loop writes a stage number and the page into DTCM RAM as it goes (`WdStage` in `CrashRecord.h`), which survives the restart, so at start-up the record reads `CRASH 7 AT 0000sssm` (stage, page) and goes to `System/Crash.log` like a fault. Stages: 1 keys, 2 screen, 3 full-area view, 4 SD, 5 rhythm, 6 mixer, 7 autosave, 9 test page. It cannot name the exact function, only the part of the loop. Unverified: that the bootloader leaves the reset flag (RCC_RSR) alone; if a freeze restarts the device but shows no CRASH 7, that is why. Open: feeding it inside very long operations if a legitimate one ever exceeds 6 s (autosave, loading a song).
+
+### 52. Bug: fills do not appear in the new views
+
+Reported by the owner (2026-11-13) while testing V1.15: fills are not drawn on the step edit screen ([45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)), and the owner says they do not appear in the other views either ("neither"). Not investigated yet. To check first, on a layer with a fill: the step edit screen (NOTE page), the Euclid rings and rows, the Song thumbnails, and the main lanes, to see which of them show it. The views take a fill from `getFillType() != 0` with its end from `getEndInterval()`; if fills are stored another way (for example as a beat with a fill pattern and a time, as the lane code reads them), that is the first place to look. Left in the backlog by the owner's choice.
 

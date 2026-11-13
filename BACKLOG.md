@@ -563,7 +563,7 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 
 ---
 
-## UX and signal path (items 37–52)
+## UX and signal path (items 37–53)
 
 From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-path-analysis.md), which has the facts about the screen (960×540, 16-bit colour, drawn directly, no frame buffer), the layout, the cost estimates and the reasoning. The codes in brackets (U1, E2, S1…) are that document's. Mockups of the proposed screens, drawn with the device's own fonts and frame, are in the app's **Screen ideas** tab. Nothing here was measured on the device: item 37 comes first.
 
@@ -767,4 +767,20 @@ To judge on the device: whether 24 dB with high RESONANCE is too loud at the pea
 ### 52. Bug: fills do not appear in the new views
 
 Reported by the owner (2026-11-13) while testing V1.15: fills are not drawn on the step edit screen ([45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)), and the owner says they do not appear in the other views either ("neither"). Not investigated yet. To check first, on a layer with a fill: the step edit screen (NOTE page), the Euclid rings and rows, the Song thumbnails, and the main lanes, to see which of them show it. The views take a fill from `getFillType() != 0` with its end from `getEndInterval()`; if fills are stored another way (for example as a beat with a fill pattern and a time, as the lane code reads them), that is the first place to look. Left in the backlog by the owner's choice.
+
+### 53. Stereo engine: pan per channel through the whole path
+
+**Asked by the owner (2026-11-13):** panning by channel is what is missed most, and sound quality comes first: never sacrifice it, and specialized firmwares are fine if the engine needs them (rule recorded in `CLAUDE.md`). This is [36](#36-per-layer-panning) B, made the main plan: A alone (pan only for a layer that goes straight to the master) would do nothing in the default chain, where every layer goes through the EQ.
+
+**Law.** Constant power with 0 dB at the centre (left = √2 cos a, right = √2 sin a): a centred layer is exactly as it is today, so old songs sound the same, and a hard-panned one is as loud as a centred one. Smoothed per block, no zipper noise.
+
+**Phases, each a test build:**
+1. **Pan on the direct path and the DUB DIR strips:** a PAN field per layer (0-40, centre 20; the song block, shared with 3, 24, 35), applied to what goes straight to the master. Cheap, and the first thing to hear and judge the law. Layers that go through the chain stay centred and the field says so.
+2. **Stereo buses:** EQ, Filter 1 and Filter 2 process left and right (the same coefficients, a second set of states): twice the cost of those three, no change in the sound of a centred signal. Pan then survives the chain up to the effects.
+3. **Stereo effects:** the reverb already makes stereo from a mono input and stays so. Delay, chorus, flanger, phaser, overdrive, distortion, bitcrusher and the dynamics get a right channel. The cost is the memory, not the processor: a second 384 KB delay line per delay (about 650 KB of SDRAM is free, so two stereo delays need the undo history or a sample slot, a choice for the owner) and a second chorus buffer. Until then an effect's wet is mono and its dry stays stereo, which keeps the pan of the dry signal but not of the repeats.
+4. **The whole mix in stereo:** the DUB mixer's FILT bus, dub filter and returns in stereo ([49](#49-dub-mixer-page-dub-mode) D5, [48](#48-master-eq-stage-stereo-returns-a-third-send-effect)).
+
+**Headroom first.** Stereo EQ and filters, and then effects, add to a load that the owner's heavy dub test (several effects, 24 dB filters, reverb) already took to a watchdog restart (`CRASH 7`, [51](#51-watchdog-for-stalls)). So the order is: read the load figure of the next restart, [37](#37-measure-first-drawing-speed-loop-time-audio-load) measurements, then room: the data cache (off today; the audio, SD and MIDI DMA buffers need cache-safe placement), faster inner loops that sound the same, and a specialized build for heavy use if all that is not enough. No thinning of the sound.
+
+**Done when (1).** A hat panned left and a shaker panned right, both on DIR, are heard on their sides; a centred layer and a song from V1.14 sound identical. **(2)** The same through the EQ and filters.
 

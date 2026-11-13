@@ -12,7 +12,10 @@
 // A second crash before the first record was read (a crash during start-up) does not reset
 // again: the handler stays in its loop, as before V1.14, so the device can't reboot forever.
 //
-// A stall that is not a fault (a wait that never ends) is not caught: that needs a watchdog.
+// A stall that is not a fault (a wait that never ends) is caught by the watchdog (kind 7): the
+// main loop feeds the hardware watchdog every pass and writes what it is doing (a stage number,
+// WdStage below) into DTCM RAM; if the loop stops for WATCHDOG_SECONDS the device restarts, and at
+// start-up the record says "CRASH 7 AT 0000sssm": sss = the stage the loop was in, m = the page.
 #ifndef __CRASHRECORD_H
 #define __CRASHRECORD_H
 
@@ -30,6 +33,7 @@ enum {
     CRASH_USAGEFAULT = 4,
     CRASH_NMI = 5,
     CRASH_ERROR_HANDLER = 6,
+    CRASH_WATCHDOG = 7,  // the main loop stopped for too long; the watchdog restarted the device
 };
 
 typedef struct {
@@ -59,7 +63,7 @@ static inline void crashSeal(CrashRecord* r_) {
 
 // A record left by a crash (RAM after power-on holds noise: magic, kind and check must all fit).
 static inline int crashValid(const CrashRecord* r_) {
-    return (r_->magic == CRASH_MAGIC) && (r_->kind >= CRASH_HARDFAULT) && (r_->kind <= CRASH_ERROR_HANDLER) && (r_->check == crashCheck(r_));
+    return (r_->magic == CRASH_MAGIC) && (r_->kind >= CRASH_HARDFAULT) && (r_->kind <= CRASH_WATCHDOG) && (r_->check == crashCheck(r_));
 }
 
 static inline void crashClear(CrashRecord* r_) {
@@ -78,6 +82,53 @@ static inline int crashLogLine(const CrashRecord* r_, char* out_, size_t size_) 
                     (unsigned long)(r_->version >> 8), (unsigned long)(r_->version & 0xFF), (unsigned long)r_->kind, (unsigned long)r_->pc,
                     (unsigned long)r_->lr, (unsigned long)r_->psr, (unsigned long)r_->sp, (unsigned long)r_->cfsr, (unsigned long)r_->hfsr,
                     (unsigned long)r_->bfar, (unsigned long)r_->mmfar);
+}
+
+// Watchdog. The main loop writes where it is; DTCM RAM keeps it across the watchdog reset.
+#define WATCHDOG_STAGE_ADDRESS 0x2001FFA0u  // 16 bytes below the crash record
+#define WATCHDOG_SECONDS 6
+
+enum WdStageCode {
+    WD_STAGE_NONE = 0,
+    WD_STAGE_INPUT = 1,      // keys and encoders
+    WD_STAGE_SCREEN = 2,     // screen refresh
+    WD_STAGE_VIEW = 3,       // a full-area view
+    WD_STAGE_SD = 4,         // SD card maintenance
+    WD_STAGE_RHYTHM = 5,
+    WD_STAGE_MIXER = 6,
+    WD_STAGE_AUTOSAVE = 7,
+    WD_STAGE_MIDI = 8,
+    WD_STAGE_TEST = 9,
+    WD_STAGE_FILE = 10,      // loading or saving a file
+};
+
+typedef struct {
+    uint32_t stage;  // WdStageCode
+    uint32_t menu;   // page being shown
+    uint32_t loops;  // main loop passes since power-on
+    uint32_t spare;
+} WdStage;
+
+// The record a watchdog restart leaves: pc = (stage << 8) | menu so the screen shows it.
+static inline void crashFromWatchdog(CrashRecord* r_, const WdStage* w_, uint32_t version_) {
+    r_->magic = 0;
+    r_->kind = CRASH_WATCHDOG;
+    r_->pc = ((w_->stage & 0xFFFFu) << 8) | (w_->menu & 0xFFu);
+    r_->lr = w_->loops;
+    r_->psr = 0;
+    r_->sp = 0;
+    r_->cfsr = 0;
+    r_->hfsr = 0;
+    r_->bfar = 0;
+    r_->mmfar = 0;
+    r_->version = version_;
+    crashSeal(r_);
+}
+
+// Independent watchdog reload for a timeout: LSI is about 32 kHz, prescaler 256 -> 125 Hz.
+static inline uint32_t watchdogReload(uint32_t seconds_) {
+    const uint32_t r = seconds_ * 125u;
+    return (r > 4095u) ? 4095u : r;
 }
 
 // The capture itself (stm32h7xx_it.c): fills the record from an exception stack frame and resets.

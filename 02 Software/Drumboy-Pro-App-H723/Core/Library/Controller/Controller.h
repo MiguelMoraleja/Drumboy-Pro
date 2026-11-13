@@ -378,6 +378,8 @@ class Controller {
     // Crash record (CrashRecord.h): the last crash, shown at start-up.
     char crashText[32] = "";
     bool crash_report();
+    void watchdog_start();
+    void watchdog_stage(uint32_t stage_);
     void autosave_deleteAll();
     void autosave_update();
     void autosave_offerRestore();

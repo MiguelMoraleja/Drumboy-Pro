@@ -1,6 +1,7 @@
 // Host-side tests for the crash record (CrashRecord.h).
 
 #include <cstdio>
+#include <string>
 #include <cstring>
 #include <random>
 
@@ -68,6 +69,19 @@ int main() {
     CHECK(taken == 0, "%d noise records accepted", taken);
     CHECK(sizeof(CrashRecord) <= 64, "fits the reserved 64 bytes: %zu", sizeof(CrashRecord));
 
+    // Watchdog restart: the record carries the stage and the page, and is valid.
+    {
+        CrashRecord w;
+        WdStage st = {WD_STAGE_SD, 0x16, 123456u, 0};
+        crashFromWatchdog(&w, &st, (1u << 8) | 14u);
+        CHECK(crashValid(&w) && w.kind == CRASH_WATCHDOG, "watchdog record valid");
+        CHECK(w.pc == ((4u << 8) | 0x16u) && w.lr == 123456u, "stage and page: %08X", w.pc);
+        char text[32];
+        crashAlertText(&w, text, sizeof text);
+        CHECK(std::string(text) == "CRASH 7 AT 00000416", "alert %s", text);
+        CHECK(watchdogReload(6) == 750 && watchdogReload(1000) == 4095, "reload %u", watchdogReload(6));
+        CHECK(sizeof(WdStage) == 16 && WATCHDOG_STAGE_ADDRESS + sizeof(WdStage) <= CRASH_RECORD_ADDRESS, "stage block sits below the record");
+    }
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

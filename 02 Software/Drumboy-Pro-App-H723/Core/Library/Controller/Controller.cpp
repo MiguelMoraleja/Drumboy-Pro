@@ -1,4 +1,5 @@
 #include "Controller.h"
+#include "Version.h"
 
 // Edited copy of the selected layer's bank. Beat-list edits (BeatList.h) are made here and
 // swapped in by layerSong_commitBank() with the sequencer interrupt held off, so playback
@@ -347,20 +348,49 @@ void Controller::initialize() {
         // 7. The last crash, if the firmware restarted after one (CrashRecord.h); it is shown first
         // and the autosave question follows when it is dismissed.
         if (!crash_report()) autosave_offerRestore();
+
+        // 8. From here on the watchdog restarts the device if the main loop stops.
+        watchdog_start();
     }
+}
+
+void Controller::watchdog_start() {
+    /// @brief Starts the independent watchdog (it cannot be stopped again). The main loop feeds it
+    /// every pass; WATCHDOG_SECONDS without a feed restarts the device (see CrashRecord.h).
+    IWDG1->KR = 0xCCCC;
+    IWDG1->KR = 0x5555;
+    IWDG1->PR = 6;  // prescaler 256
+    IWDG1->RLR = watchdogReload(WATCHDOG_SECONDS);
+    uint32_t guard = 0;
+    while (IWDG1->SR && (++guard < 2000000u)) {
+    }
+    IWDG1->KR = 0xAAAA;
+}
+
+void Controller::watchdog_stage(uint32_t stage_) {
+    /// @brief Notes what the main loop is doing, for the record a watchdog restart leaves.
+    WdStage* w = reinterpret_cast<WdStage*>(WATCHDOG_STAGE_ADDRESS);
+    w->stage = stage_;
+    w->menu = static_cast<uint32_t>(menu);
 }
 
 void Controller::update() {
     /// @brief Main execution loop handling state transitions, I/O processing, and system tasks.
     /// Orchestrates high-level logic based on hardware flags and user input.
 
+    // The watchdog: feed it, and note the loop's pass (the start-up phase before it runs is exempt).
+    IWDG1->KR = 0xAAAA;
+    reinterpret_cast<WdStage*>(WATCHDOG_STAGE_ADDRESS)->loops++;
+
     if (menu == TEST_MENU) {
         // 1. DIAGNOSTIC OVERRIDE
         // Run test routines and skip normal runtime flow.
+        watchdog_stage(WD_STAGE_TEST);
         test();
     } else {
         // 2. INPUT PROCESSING
         // Read keyboard and encoder sources, then dispatch actions.
+        watchdog_stage(WD_STAGE_INPUT);
         if (keyboard.keyLayer.readFlag || keyboard.keyLeft.readFlag || keyboard.keyRight.readFlag) lastInputMs = HAL_GetTick();
         keyboard_read();
         keyboard_action();
@@ -369,6 +399,7 @@ void Controller::update() {
         encoder_read();
         encoder_action();
 
+        watchdog_stage(WD_STAGE_SCREEN);
         // 3. OUTPUT & UI REFRESH
         // Refresh LED outputs and LCD frame content.
         led_action();
@@ -380,17 +411,20 @@ void Controller::update() {
         preview_update();
 
         // Write the song to the autosave files when due and safe (Autosave.h).
+        watchdog_stage(WD_STAGE_AUTOSAVE);
         autosave_update();
 
         // CPU and MEM bars in the top-right box (LoadMeter.h).
         lcd_drawMonitor();
 
+        watchdog_stage(WD_STAGE_SD);
         // 4. FILESYSTEM MAINTENANCE
         // Recover SD subsystem if media access is lost.
         if (!sd.ready) {
             sd_reinitialize();
         }
 
+        watchdog_stage(WD_STAGE_RHYTHM);
         // 5. RHYTHM & QUANTIZATION LOCKS
         // Apply lock and unlock requests for rhythm parameters.
         if (rhythmUnlockActionFlag) {
@@ -416,6 +450,7 @@ void Controller::update() {
             }
         }
 
+        watchdog_stage(WD_STAGE_MIXER);
         // 6. AUDIO MIXER / AMPLIFIER CONTROL
         // Process pending mute or unmute actions for all outputs.
         if (masterUnmuteActionFlag) {
@@ -6455,6 +6490,14 @@ bool Controller::crash_report() {
     /// appends the record to System/Crash.log and shows "CRASH k AT address" until ADD or CLEAR.
     /// Returns true when a crash is being shown.
     CrashRecord* record = reinterpret_cast<CrashRecord*>(CRASH_RECORD_ADDRESS);
+    // A restart by the watchdog leaves no record of its own: make one from the stage the loop was in.
+    if ((RCC->RSR & RCC_RSR_IWDG1RSTF) && !crashValid(record)) {
+        crashFromWatchdog(record, reinterpret_cast<const WdStage*>(WATCHDOG_STAGE_ADDRESS), (static_cast<uint32_t>(FW_VERSION_MAJOR) << 8) | static_cast<uint32_t>(FW_VERSION_MINOR));
+    }
+    RCC->RSR |= RCC_RSR_RMVF;
+    WdStage* wd = reinterpret_cast<WdStage*>(WATCHDOG_STAGE_ADDRESS);
+    wd->stage = WD_STAGE_NONE;
+    wd->loops = 0;
     if (!crashValid(record)) {
         crashClear(record);
         return false;
@@ -8167,7 +8210,9 @@ void Controller::lcd_update() {
     lcd_drawPlay();
 
     // Full-area views (EUCLID, SONG, ROUTING): refresh, playhead, and the lanes back after leaving.
+    watchdog_stage(WD_STAGE_VIEW);
     lcd_updateLaneView();
+    watchdog_stage(WD_STAGE_SCREEN);
 
     // 2. TRANSPORT ICON UPDATE
     // Refresh reset/play/stop/record icons.

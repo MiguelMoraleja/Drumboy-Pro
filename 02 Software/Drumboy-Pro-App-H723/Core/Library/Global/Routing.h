@@ -37,6 +37,11 @@ struct RoutePatch {
 // Today's serial chain: EQ -> Filter 1 -> Filter 2 -> FX 1 -> FX 2 -> Reverb -> Master.
 const RoutePatch kDefaultRoutePatch = {{routeBit(NODE_F1), routeBit(NODE_F2), routeBit(NODE_FX1), routeBit(NODE_FX2), routeBit(NODE_REV), routeBit(NODE_MASTER)}};
 
+// DUB mode (DubMix.h): the bus strips feed EQ and Filter 1 (the dub filter) and go to the master;
+// the echo send goes through Filter 2 into Effect 1; Effect 2 is the third send; the reverb is
+// the reverb send. Every return goes to the master.
+const RoutePatch kDubRoutePatch = {{routeBit(NODE_F1), routeBit(NODE_MASTER), routeBit(NODE_FX1), routeBit(NODE_MASTER), routeBit(NODE_MASTER), routeBit(NODE_MASTER)}};
+
 // A module may send only to later nodes (no feedback); the Reverb always feeds the master.
 inline bool routeModuleDestValid(uint8_t module_, uint8_t mask_) {
     if (module_ >= kRouteModuleCount) return false;
@@ -326,12 +331,37 @@ inline void routeScatterFaded(const RouteBuffers& buf_, const float* src_, Route
     fade_.position = (next < kRouteFadeLength) ? static_cast<uint8_t>(next) : kRouteFadeLength;
 }
 
+// Send levels (DUB mode): a source goes to each node with its own gain. The gain moves linearly
+// from its value at the end of the last block to the target over the block, so a knob turned
+// while the signal plays makes no zipper noise. state_ keeps the gains between blocks.
+template <uint16_t kBlock>
+inline void routeScatterGains(const RouteBuffers& buf_, const float* src_, const float* target_, float* state_) {
+    for (uint8_t n = 0; n < kRouteNodeCount; n++) {
+        const float from = state_[n], to = target_[n];
+        state_[n] = to;
+        if ((from == 0.0f) && (to == 0.0f)) continue;
+        float* left = (n == NODE_MASTER) ? buf_.masterLeft : buf_.node[n];
+        float* right = (n == NODE_MASTER) ? buf_.masterRight : nullptr;  // the master gets both channels
+        const float step = (to - from) / static_cast<float>(kBlock);
+        float g = from;
+        for (uint16_t i = 0; i < kBlock; i++) {
+            g += step;
+            const float v = src_[i] * g;
+            left[i] += v;
+            if (right) right[i] += v;
+        }
+    }
+}
+
 // A source for one block: its buffer, where it goes, and its fade state. Sources that latch
 // their route per note (instrument layers) pass fade = nullptr and switch at the next hit.
+// A source with gains (DUB mode) goes to every node with its own level instead (routeScatterGains).
 struct RouteSource {
     const float* buffer;
     uint8_t mask;
     RouteFade* fade;
+    const float* gains = nullptr;  // per node, kRouteNodeCount of them
+    float* gainState = nullptr;    // the gains reached in the last block
 };
 
 // Fade state of the module outputs, kept between blocks.
@@ -355,7 +385,9 @@ inline void routeBlock(const RoutePatch& patch_, RouteState& state_, const Route
     // 2. SCATTER SOURCES
     for (uint8_t s = 0; s < sourceCount_; s++) {
         RouteSource& src = sources_[s];
-        if (src.fade) {
+        if (src.gains && src.gainState) {
+            routeScatterGains<kBlock>(buf_, src.buffer, src.gains, src.gainState);
+        } else if (src.fade) {
             routeFadeTarget(*src.fade, src.mask);
             routeScatterFaded<kBlock>(buf_, src.buffer, *src.fade);
         } else {

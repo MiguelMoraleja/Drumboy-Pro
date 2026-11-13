@@ -2229,6 +2229,7 @@ const RELEASES = [
   { v: "V1.15", date: "2026-11-13", status: "Testing, not published",
     nw: ["Layer meters: a small level bar in each lane (peak, -48 to 0 dB, falling slowly) with a red square for a block that reached full scale; dimmed layers show a gray bar",
          "Instrument page 2 (START, END): the lane area shows the sample at full width (peaks of 840 stretches), cyan between START and END, gray outside, with both handles and their values; turning START or END redraws only the columns the handle crossed",
+         "DUB mixer, first step: MIXER, then DUB, then ROUTING. DUB mode per song (MODE field, CHAIN or DUB): every layer is a strip with a BUS (FILT through EQ and Filter 1, or DIR straight to the master) and ECHO and VERB sends (0 to 100 %) into Effect 1 (through Filter 2) and the reverb; the effects and the reverb then run without their DRY, and their WET is the return level (ECHO RTN, VERB RTN). A pad press selects the strip; FEEDBACK is the echo's. Saved in the song file (older firmware ignores it)",
          "Status line in the strip under the top menu: while M, F, the left S, I, the right S or SONG is held, it says what the other keys do with it; otherwise it shows the MIDI clock (tempo, LOCKED) and when the last autosave was written"],
     fix: [] },
   { v: "V1.14", date: "2026-11-13", status: "GitHub release v1.14 · tested", pub: true,

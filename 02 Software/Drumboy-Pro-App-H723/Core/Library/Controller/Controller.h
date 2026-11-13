@@ -365,6 +365,17 @@ class Controller {
     void lcd_drawSampleViewData();
     void lcd_drawSampleColumns(uint16_t from_, uint16_t to_, uint8_t start_, uint8_t end_);
     void lcd_drawSampleHandles(uint8_t start_, uint8_t end_, bool clear_);
+
+    // DUB mode (DubMix.h)
+    DubMix dubMix;                                          // the strips; on = DUB mode (a song setting)
+    float dubGainState[kDubStrips][kRouteNodeCount] = {{0}};  // the gains each strip reached in the last block (audio interrupt)
+    float fxDryScale = 1.0f;                                // 0 in DUB mode: effects and reverb run without their DRY
+    uint8_t dubStripSel = 0;                                // the strip the DUB page edits (a pad press selects it)
+    void dub_select();
+    void dub_step(EncoderFunc function_, bool up_);
+    void lcd_drawDubMenu();
+    void lcd_drawDub_Data();
+    uint32_t file_dubCrc(uint32_t crc_);
     void layerInst_setSolo(uint8_t layerNum_, bool solo_);
     void layerInst_clearSolo();
     void lcd_drawLayerInst_StyleData(uint8_t layerNum_);

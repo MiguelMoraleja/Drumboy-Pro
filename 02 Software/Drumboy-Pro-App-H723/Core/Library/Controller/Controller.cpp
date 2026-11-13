@@ -1699,6 +1699,10 @@ void Controller::keyboard_action() {
                             // Browsing samples: the pad replays the preview, not the loaded sample.
                         } else {
                             Layer& layer = layerLibrary[layerNum];
+                            if ((menu == DUB_MENU) && (dubStripSel != layerNum)) {
+                                dubStripSel = layerNum;  // the DUB page edits the strip of the pad just pressed
+                                lcd_drawDub_Data();
+                            }
                             if (layerAudible(layerNum) && (layer.samplePlay)) layer_playBeat(layerNum, 1.0f);
                             if (recordActive) {
                                 undo_captureRecord(layerNum, activeSongBank);
@@ -2693,8 +2697,8 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_MIXER:
-                                // A second press opens the ROUTING page; the next press returns to the mixer.
-                                if (!alertFlag) (menu == MIXER_MENU) ? routing_select() : mixer_select();
+                                // MIXER, then DUB, then ROUTING, then the mixer again.
+                                if (!alertFlag) (menu == MIXER_MENU) ? dub_select() : ((menu == DUB_MENU) ? routing_select() : mixer_select());
                                 break;
 
                             case KEY_FILTER_0:
@@ -3390,10 +3394,10 @@ void Controller::encoder_update() {
 
     if (activeEncoderBank >= kEncoderBankSize) activeEncoderBank = kMinEncoderGlobalTab;
     const uint8_t encoderFuncCount = sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]);
-    // Every page with a row in encoderLocalFunction (NOTE_MENU is the last). A page past the table
+    // Every page with a row in encoderLocalFunction (DUB_MENU is the last). A page past the table
     // used to fall back to INIT_MENU, which binds the GLOBAL encoder functions.
     constexpr uint8_t kLocalRows = sizeof(encoderLocalFunction) / sizeof(encoderLocalFunction[0]);
-    static_assert(kLocalRows == NOTE_MENU + 1, "encoderLocalFunction needs one row per menu");
+    static_assert(kLocalRows == DUB_MENU + 1, "encoderLocalFunction needs one row per menu");
     const Menu menuSafe = (static_cast<uint8_t>(menu) < kLocalRows) ? menu : INIT_MENU;
 
     // 1. MODE/FUNCTION BINDING
@@ -4177,6 +4181,17 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             if (menu == NOTE_MENU) note_step(encoder[encoderNum_].function, true);
             break;
 
+        case ENC_DUB_LEVEL:
+        case ENC_DUB_BUS:
+        case ENC_DUB_ECHO:
+        case ENC_DUB_VERB:
+        case ENC_DUB_MODE:
+        case ENC_DUB_FEEDBACK:
+        case ENC_DUB_ECHORTN:
+        case ENC_DUB_VERBRTN:
+            if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, true);
+            break;
+
         case ENC_CHAIN_STEP:
         case ENC_CHAIN_BANK:
         case ENC_CHAIN_REPEATS:
@@ -4779,6 +4794,17 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_NOTE_COND:
         case ENC_NOTE_NUDGE:
             if (menu == NOTE_MENU) note_step(encoder[encoderNum_].function, false);
+            break;
+
+        case ENC_DUB_LEVEL:
+        case ENC_DUB_BUS:
+        case ENC_DUB_ECHO:
+        case ENC_DUB_VERB:
+        case ENC_DUB_MODE:
+        case ENC_DUB_FEEDBACK:
+        case ENC_DUB_ECHORTN:
+        case ENC_DUB_VERBRTN:
+            if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, false);
             break;
 
         case ENC_CHAIN_STEP:
@@ -6432,7 +6458,7 @@ uint32_t Controller::file_stateCrc() {
     }
     uint8_t chainData[kChainFileSize];
     chainWrite(songChain, chainData);
-    return file_noteCrc(autosaveCrc32(crc, chainData, kChainFileSize));
+    return file_dubCrc(file_noteCrc(autosaveCrc32(crc, chainData, kChainFileSize)));
 }
 
 /* Autosave (Autosave.h) -----------------------------------------------------*/
@@ -6753,6 +6779,7 @@ void Controller::file_readNotes(const char* fileName_) {
     /// @brief Applies the BTX block (BeatNote.h) of a song file to the loaded beats, matching each
     /// entry by layer, bank and start (as the loader quantized it). No block = all default.
     f_close(&sd.file);
+    dubClear(dubMix);  // a song without a DUB block plays as CHAIN
     if (f_open(&sd.file, fileName_, FA_READ) != FR_OK) return;
     uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
     UINT got = 0;
@@ -6775,8 +6802,21 @@ void Controller::file_readNotes(const char* fileName_) {
             }
             remaining -= chunk;
         }
+        // The DUB block follows the notes (older firmware never reads that far).
+        if (remaining == 0) {
+            uint8_t dubData[kDubFileSize] = {0};
+            UINT dubGot = 0;
+            if (f_read(&sd.file, dubData, kDubFileSize, &dubGot) == FR_OK) dubRead(dubMix, dubData, static_cast<uint16_t>(dubGot));
+        }
     }
     f_close(&sd.file);
+}
+
+uint32_t Controller::file_dubCrc(uint32_t crc_) {
+    /// @brief Feeds the DUB block (as written) into a CRC, so autosave sees mixer edits.
+    uint8_t dubData[kDubFileSize];
+    dubWrite(dubMix, dubData);
+    return autosaveCrc32(crc_, dubData, kDubFileSize);
 }
 
 SdResult Controller::sd_saveFile(uint8_t fileNum_) {
@@ -6864,7 +6904,12 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
                         uint8_t chainData[kChainFileSize];
                         chainWrite(songChain, chainData);
                         // Per-note settings after the chain (BeatNote.h).
-                        if ((f_write(&sd.file, chainData, kChainFileSize, &sd.byteswritten) == FR_OK) && file_writeNotes()) result = SD_OK;
+                        if ((f_write(&sd.file, chainData, kChainFileSize, &sd.byteswritten) == FR_OK) && file_writeNotes()) {
+                            // The DUB block after the notes (DubMix.h).
+                            uint8_t dubData[kDubFileSize];
+                            dubWrite(dubMix, dubData);
+                            if (f_write(&sd.file, dubData, kDubFileSize, &sd.byteswritten) == FR_OK) result = SD_OK;
+                        }
                     }
                 }
             }
@@ -8908,6 +8953,10 @@ void Controller::lcd_drawMenuIcon(Menu menu_) {
 
             case NOTE_MENU:
                 iconStr = "NT";
+                break;
+
+            case DUB_MENU:
+                iconStr = "DB";
                 break;
 
             case SONG_MENU:
@@ -14059,6 +14108,7 @@ void Controller::file_newAction() {
     // Reset song transport and playback runtime state.
     reset();
     chainClear(songChain);
+    dubClear(dubMix);
     chainRestart(songChain, chainPlay);
     songStepSel = 0;
 
@@ -22746,6 +22796,106 @@ void Controller::lcd_drawSampleViewData() {
     lcd.drawText(line, static_cast<uint16_t>(len > 0 ? len : 0), kSampleX + kSampleCols, kSampleTitleY + 3);
 }
 
+/* DUB page (DubMix.h) --------------------------------------------------------------*/
+
+void Controller::dub_select() {
+    /// @brief Opens the DUB page (the second page of the MIXER key): the selected strip's LEVEL,
+    /// BUS and sends on the top row, the desk (MODE, FEEDBACK and the two returns) on the bottom.
+    if (menu == DUB_MENU) return;
+    preMenu = menu;
+    preMenuTab = menuTab;
+    menuTab = -1;  // every field has its own encoder
+    menu = DUB_MENU;
+    lcd_transitionMenu();
+    lcd_transitionSelect();
+    lcd_drawDubMenu();
+    encoder_update();
+}
+
+void Controller::lcd_drawDubMenu() {
+    /// @brief Draws the DUB page: icon, strip number and the eight fields.
+    lcd_drawMenuIcon(DUB_MENU);
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
+    for (uint8_t f = 0; f < 8; f++) {
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_DUB_LEVEL + f].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[f], kMenuHeaderY[f]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_DUB_LEVEL + f].sign, kMenuSignTextSize, kMenuSignBoxX[f], kMenuSignBoxY[f]);
+    }
+    lcd_drawDub_Data();
+}
+
+void Controller::lcd_drawDub_Data() {
+    /// @brief Draws the DUB values: the selected strip (top row) and the desk (bottom row).
+    const DubStrip& strip = dubMix.strip[dubStripSel];
+    char text[8][kMenuDataTextSize + 1];
+    snprintf(text[0], sizeof text[0], "%10u", static_cast<unsigned>(layerLibrary[dubStripSel].level));
+    snprintf(text[1], sizeof text[1], "%10s", (strip.bus == DUB_BUS_DIR) ? "DIR" : "FILT");
+    snprintf(text[2], sizeof text[2], "%10u", static_cast<unsigned>(strip.echo));
+    snprintf(text[3], sizeof text[3], "%10u", static_cast<unsigned>(strip.verb));
+    snprintf(text[4], sizeof text[4], "%10s", dubMix.on ? "DUB" : "CHAIN");
+    const Effect& echo = effect[0];
+    if (echo.type == EF_DELAY) {
+        snprintf(text[5], sizeof text[5], "%10u", static_cast<unsigned>(echo.subEffect[EF_DELAY].cData));
+    } else {
+        snprintf(text[5], sizeof text[5], "%10s", "-");
+    }
+    snprintf(text[6], sizeof text[6], "%10u", static_cast<unsigned>(echo.subEffect[echo.type].fData));
+    snprintf(text[7], sizeof text[7], "%10u", static_cast<unsigned>(reverb.wet));
+    lcd_setMenuDataState(WHITE);
+    for (uint8_t f = 0; f < 8; f++) lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[f], kMenuDataY[f]);
+    // The strip number next to the icon.
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
+}
+
+void Controller::dub_step(EncoderFunc function_, bool up_) {
+    /// @brief Steps one DUB field: the selected strip's LEVEL, BUS, ECHO or VERB, or the desk's MODE,
+    /// echo FEEDBACK and the two returns (the echo's WET and the reverb's WET).
+    DubStrip& strip = dubMix.strip[dubStripSel];
+    auto stepSend = [up_](uint8_t& v) {
+        if (up_ && (v < kDubMaxSend)) v++;
+        if (!up_ && (v > 0)) v--;
+    };
+    switch (function_) {
+        case ENC_DUB_LEVEL: {
+            const uint8_t level = layerLibrary[dubStripSel].level;
+            layerInst_setLevel(dubStripSel, up_ ? (level < kMaxLayerLevel ? level + 1 : level) : (level > kMinLayerLevel ? level - 1 : level));
+            break;
+        }
+        case ENC_DUB_BUS:
+            strip.bus = (strip.bus == DUB_BUS_DIR) ? DUB_BUS_FILT : DUB_BUS_DIR;
+            break;
+        case ENC_DUB_ECHO:
+            stepSend(strip.echo);
+            break;
+        case ENC_DUB_VERB:
+            stepSend(strip.verb);
+            break;
+        case ENC_DUB_MODE:
+            dubMix.on = !dubMix.on;
+            break;
+        case ENC_DUB_FEEDBACK:
+            if (effect[0].type == EF_DELAY) {
+                const uint8_t v = effect[0].subEffect[EF_DELAY].cData;
+                effect_setCData(0, EF_DELAY, up_ ? (v < kMaxDelayFeedback ? v + 1 : v) : (v > kMinDelayFeedback ? v - 1 : v));
+            }
+            break;
+        case ENC_DUB_ECHORTN: {
+            const SubEffect& sub = effect[0].subEffect[effect[0].type];
+            effect_setFData(0, effect[0].type, up_ ? (sub.fData < sub.kMaxFData ? sub.fData + 1 : sub.fData) : (sub.fData > sub.kMinFData ? sub.fData - 1 : sub.fData));
+            break;
+        }
+        case ENC_DUB_VERBRTN:
+            reverb_setWet(up_ ? (reverb.wet < kMaxReverbWet ? reverb.wet + 1 : reverb.wet) : (reverb.wet > kMinReverbWet ? reverb.wet - 1 : reverb.wet));
+            break;
+        default:
+            break;
+    }
+    lcd_drawDub_Data();
+}
+
 /* NOTE page (BeatNote.h) ----------------------------------------------------*/
 
 void Controller::note_select() {
@@ -25311,7 +25461,8 @@ void Controller::processAudioRouting() {
 
     // 1. PATCH SNAPSHOT
     // The UI edits routePatch from the main loop; take one consistent copy per block.
-    const RoutePatch patch = routePatch;
+    const RoutePatch patch = dubMix.on ? kDubRoutePatch : routePatch;
+    fxDryScale = dubDryScale(dubMix.on);  // DUB mode: the effects get only the sends, so their dry is off
 
     // 2. SOURCES AND THEIR DESTINATIONS
     // Line-in and metronome run continuously and crossfade when re-routed. Layers use the
@@ -25319,8 +25470,16 @@ void Controller::processAudioRouting() {
     RouteSource sources[2 + kLayerLibrarySize];
     sources[0] = {audioReceive, routeMaskFromEntry(mixer.liMixerInMode), &lineInFade};
     sources[1] = {audioMetronome, routeMaskFromEntry(metroOut), &metroFade};
+    // DUB mode: a layer goes to every node with its own send gain (following its knob), not to the
+    // one destination latched at the note.
+    float dubGains[kDubStrips][kRouteNodeCount];
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-        sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr};
+        if (dubMix.on) {
+            dubNodeGains(dubMix.strip[i], 0, dubGains[i]);
+            sources[2 + i] = {audioLayer[i], 0, nullptr, dubGains[i], dubGainState[i]};
+        } else {
+            sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr};
+        }
     }
 
     // 3. NODE BUFFERS
@@ -25350,6 +25509,15 @@ void Controller::processAudioRouting() {
                 break;
             default:
                 break;
+        }
+        // DUB mode: a send into an effect that is switched off is a send into nothing, not a dry copy.
+        if (dubMix.on) {
+            if (((module_ == NODE_FX1) && !effect[0].active && !effect[0].genTransition.active) || ((module_ == NODE_FX2) && !effect[1].active && !effect[1].genTransition.active)) {
+                memset((module_ == NODE_FX1) ? audioEffect[0] : audioEffect[1], 0, I2S_BLOCK_SIZE * sizeof(float));
+            } else if ((module_ == NODE_REV) && !reverb.active && !reverb.genTransition.active) {
+                memset(audioReverb_L, 0, I2S_BLOCK_SIZE * sizeof(float));
+                memset(audioReverb_R, 0, I2S_BLOCK_SIZE * sizeof(float));
+            }
         }
     });
 }
@@ -25473,7 +25641,7 @@ void Controller::processAudioReverb() {
             float outL, outR;
 
             // Apply manual wet/dry mix
-            float mixedSignal = (processedSignal * reverb.wetFloat) + (inputSample * reverb.dryFloat);
+            float mixedSignal = (processedSignal * reverb.wetFloat) + (inputSample * reverb.dryFloat * fxDryScale);
 
             // Handle Parameter Transitions
             if (reverb.genTransition.active) {
@@ -25682,7 +25850,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // 3. OUTPUT MIXING
                 // mixData represents the "Wet" signal (the delay repeats).
                 // Using eDry and fWet for final balance.
-                float dryLevel = (float)delay_.eDry * kInv100;
+                float dryLevel = (float)delay_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)delay_.fWet * kInv100;
 
                 // Wet is the delayed sound, Dry is the pure input.
@@ -25765,7 +25933,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 3. OUTPUT MIXING
                 // Maps menu values (0-100) to linear dry/wet levels.
-                float dryLevel = (float)chorus_.eDry * kInv100;
+                float dryLevel = (float)chorus_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)chorus_.fWet * kInv100;
 
                 // Mix the modulated signal (Wet) with the pure original input (Dry).
@@ -25837,7 +26005,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 4. OUTPUT MIXING
                 // Correct dry/wet mapping: input is pure dry, dataFlanger is pure wet.
-                float dryLevel = (float)flanger_.eDry * kInv100;
+                float dryLevel = (float)flanger_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)flanger_.fWet * kInv100;
 
                 float mixData = (dataFlanger * wetLevel) + (input * dryLevel);
@@ -25939,7 +26107,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 7. OUTPUT MIXING & TRANSITION
                 // Mix Wet and Dry signals based on menu parameters (0-100 scale).
-                float dryLevel = (float)phaser_.eDry * kInv100;
+                float dryLevel = (float)phaser_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)phaser_.fWet * kInv100;
                 float mixData = (stage2Output * wetLevel) + (input * dryLevel);
 
@@ -26014,7 +26182,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 5. OUTPUT MIX & TRANSITION
                 // Apply attenuation, mix wet/dry path, and handle transitions.
-                mixData = (input * attenuation * effect_.wetFloat) + (input * effect_.dryFloat);
+                mixData = (input * attenuation * effect_.wetFloat) + (input * effect_.dryFloat * fxDryScale);
                 if (effect_.genTransition.active) {
                     output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
                 } else {
@@ -26090,7 +26258,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 5. OUTPUT MIX & TRANSITION
                 // Apply gain change, mix wet/dry path, and handle transitions.
-                mixData = (input * attenuation * effect_.wetFloat) + (input * effect_.dryFloat);
+                mixData = (input * attenuation * effect_.wetFloat) + (input * effect_.dryFloat * fxDryScale);
                 if (effect_.genTransition.active) {
                     output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
                 } else {
@@ -26148,7 +26316,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 ov_.lp_y1 = y0;
 
                 // 5. OUTPUT MIXING & TRANSITION
-                float dryLevel = (float)ov_.eDry * kInv100;
+                float dryLevel = (float)ov_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)ov_.fWet * kInv100;
 
                 // Combine processed (Wet) and original (Dry) signals

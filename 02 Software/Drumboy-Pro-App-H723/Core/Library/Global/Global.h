@@ -17,6 +17,7 @@
 #include "FilterCurve.h"
 #include "StatusLine.h"
 #include "SampleView.h"
+#include "DubMix.h"
 #include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"
@@ -1271,6 +1272,15 @@ typedef enum {
 
     ENC_INST_2_STYLE                                = 0x7F,  // layer STYLE (page 3; the left S key is SOLO since V1.14)
 
+    ENC_DUB_LEVEL                                   = 0x80,  // DUB page (DubMix.h): the selected strip, then the desk
+    ENC_DUB_BUS                                     = 0x81,
+    ENC_DUB_ECHO                                    = 0x82,
+    ENC_DUB_VERB                                    = 0x83,
+    ENC_DUB_MODE                                    = 0x84,
+    ENC_DUB_FEEDBACK                                = 0x85,
+    ENC_DUB_ECHORTN                                 = 0x86,
+    ENC_DUB_VERBRTN                                 = 0x87,
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1327,7 +1337,10 @@ const EncoderFunc encoderLocalFunction[][8] = {
     {ENC_CHAIN_STEP, ENC_CHAIN_BANK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_CHAIN_REPEATS, ENC_CHAIN_LENGTH, ENC_CHAIN_END, ENC_CHAIN_PLAY},
     // NOTE_MENU = 0x17
     // Tabs 2-3 show the selected note.
-    {ENC_NOTE_BEAT, ENC_NOTE_VEL, ENC_FNC_NONE, ENC_FNC_NONE, ENC_NOTE_PROB, ENC_NOTE_COND, ENC_NOTE_NUDGE, ENC_FNC_NONE}};
+    {ENC_NOTE_BEAT, ENC_NOTE_VEL, ENC_FNC_NONE, ENC_FNC_NONE, ENC_NOTE_PROB, ENC_NOTE_COND, ENC_NOTE_NUDGE, ENC_FNC_NONE},
+    // DUB_MENU = 0x18
+    // Top row: the selected strip. Bottom row: the desk.
+    {ENC_DUB_LEVEL, ENC_DUB_BUS, ENC_DUB_ECHO, ENC_DUB_VERB, ENC_DUB_MODE, ENC_DUB_FEEDBACK, ENC_DUB_ECHORTN, ENC_DUB_VERBRTN}};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1491,7 +1504,16 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_NOTE_COND,           ENC_RES_M, "CONDITION ", "NOTE  ", "   ", false},
     {ENC_NOTE_NUDGE,          ENC_RES_M, "NUDGE     ", "NOTE  ", "  %", false},
 
-    {ENC_INST_2_STYLE,        ENC_RES_S, "STYLE     ", "LAYER ", "   ", false}
+    {ENC_INST_2_STYLE,        ENC_RES_S, "STYLE     ", "LAYER ", "   ", false},
+
+    {ENC_DUB_LEVEL,           ENC_RES_M, "LEVEL     ", "DUB   ", "  %", false},
+    {ENC_DUB_BUS,             ENC_RES_S, "BUS       ", "DUB   ", "   ", false},
+    {ENC_DUB_ECHO,            ENC_RES_M, "ECHO      ", "DUB   ", "  %", false},
+    {ENC_DUB_VERB,            ENC_RES_M, "VERB      ", "DUB   ", "  %", false},
+    {ENC_DUB_MODE,            ENC_RES_S, "MODE      ", "DUB   ", "   ", false},
+    {ENC_DUB_FEEDBACK,        ENC_RES_M, "FEEDBACK  ", "DUB   ", "  %", false},
+    {ENC_DUB_ECHORTN,         ENC_RES_M, "ECHO RTN  ", "DUB   ", "  %", false},
+    {ENC_DUB_VERBRTN,         ENC_RES_M, "VERB RTN  ", "DUB   ", "  %", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -1619,7 +1641,8 @@ typedef enum {
     ROUTING_MENU                                    = 0x14,  // MIXER pressed again
     EUCLID_MENU                                     = 0x15,  // LAYER SONG tapped on the Layer Song page
     SONG_MENU                                       = 0x16,  // song mode: the SONG key tapped on its own
-    NOTE_MENU                                       = 0x17   // per-note settings: LAYER SONG tapped on the EUCLID page
+    NOTE_MENU                                       = 0x17,  // per-note settings: LAYER SONG tapped on the EUCLID page
+    DUB_MENU                                        = 0x18   // the dub mixer: the second page of the MIXER key (DubMix.h)
 } Menu;
 
 typedef enum {

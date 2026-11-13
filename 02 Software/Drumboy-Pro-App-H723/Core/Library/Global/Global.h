@@ -10,6 +10,12 @@
 #include "Lfo.h"
 #include "MCP23017.h"
 #include "Autosave.h"
+#include "BeatNote.h"
+#include "CrashRecord.h"
+#include "LaneView.h"
+#include "LoadMeter.h"
+#include "FilterCurve.h"
+#include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"
 #include "MidiParser.h"
@@ -397,6 +403,11 @@ static_assert(0xC0EA6000u + kPreviewRingSize * 4u <= 0xC0FB9640u, "preview ring 
 #define RAM_IMAGE_LAYER_B_DATA_ADDRESS              0xC0FEBEBC + 128            // 28.520 bytes
 
 //                                                  0xC0FF2EA4 - 0xC0FFFFFF     : 53.595 bytes free
+
+// Scratch for the full-area views, in that free tail: the two filter curves as drawn (their y per
+// point), so a changed curve is erased by redrawing it instead of clearing the whole plot.
+#define RAM_VIEW_SCRATCH_ADDRESS                    0xC0FF3000u
+static_assert((RAM_VIEW_SCRATCH_ADDRESS >= 0xC0FF2EA4u) && (RAM_VIEW_SCRATCH_ADDRESS + 2u * kCurvePoints * sizeof(uint16_t) <= 0xC0FFFFF0u), "view scratch must fit the free tail of the SDRAM");
 
 ////////////////////////////////////////////////////////////////////////////////
 /* Sdram Constants -----------------------------------------------------------*/
@@ -865,6 +876,7 @@ const char kHeaderDry[]                             = "DRY       ";
 const char kHeaderDrive[]                           = "DRIVE     ";
 const char kHeaderEnd[]                             = "END       ";
 const char kHeaderOut[]                             = "OUT       ";
+const char kHeaderStyle[]                           = "STYLE     ";
 const char kHeaderFeedback[]                        = "FEEDBACK  ";
 const char kHeaderFill[]                            = "FILL      ";
 const char kHeaderFrequency[]                       = "FREQUENCY";
@@ -1248,6 +1260,14 @@ typedef enum {
 
     ENC_METRO_AUTOSAVE                              = 0x79,  // autosave interval (Metronome tab 6)
 
+    ENC_NOTE_BEAT                                   = 0x7A,  // NOTE page (BeatNote.h)
+    ENC_NOTE_VEL                                    = 0x7B,
+    ENC_NOTE_PROB                                   = 0x7C,
+    ENC_NOTE_COND                                   = 0x7D,
+    ENC_NOTE_NUDGE                                  = 0x7E,
+
+    ENC_INST_2_STYLE                                = 0x7F,  // layer STYLE (page 3; the left S key is SOLO since V1.14)
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1287,7 +1307,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // LAYER_INST_1_MENU = 0x10
     {ENC_INST_1_INST, ENC_INST_1_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_1_START, ENC_INST_1_END, ENC_INST_1_TIMING, ENC_INST_1_PROB},
     // LAYER_INST_2_MENU = 0x11
-    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
+    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_INST_2_STYLE, ENC_FNC_NONE, ENC_FNC_NONE},
     // LAYER_SONG_MENU = 0x12
     // Tabs 2-3 hold the fill graph.
     {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_SONG_MOVE, ENC_SONG_SHIFT},
@@ -1301,7 +1321,10 @@ const EncoderFunc encoderLocalFunction[][8] = {
     {ENC_EUC_STEPS, ENC_EUC_HITS, ENC_FNC_NONE, ENC_FNC_NONE, ENC_EUC_ROTATE, ENC_EUC_GRID, ENC_EUC_MODE, ENC_EUC_ACCENTS},
     // SONG_MENU = 0x16
     // Tabs 2-3 show the chain.
-    {ENC_CHAIN_STEP, ENC_CHAIN_BANK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_CHAIN_REPEATS, ENC_CHAIN_LENGTH, ENC_CHAIN_END, ENC_CHAIN_PLAY}};
+    {ENC_CHAIN_STEP, ENC_CHAIN_BANK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_CHAIN_REPEATS, ENC_CHAIN_LENGTH, ENC_CHAIN_END, ENC_CHAIN_PLAY},
+    // NOTE_MENU = 0x17
+    // Tabs 2-3 show the selected note.
+    {ENC_NOTE_BEAT, ENC_NOTE_VEL, ENC_FNC_NONE, ENC_FNC_NONE, ENC_NOTE_PROB, ENC_NOTE_COND, ENC_NOTE_NUDGE, ENC_FNC_NONE}};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1457,7 +1480,15 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_CHAIN_END,           ENC_RES_S, "END       ", "SONG  ", "   ", false},
     {ENC_CHAIN_PLAY,          ENC_RES_S, "CHAIN     ", "SONG  ", "   ", false},
 
-    {ENC_METRO_AUTOSAVE,      ENC_RES_S, "AUTOSAVE  ", "METRO ", "MIN", false}
+    {ENC_METRO_AUTOSAVE,      ENC_RES_S, "AUTOSAVE  ", "METRO ", "MIN", false},
+
+    {ENC_NOTE_BEAT,           ENC_RES_M, "NOTE      ", "NOTE  ", "   ", false},
+    {ENC_NOTE_VEL,            ENC_RES_F, "VELOCITY  ", "NOTE  ", "   ", false},
+    {ENC_NOTE_PROB,           ENC_RES_M, "CHANCE    ", "NOTE  ", "  %", false},
+    {ENC_NOTE_COND,           ENC_RES_M, "CONDITION ", "NOTE  ", "   ", false},
+    {ENC_NOTE_NUDGE,          ENC_RES_M, "NUDGE     ", "NOTE  ", "  %", false},
+
+    {ENC_INST_2_STYLE,        ENC_RES_S, "STYLE     ", "LAYER ", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -1584,7 +1615,8 @@ typedef enum {
     TEST_MENU                                       = 0x13,
     ROUTING_MENU                                    = 0x14,  // MIXER pressed again
     EUCLID_MENU                                     = 0x15,  // LAYER SONG tapped on the Layer Song page
-    SONG_MENU                                       = 0x16   // song mode: the SONG key tapped on its own
+    SONG_MENU                                       = 0x16,  // song mode: the SONG key tapped on its own
+    NOTE_MENU                                       = 0x17   // per-note settings: LAYER SONG tapped on the EUCLID page
 } Menu;
 
 typedef enum {
@@ -1620,6 +1652,7 @@ typedef enum {
     ALERT_CLEARERROR                                = 0x17,
     ALERT_SHUTDOWN                                  = 0x18,
     ALERT_RESTOREAUTOSAVE                           = 0x19,
+    ALERT_CRASH                                     = 0x1A,  // the last crash (CrashRecord.h), until ADD or CLEAR
     ALERT_OFF                                       = 0x20
 } AlertType;
 
@@ -2166,6 +2199,7 @@ const uint8_t kInitialQuantize                      = 2;
 
 const uint16_t kMeasureInterval                     = 800;
 const uint16_t kMeasureHalfInterval                 = kMeasureInterval / 2;
+const uint16_t kUndoEntries                         = 64;      // undo steps of one bank (UndoLog.h), stored in SDRAM
 const uint32_t kClockLockMinPeriodUs                = 40;      // sequencer timer limits while locked to MIDI clock
 const uint32_t kClockLockMaxPeriodUs                = 60000;   // (TIM15 counts microseconds, 16 bits)
 const uint16_t kMinSongInterval                     = 800;
@@ -2545,7 +2579,7 @@ const uint8_t kMinFilterType                        = 1;
 const uint8_t kMaxFilterType                        = 4;
 
 const uint8_t kMinFilterSlope                       = 0;
-const uint8_t kMaxFilterSlope                       = 1;
+const uint8_t kMaxFilterSlope                       = 2;                        // 06, 12, 24 dB per octave
 
 const uint8_t kMinFilterFrequency                   = 0;
 const uint8_t kMaxFilterFrequency                   = 199;
@@ -2600,7 +2634,8 @@ struct FilterSlopeData {
 
 const struct FilterSlopeData kFilterSlopeDataLibrary[] = {
     {"        06"}, 
-    {"        12"}};
+    {"        12"}, 
+    {"        24"}};
 
 struct FilterFrequencyData {
     char nameLongR[11];
@@ -2812,80 +2847,26 @@ struct Filter {
         cleanMemory();
     }
 
+    // Second section (the 24 dB slope) and its history.
+    BiquadCoef stage2;
+    uint8_t stages                                  = 1;
+    float u1                                        = 0.0f;
+    float u2                                        = 0.0f;
+    float v1                                        = 0.0f;
+    float v2                                        = 0.0f;
+
     void calculateCoef() {
-        float freq = (float)kFilterFrequencyDataLibrary[frequency].data;
-        float Q = kFilterResonanceDataLibrary[resonance].data;
-        float cosw0, alpha;
-        float b0_tmp, b1_tmp, b2_tmp; 
-        float a0_tmp, a1_tmp, a2_tmp;
-        float normFreq = freq * kInvSampleRate;
-        cosw0 = cosFast(normFreq);
-        float sinw0 = sinFast(normFreq);
-        alpha = sinw0 / (2.0f * Q);
-
-        switch (type) {
-            case FIL_OFF:
-                b0_tmp = 1.0f;
-                b1_tmp = 0.0f;
-                b2_tmp = 0.0f;
-                a0_tmp = 1.0f;
-                a1_tmp = 0.0f;
-                a2_tmp = 0.0f;
-                break;
-
-            case FIL_LPF:
-                b0_tmp = (1.0f - cosw0) * 0.5f;
-                b1_tmp = 1.0f - cosw0;
-                b2_tmp = (1.0f - cosw0) * 0.5f;
-                a0_tmp = 1.0f + alpha;
-                a1_tmp = -2.0f * cosw0;
-                a2_tmp = 1.0f - alpha;
-                break;
-
-            case FIL_HPF:
-                b0_tmp = (1.0f + cosw0) * 0.5f;
-                b1_tmp = -(1.0f + cosw0);
-                b2_tmp = (1.0f + cosw0) * 0.5f;
-                a0_tmp = 1.0f + alpha;
-                a1_tmp = -2.0f * cosw0;
-                a2_tmp = 1.0f - alpha;
-                break;
-
-            case FIL_BPF:
-                b0_tmp = alpha;
-                b1_tmp = 0.0f;
-                b2_tmp = -alpha;
-                a0_tmp = 1.0f + alpha;
-                a1_tmp = -2.0f * cosw0;
-                a2_tmp = 1.0f - alpha;
-                break;
-
-            case FIL_BSF:  // Notch
-                b0_tmp = 1.0f;
-                b1_tmp = -2.0f * cosw0;
-                b2_tmp = 1.0f;
-                a0_tmp = 1.0f + alpha;
-                a1_tmp = -2.0f * cosw0;
-                a2_tmp = 1.0f - alpha;
-                break;
-
-            default:  // Pass-through
-                b0_tmp = 1.0f;
-                b1_tmp = 0.0f;
-                b2_tmp = 0.0f;
-                a0_tmp = 1.0f;
-                a1_tmp = 0.0f;
-                a2_tmp = 0.0f;
-                break;
-        }
-
-        // Normalize
-        float invA0 = 1.0f / a0_tmp;
-        b0 = b0_tmp * invA0;
-        b1 = b1_tmp * invA0;
-        b2 = b2_tmp * invA0;
-        a1 = a1_tmp * invA0;
-        a2 = a2_tmp * invA0;
+        // The design is in FilterCurve.h, shared with the curve on the filter page.
+        BiquadCoef first, second;
+        const uint8_t count = filterDesign(type, slope, (float)kFilterFrequencyDataLibrary[frequency].data, kFilterResonanceDataLibrary[resonance].data,
+                                           AUDIO_SAMPLE_RATE, first, second);
+        b0 = first.b0;
+        b1 = first.b1;
+        b2 = first.b2;
+        a1 = first.a1;
+        a2 = first.a2;
+        stage2 = second;
+        stages = count;
     }
 
     void cleanMemory() {
@@ -2893,6 +2874,10 @@ struct Filter {
         x2 = 0.0f;
         y1 = 0.0f;
         y2 = 0.0f;
+        u1 = 0.0f;
+        u2 = 0.0f;
+        v1 = 0.0f;
+        v2 = 0.0f;
     }
 
     Filter(uint8_t num_) : num(num_) {}

@@ -1,4 +1,5 @@
 #include "Controller.h"
+#include "Version.h"
 
 // Edited copy of the selected layer's bank. Beat-list edits (BeatList.h) are made here and
 // swapped in by layerSong_commitBank() with the sequencer interrupt held off, so playback
@@ -289,6 +290,7 @@ void Controller::initialize() {
         HAL_HalfDuplex_EnableReceiver(&huart1);
         HAL_HalfDuplex_EnableTransmitter(&huart6);
         HAL_UART_Receive_IT(&huart1, &midiRxData, 1);
+        crashClear(reinterpret_cast<CrashRecord*>(CRASH_RECORD_ADDRESS));  // start-up done (CrashRecord.h)
     }
 
     // 5. NORMAL SYSTEM BOOT
@@ -342,21 +344,53 @@ void Controller::initialize() {
         autosave_markClean();
         autosaveTiming.lastCheckMs = HAL_GetTick();
         lastInputMs = HAL_GetTick();
-        autosave_offerRestore();
+
+        // 7. The last crash, if the firmware restarted after one (CrashRecord.h); it is shown first
+        // and the autosave question follows when it is dismissed.
+        if (!crash_report()) autosave_offerRestore();
+
+        // 8. From here on the watchdog restarts the device if the main loop stops.
+        watchdog_start();
     }
+}
+
+void Controller::watchdog_start() {
+    /// @brief Starts the independent watchdog (it cannot be stopped again). The main loop feeds it
+    /// every pass; WATCHDOG_SECONDS without a feed restarts the device (see CrashRecord.h).
+    IWDG1->KR = 0xCCCC;
+    IWDG1->KR = 0x5555;
+    IWDG1->PR = 6;  // prescaler 256
+    IWDG1->RLR = watchdogReload(WATCHDOG_SECONDS);
+    uint32_t guard = 0;
+    while (IWDG1->SR && (++guard < 2000000u)) {
+    }
+    IWDG1->KR = 0xAAAA;
+}
+
+void Controller::watchdog_stage(uint32_t stage_) {
+    /// @brief Notes what the main loop is doing, for the record a watchdog restart leaves.
+    WdStage* w = reinterpret_cast<WdStage*>(WATCHDOG_STAGE_ADDRESS);
+    w->stage = stage_;
+    w->menu = static_cast<uint32_t>(menu);
 }
 
 void Controller::update() {
     /// @brief Main execution loop handling state transitions, I/O processing, and system tasks.
     /// Orchestrates high-level logic based on hardware flags and user input.
 
+    // The watchdog: feed it, and note the loop's pass (the start-up phase before it runs is exempt).
+    IWDG1->KR = 0xAAAA;
+    reinterpret_cast<WdStage*>(WATCHDOG_STAGE_ADDRESS)->loops++;
+
     if (menu == TEST_MENU) {
         // 1. DIAGNOSTIC OVERRIDE
         // Run test routines and skip normal runtime flow.
+        watchdog_stage(WD_STAGE_TEST);
         test();
     } else {
         // 2. INPUT PROCESSING
         // Read keyboard and encoder sources, then dispatch actions.
+        watchdog_stage(WD_STAGE_INPUT);
         if (keyboard.keyLayer.readFlag || keyboard.keyLeft.readFlag || keyboard.keyRight.readFlag) lastInputMs = HAL_GetTick();
         keyboard_read();
         keyboard_action();
@@ -365,6 +399,7 @@ void Controller::update() {
         encoder_read();
         encoder_action();
 
+        watchdog_stage(WD_STAGE_SCREEN);
         // 3. OUTPUT & UI REFRESH
         // Refresh LED outputs and LCD frame content.
         led_action();
@@ -376,18 +411,20 @@ void Controller::update() {
         preview_update();
 
         // Write the song to the autosave files when due and safe (Autosave.h).
+        watchdog_stage(WD_STAGE_AUTOSAVE);
         autosave_update();
 
-#ifdef DSP_PROFILE
-        lcd_drawDspProfile();
-#endif
+        // CPU and MEM bars in the top-right box (LoadMeter.h).
+        lcd_drawMonitor();
 
+        watchdog_stage(WD_STAGE_SD);
         // 4. FILESYSTEM MAINTENANCE
         // Recover SD subsystem if media access is lost.
         if (!sd.ready) {
             sd_reinitialize();
         }
 
+        watchdog_stage(WD_STAGE_RHYTHM);
         // 5. RHYTHM & QUANTIZATION LOCKS
         // Apply lock and unlock requests for rhythm parameters.
         if (rhythmUnlockActionFlag) {
@@ -413,6 +450,7 @@ void Controller::update() {
             }
         }
 
+        watchdog_stage(WD_STAGE_MIXER);
         // 6. AUDIO MIXER / AMPLIFIER CONTROL
         // Process pending mute or unmute actions for all outputs.
         if (masterUnmuteActionFlag) {
@@ -495,6 +533,7 @@ void Controller::update() {
         }
         if ((layerSongResetActionFlag) && (selectedLayerNum != -1)) {
             layerSongResetActionFlag = false;
+            undo_capture(UNDO_CLEAR, selectedLayerNum, activeSongBank);
             layerSong_resetAllBeats(selectedLayerNum, activeSongBank);
         }
 
@@ -546,19 +585,19 @@ void Controller::update() {
                 Layer& layer = layerLibrary[layerNum];
                 const uint8_t level = midiVelocityToLevel(noteEvent.data2);
 
-                // Trigger audio if layer is active and unmuted
-                if ((!layer.mute) && (layer.samplePlay))
+                // Trigger audio if layer is active, unmuted and not silenced by a SOLO
+                if (layerAudible(layerNum) && (layer.samplePlay))
                     layer_playBeat(layerNum, kNumberDataLibrary[level].powMultiplier);
 
-                // Write note to the current sequencer step if Recording is enabled. Beats store
-                // FLAT or GHOST for now: soft notes (velocity below 64) record as GHOST.
+                // Write note to the current sequencer step if Recording is enabled, with the
+                // velocity it came with (BeatNote.h).
                 if (recordActive) {
-                    const uint8_t pattern = (noteEvent.data2 < 64) ? 1 : 0;
+                    undo_captureRecord(layerNum, activeSongBank);
                     if (!metronome.precountState) {
-                        layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, pattern, 0, 0, true);
+                        layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true, noteEvent.data2);
                     } else {
                         // Note landed during precount; commit it to position 0 once playback starts.
-                        precountPendingBeat[layerNum] = static_cast<uint8_t>(pattern + 1);
+                        precountPendingBeat[layerNum] = static_cast<uint8_t>(noteEvent.data2 + 1);
                     }
                 }
             }
@@ -1235,11 +1274,14 @@ void Controller::midi_receiveClock(uint32_t nowCycles_) {
     io.midi.rxClockTickPhase = nextPhase;
     syncOutClockTick();  // the sync output jack follows the incoming clock
 
-    if (io.midi.clockLocked) {
+    // Only while playing. Locked but stopped (a START the Drumboy didn't follow because it wasn't
+    // armed), the clocks keep counting and nothing plays them, so the period that "catches up" fell
+    // to its minimum: the timer ran at 25 kHz, with the LFOs and TIMING delays about 15x too fast.
+    if (io.midi.clockLocked && playActive) {
         const uint32_t period = clockLockPeriodUs(lock, kClockLockMinPeriodUs, kClockLockMaxPeriodUs);
         if (period) __HAL_TIM_SET_AUTORELOAD(&htim15, period - 1);
         // The sequencer was waiting for this clock: restart its timer so the tick lands on it.
-        if ((result == CLOCK_KICK) && playActive) htim15.Instance->EGR = TIM_EGR_UG;
+        if (result == CLOCK_KICK) htim15.Instance->EGR = TIM_EGR_UG;
     }
 
     // Tempo for the display, the tempo-synced effects and the clock/sync outputs: once a beat.
@@ -1371,6 +1413,7 @@ void Controller::adjustMeasureBarTiming() {
     /// @brief Synchronizes the sequencer grid with new timing settings and prunes invalid data.
     /// Recalculates all internal timing intervals and removes any beats that fall outside
     /// the newly defined song boundaries.
+    undoLog.clear();  // beats past the new song end are dropped: older states no longer fit
 
     // 1. REFRESH TIMING CONSTANTS
     // Rebuild timing intervals using current rhythm settings.
@@ -1629,7 +1672,8 @@ void Controller::keyboard_action() {
                         } else if (keyboard.fillKeyPress) {
                             layerInst_setFill(layerNum, !layerLibrary[layerNum].fill);
                         } else if (keyboard.styleKeyPress) {
-                            layerInst_setStyle(layerNum, !layerLibrary[layerNum].style);
+                            // The left S key is SOLO since V1.14 (STYLE is a field on instrument page 3).
+                            layerInst_setSolo(layerNum, !(soloMask & (1u << layerNum)));
                         } else if ((keyboard.lfoKeyPress) && (!alertFlag)) {
                             lfo_select(layerNum);
                         } else if ((keyboard.layerInstKeyPress) && (!alertFlag)) {
@@ -1654,13 +1698,14 @@ void Controller::keyboard_action() {
                             // Browsing samples: the pad replays the preview, not the loaded sample.
                         } else {
                             Layer& layer = layerLibrary[layerNum];
-                            if ((!layer.mute) && (layer.samplePlay)) layer_playBeat(layerNum, 1.0f);
+                            if (layerAudible(layerNum) && (layer.samplePlay)) layer_playBeat(layerNum, 1.0f);
                             if (recordActive) {
+                                undo_captureRecord(layerNum, activeSongBank);
                                 if (!metronome.precountState) {
                                     layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true);
                                 } else {
                                     // Hit landed during precount; commit it to position 0 once playback starts.
-                                    precountPendingBeat[layerNum] = 1;  // FLAT
+                                    precountPendingBeat[layerNum] = 1;  // pads: velocity from the pattern
                                 }
                             }
                         }
@@ -1890,7 +1935,9 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_LEFT:
-                                if (!alertFlag) {
+                                if (!alertFlag && keyboard.muteKeyPress) {
+                                    undo_apply(false);  // MUTE + LEFT: undo (UndoLog.h)
+                                } else if (!alertFlag) {
                                     switch (menu) {
                                         case FILE_MENU:
                                             file_menuLeft();
@@ -1958,7 +2005,9 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_RIGHT:
-                                if (!alertFlag) {
+                                if (!alertFlag && keyboard.muteKeyPress) {
+                                    undo_apply(true);  // MUTE + RIGHT: redo (UndoLog.h)
+                                } else if (!alertFlag) {
                                     switch (menu) {
                                         case FILE_MENU:
                                             file_menuRight();
@@ -2075,6 +2124,11 @@ void Controller::keyboard_action() {
                                             autosave_restore();
                                             break;
 
+                                        case ALERT_CRASH:
+                                            lcd_clearAlert();
+                                            autosave_offerRestore();
+                                            break;
+
                                         case ALERT_SAVEFILE:
 
                                         case ALERT_OVERWRITEFILE:
@@ -2114,9 +2168,7 @@ void Controller::keyboard_action() {
                                         if (!layerLibrary[i].fill) layerInst_setFill(i, true);
                                     }
                                 } else if (keyboard.styleKeyPress) {
-                                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-                                        if (!layerLibrary[i].style) layerInst_setStyle(i, true);
-                                    }
+                                    // SOLO + ADD: nothing (STYLE for every layer: ADD + turn STYLE on page 3).
                                 } else {
                                     keyboard.shiftKeyPress = true;
                                     switch (menu) {
@@ -2242,8 +2294,10 @@ void Controller::keyboard_action() {
                                 if (alertFlag) {
                                     // Declining the restore: the autosaved work is not wanted.
                                     if (alertType == ALERT_RESTOREAUTOSAVE) autosave_deleteAll();
+                                    const bool wasCrash = (alertType == ALERT_CRASH);
                                     lcd_clearAlert();
                                     alertFlag = false;
+                                    if (wasCrash) autosave_offerRestore();  // the crash note is read: now the autosave
                                 } else if (keyboard.muteKeyPress) {
                                     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                                         if (layerLibrary[i].mute) layerInst_setMute(i, false);
@@ -2253,9 +2307,7 @@ void Controller::keyboard_action() {
                                         if (layerLibrary[i].fill) layerInst_setFill(i, false);
                                     }
                                 } else if (keyboard.styleKeyPress) {
-                                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-                                        if (layerLibrary[i].style) layerInst_setStyle(i, false);
-                                    }
+                                    layerInst_clearSolo();  // SOLO + CLEAR: every layer back
                                 } else {
                                     switch (menu) {
                                         case RHYTHM_MENU:
@@ -2322,6 +2374,10 @@ void Controller::keyboard_action() {
 
                                         case EUCLID_MENU:
                                             euclid_clear();
+                                            break;
+
+                                        case NOTE_MENU:
+                                            note_clear();
                                             break;
 
                                         default:
@@ -2399,6 +2455,7 @@ void Controller::keyboard_action() {
                             case KEY_FILL:
                                 keyboard.fillKeyPress = true;
                                 encoderFastMode = true;
+                                textFkeyFlag = true;  // FKEY beats play while it is held (BeatNote.h)
                                 break;
 
                             case KEY_STYLE:
@@ -2557,6 +2614,7 @@ void Controller::keyboard_action() {
                             case KEY_FILL:
                                 keyboard.fillKeyPress = false;
                                 encoderFastMode = false;
+                                textClearFlag = true;  // remove FKEY (ARMED comes back if armed)
                                 break;
 
                             case KEY_STYLE:
@@ -2580,6 +2638,10 @@ void Controller::keyboard_action() {
                                     case LAYER_INST_2_MENU:
 
                                     case LAYER_SONG_MENU:
+
+                                    case EUCLID_MENU:
+
+                                    case NOTE_MENU:
                                         ledLayerPlayMode = false;
                                         ledLayerSelectFlag = true;
                                         ledLayerSelectData = 0x01 << selectedLayerNum;
@@ -2701,9 +2763,14 @@ void Controller::keyboard_action() {
 
                             case KEY_LAYER_SONG:
                                 keyboard.layerSongKeyPress = false;
-                                // Song <-> EUCLID, or the song page from an instrument page.
+                                // Song -> EUCLID -> NOTE -> song, or the song page from an instrument page.
                                 if (!layerModKeyUsed && !alertFlag && (selectedLayerNum != -1) && layerPageMenu()) {
-                                    (menu == LAYER_SONG_MENU) ? euclid_select() : layerSong_select(selectedLayerNum, activeSongBank);
+                                    if (menu == LAYER_SONG_MENU)
+                                        euclid_select();
+                                    else if (menu == EUCLID_MENU)
+                                        note_select();
+                                    else
+                                        layerSong_select(selectedLayerNum, activeSongBank);
                                 }
                                 break;
 
@@ -2723,6 +2790,10 @@ void Controller::keyboard_action() {
                                     case LAYER_INST_2_MENU:
 
                                     case LAYER_SONG_MENU:
+
+                                    case EUCLID_MENU:
+
+                                    case NOTE_MENU:
                                         ledLayerPlayMode = false;
                                         ledLayerSelectFlag = true;
                                         ledLayerSelectData = 0x01 << selectedLayerNum;
@@ -3318,7 +3389,11 @@ void Controller::encoder_update() {
 
     if (activeEncoderBank >= kEncoderBankSize) activeEncoderBank = kMinEncoderGlobalTab;
     const uint8_t encoderFuncCount = sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]);
-    const Menu menuSafe = ((menu >= INIT_MENU) && (menu <= SONG_MENU)) ? menu : INIT_MENU;
+    // Every page with a row in encoderLocalFunction (NOTE_MENU is the last). A page past the table
+    // used to fall back to INIT_MENU, which binds the GLOBAL encoder functions.
+    constexpr uint8_t kLocalRows = sizeof(encoderLocalFunction) / sizeof(encoderLocalFunction[0]);
+    static_assert(kLocalRows == NOTE_MENU + 1, "encoderLocalFunction needs one row per menu");
+    const Menu menuSafe = (static_cast<uint8_t>(menu) < kLocalRows) ? menu : INIT_MENU;
 
     // 1. MODE/FUNCTION BINDING
     // Bind each encoder to global or local function map based on active menu.
@@ -4032,6 +4107,16 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             (layerLibrary[selectedLayerNum].mixerInMode < kMaxLayerOut) ? layerInst_setOut(selectedLayerNum, layerLibrary[selectedLayerNum].mixerInMode + 1) : layerInst_setOut(selectedLayerNum, kMinLayerOut);
             break;
 
+        case ENC_INST_2_STYLE: {
+            // ADD + turn: every layer gets the selected layer's new STYLE.
+            const bool style = !layerLibrary[selectedLayerNum].style;
+            if (keyboard.shiftKeyPress) {
+                for (uint8_t i = 0; i < kLayerLibrarySize; i++) layerInst_setStyle(i, style);
+            } else {
+                layerInst_setStyle(selectedLayerNum, style);
+            }
+        } break;
+
         case ENC_ROUTE_EQ_OUT:
         case ENC_ROUTE_F1_OUT:
         case ENC_ROUTE_F2_OUT:
@@ -4081,6 +4166,14 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_EUC_MODE:
         case ENC_EUC_ACCENTS:
             euclid_step(encoder[encoderNum_].function, true);
+            break;
+
+        case ENC_NOTE_BEAT:
+        case ENC_NOTE_VEL:
+        case ENC_NOTE_PROB:
+        case ENC_NOTE_COND:
+        case ENC_NOTE_NUDGE:
+            if (menu == NOTE_MENU) note_step(encoder[encoderNum_].function, true);
             break;
 
         case ENC_CHAIN_STEP:
@@ -4618,6 +4711,16 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
             (layerLibrary[selectedLayerNum].mixerInMode > kMinLayerOut) ? layerInst_setOut(selectedLayerNum, layerLibrary[selectedLayerNum].mixerInMode - 1) : layerInst_setOut(selectedLayerNum, kMaxLayerOut);
             break;
 
+        case ENC_INST_2_STYLE: {
+            // ADD + turn: every layer gets the selected layer's new STYLE.
+            const bool style = !layerLibrary[selectedLayerNum].style;
+            if (keyboard.shiftKeyPress) {
+                for (uint8_t i = 0; i < kLayerLibrarySize; i++) layerInst_setStyle(i, style);
+            } else {
+                layerInst_setStyle(selectedLayerNum, style);
+            }
+        } break;
+
         case ENC_ROUTE_EQ_OUT:
         case ENC_ROUTE_F1_OUT:
         case ENC_ROUTE_F2_OUT:
@@ -4667,6 +4770,14 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_EUC_MODE:
         case ENC_EUC_ACCENTS:
             euclid_step(encoder[encoderNum_].function, false);
+            break;
+
+        case ENC_NOTE_BEAT:
+        case ENC_NOTE_VEL:
+        case ENC_NOTE_PROB:
+        case ENC_NOTE_COND:
+        case ENC_NOTE_NUDGE:
+            if (menu == NOTE_MENU) note_step(encoder[encoderNum_].function, false);
             break;
 
         case ENC_CHAIN_STEP:
@@ -6078,6 +6189,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                 f_close(&sd.file);
             }
             chainRead(songChain, chainData, static_cast<uint16_t>(got));
+            file_readNotes(fileName);  // per-note settings after the chain (BeatNote.h)
             chainRestart(songChain, chainPlay);
             songStepSel = 0;
             if (songChain.active) layerSong_selectBank(chainCurrentBank(songChain, chainPlay));
@@ -6319,7 +6431,7 @@ uint32_t Controller::file_stateCrc() {
     }
     uint8_t chainData[kChainFileSize];
     chainWrite(songChain, chainData);
-    return autosaveCrc32(crc, chainData, kChainFileSize);
+    return file_noteCrc(autosaveCrc32(crc, chainData, kChainFileSize));
 }
 
 /* Autosave (Autosave.h) -----------------------------------------------------*/
@@ -6373,7 +6485,73 @@ void Controller::autosave_scanFile(uint8_t slot_, AutosaveFile& file_) {
     f_close(&sd.file);
 }
 
+bool Controller::crash_report() {
+    /// @brief At the end of start-up: if the firmware restarted after a crash (CrashRecord.h),
+    /// appends the record to System/Crash.log and shows "CRASH k AT address" until ADD or CLEAR.
+    /// Returns true when a crash is being shown.
+    CrashRecord* record = reinterpret_cast<CrashRecord*>(CRASH_RECORD_ADDRESS);
+    // A restart by the watchdog leaves no record of its own: make one from the stage the loop was in.
+    if ((RCC->RSR & RCC_RSR_IWDG1RSTF) && !crashValid(record)) {
+        crashFromWatchdog(record, reinterpret_cast<const WdStage*>(WATCHDOG_STAGE_ADDRESS), (static_cast<uint32_t>(FW_VERSION_MAJOR) << 8) | static_cast<uint32_t>(FW_VERSION_MINOR));
+    }
+    RCC->RSR |= RCC_RSR_RMVF;
+    WdStage* wd = reinterpret_cast<WdStage*>(WATCHDOG_STAGE_ADDRESS);
+    wd->stage = WD_STAGE_NONE;
+    wd->loops = 0;
+    if (!crashValid(record)) {
+        crashClear(record);
+        return false;
+    }
+    const CrashRecord crash = *record;
+    crashClear(record);  // from here on a new crash restarts again
+
+    crashAlertText(&crash, crashText, sizeof crashText);
+    if (sd.ready) {
+        char line[160];
+        const int len = crashLogLine(&crash, line, sizeof line);
+        f_close(&sd.file);
+        if ((len > 0) && (f_open(&sd.file, "System/Crash.log", FA_OPEN_APPEND | FA_WRITE) == FR_OK)) {
+            UINT written = 0;
+            f_write(&sd.file, line, static_cast<UINT>(len), &written);
+        }
+        f_close(&sd.file);
+    }
+    alertFlag = true;
+    alertType = ALERT_CRASH;
+    lcd_drawAlert();
+    return true;
+}
+
+void Controller::lcd_drawStatusNow(const char* text5_, RGB16Color color_) {
+    /// @brief Draws a 5-character status text at once (the spot of COPY / PASTE / ARMED), for work
+    /// that blocks the main loop before the next screen update.
+    lcd.setBackColor(BLACK);
+    lcd.setAlignment(CENTER);
+    lcd.setFont(FONT_05x07);
+    lcd.setForeColor(color_);
+    lcd.drawText(text5_, 5, 170, 112);
+}
+
 bool Controller::autosave_write() {
+    /// @brief Autosave with its indicator: " SAVE" on screen while the SD write blocks the main loop
+    /// (keys, screen and incoming MIDI notes wait meanwhile), "SDERR" if it failed; the time it
+    /// took is shown next to AUTOSAVE on the Metronome page.
+    if (!sd.ready) return false;
+    lcd_drawStatusNow(" SAVE", YELLOW);
+    const uint32_t start = HAL_GetTick();
+    const bool ok = autosave_writeFiles();
+    autosaveLastMs = HAL_GetTick() - start;
+    autosaveLastOk = ok;
+    if (ok) {
+        textClearFlag = true;  // remove SAVE (ARMED comes back if armed)
+    } else {
+        textAutosaveErrFlag = true;
+    }
+    if (menu == METRO_MENU) lcd_drawMetro_AutosaveData();
+    return ok;
+}
+
+bool Controller::autosave_writeFiles() {
     /// @brief Writes the song to the older of the two autosave files, then seals it with the
     /// trailer (sequence + CRC of what is actually on the card). A write cut short leaves the
     /// other file as the good copy.
@@ -6500,6 +6678,100 @@ void Controller::autosave_restore() {
     HAL_Delay(1000);
     lcd_clearAlert();
     autosave_markClean();  // the files stay until a SAVE: the restored work is still not in a slot
+    undoLog.clear();
+}
+
+uint16_t Controller::file_noteEntryCount() {
+    /// @brief Beats whose note settings are not all default (BeatNote.h): the entries of the BTX block.
+    uint16_t count = 0;
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        for (uint8_t b = 0; b < kBankLibrarySize; b++) {
+            const Bank& bank = layerLibrary[l].bankLibrary[b];
+            for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
+                const Beat& beat = bank.beatLibrary[k];
+                if (beat.getActive() && !noteIsDefault(beat.getVelocity(), beat.getNote())) count++;
+            }
+        }
+    }
+    return count;
+}
+
+uint32_t Controller::file_noteCrc(uint32_t crc_) {
+    /// @brief Feeds the BTX block (as written) into a CRC, so autosave sees note edits.
+    uint8_t header[kNoteHeaderSize];
+    noteWriteHeader(header, file_noteEntryCount());
+    crc_ = autosaveCrc32(crc_, header, kNoteHeaderSize);
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        for (uint8_t b = 0; b < kBankLibrarySize; b++) {
+            const Bank& bank = layerLibrary[l].bankLibrary[b];
+            for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
+                const Beat& beat = bank.beatLibrary[k];
+                if (!beat.getActive() || noteIsDefault(beat.getVelocity(), beat.getNote())) continue;
+                uint8_t entry[kNoteEntrySize];
+                noteWriteEntry(entry, NoteEntry{l, b, beat.getStartInterval(), beat.getVelocity(), beat.getNote()});
+                crc_ = autosaveCrc32(crc_, entry, kNoteEntrySize);
+            }
+        }
+    }
+    return crc_;
+}
+
+bool Controller::file_writeNotes() {
+    /// @brief Writes the BTX block (BeatNote.h) at the current file position: one 7-byte entry
+    /// per beat with note settings. Older firmware stops reading before it.
+    uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
+    noteWriteHeader(buffer, file_noteEntryCount());
+    uint16_t used = kNoteHeaderSize;
+    bool ok = true;
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        for (uint8_t b = 0; b < kBankLibrarySize; b++) {
+            const Bank& bank = layerLibrary[l].bankLibrary[b];
+            for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
+                const Beat& beat = bank.beatLibrary[k];
+                if (!beat.getActive() || noteIsDefault(beat.getVelocity(), beat.getNote())) continue;
+                if (static_cast<size_t>(used + kNoteEntrySize) > sizeof buffer) {
+                    UINT written = 0;
+                    ok = ok && (f_write(&sd.file, buffer, used, &written) == FR_OK) && (written == used);
+                    used = 0;
+                }
+                noteWriteEntry(buffer + used, NoteEntry{l, b, beat.getStartInterval(), beat.getVelocity(), beat.getNote()});
+                used = static_cast<uint16_t>(used + kNoteEntrySize);
+            }
+        }
+    }
+    UINT written = 0;
+    ok = ok && (f_write(&sd.file, buffer, used, &written) == FR_OK) && (written == used);
+    return ok;
+}
+
+void Controller::file_readNotes(const char* fileName_) {
+    /// @brief Applies the BTX block (BeatNote.h) of a song file to the loaded beats, matching each
+    /// entry by layer, bank and start (as the loader quantized it). No block = all default.
+    f_close(&sd.file);
+    if (f_open(&sd.file, fileName_, FA_READ) != FR_OK) return;
+    uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
+    UINT got = 0;
+    if ((f_lseek(&sd.file, strlen(kFileRef) + kFileByteSize + 3 + kChainFileSize) == FR_OK) &&
+        (f_read(&sd.file, buffer, kNoteHeaderSize, &got) == FR_OK)) {
+        int32_t remaining = noteReadHeader(buffer, static_cast<uint16_t>(got));
+        while (remaining > 0) {
+            const uint16_t chunk = static_cast<uint16_t>((remaining > 64) ? 64 : remaining);
+            const UINT want = static_cast<UINT>(chunk * kNoteEntrySize);
+            if ((f_read(&sd.file, buffer, want, &got) != FR_OK) || (got != want)) break;
+            for (uint16_t e = 0; e < chunk; e++) {
+                NoteEntry entry;
+                if (!noteReadEntry(buffer + e * kNoteEntrySize, entry, kLayerLibrarySize, kBankLibrarySize)) continue;
+                Bank& bank = layerLibrary[entry.layer].bankLibrary[entry.bank];
+                int16_t beatNum = beatListFind(bank, entry.start);
+                if (beatNum < 0) beatNum = beatListFind(bank, layerSong_quantizeInterval(entry.start));
+                if (beatNum < 0) continue;
+                bank.beatLibrary[beatNum].setVelocity(entry.velocity);
+                bank.beatLibrary[beatNum].setNote(entry.note);
+            }
+            remaining -= chunk;
+        }
+    }
+    f_close(&sd.file);
 }
 
 SdResult Controller::sd_saveFile(uint8_t fileNum_) {
@@ -6586,7 +6858,8 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
                         // Song mode chain after "EOF" (older firmware stops reading at "EOF").
                         uint8_t chainData[kChainFileSize];
                         chainWrite(songChain, chainData);
-                        if (f_write(&sd.file, chainData, kChainFileSize, &sd.byteswritten) == FR_OK) result = SD_OK;
+                        // Per-note settings after the chain (BeatNote.h).
+                        if ((f_write(&sd.file, chainData, kChainFileSize, &sd.byteswritten) == FR_OK) && file_writeNotes()) result = SD_OK;
                     }
                 }
             }
@@ -7936,6 +8209,11 @@ void Controller::lcd_update() {
     // Refresh playhead/progress bar visuals.
     lcd_drawPlay();
 
+    // Full-area views (EUCLID, SONG, ROUTING): refresh, playhead, and the lanes back after leaving.
+    watchdog_stage(WD_STAGE_VIEW);
+    lcd_updateLaneView();
+    watchdog_stage(WD_STAGE_SCREEN);
+
     // 2. TRANSPORT ICON UPDATE
     // Refresh reset/play/stop/record icons.
     lcd_drawIcon();
@@ -8129,6 +8407,10 @@ void Controller::lcd_drawAlert() {
             alertText = kAlertTextRestoreAutosave;
             break;
 
+        case ALERT_CRASH:
+            alertText = crashText;
+            break;
+
         case ALERT_SAVEFILE:
             alertText = kAlertTextSaveFile;
             break;
@@ -8210,7 +8492,8 @@ void Controller::lcd_clearAlert() {
     lcd.clearRect(355, 260, 250, 20);
 
     // 2. CONTENT RESTORE
-    // Redraw song lane that can be overlapped by alert box.
+    // Redraw song lane that can be overlapped by alert box (or the whole full-area view).
+    if (laneViewHidden()) viewFull = true;
     lcd_drawSong(4, activeSongBank);
 }
 
@@ -8439,7 +8722,8 @@ void Controller::lcd_clearSdAlert() {
     lcd.clearRect(355, 260, 250, 20);
 
     // 2. CONTENT RESTORE
-    // Redraw song lane hidden by SD alert box.
+    // Redraw song lane hidden by SD alert box (or the whole full-area view).
+    if (laneViewHidden()) viewFull = true;
     lcd_drawSong(4, activeSongBank);
 }
 
@@ -8525,6 +8809,10 @@ void Controller::lcd_drawSongBankShift() {
                 lcd_drawSong(i, j);
             }
         }
+
+        // 4. The bank changed at a loop end (SONG + pads while playing, or song mode): the song /
+        // NOTE page of the selected layer follows it.
+        layerPage_bankChanged();
     }
 }
 
@@ -8609,6 +8897,10 @@ void Controller::lcd_drawMenuIcon(Menu menu_) {
 
             case EUCLID_MENU:
                 iconStr = "EU";
+                break;
+
+            case NOTE_MENU:
+                iconStr = "NT";
                 break;
 
             case SONG_MENU:
@@ -8810,6 +9102,9 @@ void Controller::lcd_clearSignBox(uint8_t menuTab_) {
 void Controller::lcd_transitionMenu() {
     /// @brief Applies menu transition cleanup and prepares target menu layout.
 
+    // Leaving a full-area view: the lanes come back before the new page draws into them.
+    if ((laneViewShown != INIT_MENU) && !laneViewHidden()) lcd_restoreLanes();
+
     // 1. PREVIOUS MENU CLEANUP
     // Clear UI artifacts based on previous menu type.
     switch (preMenu) {
@@ -8831,6 +9126,10 @@ void Controller::lcd_transitionMenu() {
             for (uint8_t i = 0; i <= kMaxMenu4Tab; i++) {
                 lcd_clearTextBox(i);
             }
+            break;
+
+        case METRO_MENU:
+            lcd_clearTextBox(6);  // the last autosave's duration under AUTOSAVE
             break;
 
         case RHYTHM_MENU:
@@ -8870,6 +9169,7 @@ void Controller::lcd_transitionMenu() {
         case ROUTING_MENU:
         case EUCLID_MENU:
         case SONG_MENU:
+        case NOTE_MENU:
             // Remove the chain overview / pattern and restore the tab divider it covered.
             lcd.setBackColor(BLACK);
             lcd.setForeColor(GRAY_50);
@@ -8947,6 +9247,12 @@ void Controller::lcd_transitionMenu() {
 
         case EUCLID_MENU:
             // Tabs 2-3 hold the pattern.
+            lcd.setBackColor(BLACK);
+            lcd.clearRect(493, 29, 325, 60);
+            break;
+
+        case NOTE_MENU:
+            // Tabs 2-3 hold the selected note.
             lcd.setBackColor(BLACK);
             lcd.clearRect(493, 29, 325, 60);
             break;
@@ -9154,7 +9460,7 @@ void Controller::lcd_setLayerTabState(uint8_t layerNum_) {
 
     // 1. STYLE APPLY
     // Apply selected/default foreground color and shared text style.
-    (layerNum_ == selectedLayerNum) ? lcd.setForeColor(kLayerSelectedColor) : lcd.setForeColor(kLayerColorPalette[layerNum_]);
+    lcd.setForeColor(layerColor(layerNum_));
     lcd.setBackColor(BLACK);
     lcd.setFont(FONT_07x09);
     lcd.setAlignment(LEFT);
@@ -10572,6 +10878,15 @@ void Controller::lcd_drawMetro_AutosaveData() {
     lcd_setMenuDataState(WHITE);
     const uint8_t minutes = kAutosaveMinutes[(autosaveTiming.interval < kAutosaveIntervalCount) ? autosaveTiming.interval : kAutosaveDefaultInterval];
     lcd.drawText((minutes == 0) ? kDataOff : kNumberDataLibrary[minutes].nameLongR, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
+
+    // How long the last autosave held the main loop, in milliseconds (ERR: it failed).
+    char took[kMenuTextBoxTextSize + 8] = "        ";
+    if (autosaveLastMs > 0) {
+        const unsigned long ms = (autosaveLastMs > 99999) ? 99999 : autosaveLastMs;
+        autosaveLastOk ? snprintf(took, sizeof took, "%5luMS ", ms) : snprintf(took, sizeof took, "ERR%5lu", ms);
+    }
+    lcd_setMenuTextState(autosaveLastOk ? GRAY_75 : RED);
+    lcd.drawText(took, kMenuTextBoxTextSize, kMenuTextBoxX[6], kMenuTextBoxY[6]);
 }
 
 void Controller::lcd_drawMetro_PreviewData() {
@@ -11903,6 +12218,20 @@ void Controller::lcd_drawLayerInst2Menu(uint8_t layerNum_) {
 
     // 3. DATA DRAW
     lcd_drawLayerInst_OutData(layerNum_);
+
+    // STYLE (tab 5): the layer's processing on/off, set with the left S key before V1.14.
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kHeaderStyle, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
+    lcd_setMenuSignState(GRAY_75);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
+    lcd_drawLayerInst_StyleData(layerNum_);
+}
+
+void Controller::lcd_drawLayerInst_StyleData(uint8_t layerNum_) {
+    /// @brief Draws the STYLE field: ON = pitch, direction, resolution, start/end, timing, PROB and
+    /// the LFOs apply; OFF = the sample plays plain at its level.
+    lcd_setMenuDataState(WHITE);
+    lcd.drawText(layerLibrary[layerNum_].style ? kDataOn : kDataOff, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
 }
 
 void Controller::lcd_drawLayerInst_InstData(uint8_t layerNum_) {
@@ -12710,6 +13039,10 @@ void Controller::lcd_drawLayerSong_BeatFillGraphData(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerTab(uint8_t layerNum_) {
     /// @brief Draws complete layer-tab row including indicators and song lane.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ROW BORDER DRAW
     // Draw top/bottom layer row borders.
@@ -12742,6 +13075,10 @@ void Controller::lcd_drawLayerTab(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerBox(uint8_t layerNum_) {
     /// @brief Draws top and bottom border lines for a layer row.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. COLOR SELECT
     // Use selected or default row color.
@@ -12755,6 +13092,10 @@ void Controller::lcd_drawLayerBox(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerTab_NumData(uint8_t layerNum_) {
     /// @brief Draws layer number text in the layer tab row.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. STYLE SETUP
     // Configure layer-tab text style.
@@ -12767,6 +13108,10 @@ void Controller::lcd_drawLayerTab_NumData(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerTab_InstData(uint8_t layerNum_) {
     /// @brief Draws loaded instrument short name for layer row.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. STYLE SETUP
     // Configure layer-tab text style.
@@ -12783,6 +13128,10 @@ void Controller::lcd_drawLayerTab_InstData(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerTab_Mute(uint8_t layerNum_) {
     /// @brief Draws mute state indicator box for layer row.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. STYLE SETUP
     // Configure box color from layer-tab state.
@@ -12800,6 +13149,10 @@ void Controller::lcd_drawLayerTab_Mute(uint8_t layerNum_) {
 
 void Controller::lcd_drawLayerTab_Fill(uint8_t layerNum_) {
     /// @brief Draws fill state indicator box for layer row.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. STYLE SETUP
     // Configure box color from layer-tab state.
@@ -12816,7 +13169,11 @@ void Controller::lcd_drawLayerTab_Fill(uint8_t layerNum_) {
 }
 
 void Controller::lcd_drawLayerTab_Style(uint8_t layerNum_) {
-    /// @brief Draws style state indicator box for layer row.
+    /// @brief Draws the third indicator box of a layer row: SOLO since V1.14 (it showed STYLE).
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. STYLE SETUP
     // Configure box color from layer-tab state.
@@ -12828,7 +13185,7 @@ void Controller::lcd_drawLayerTab_Style(uint8_t layerNum_) {
 
     // 3. FILL STATE DRAW
     // Fill box when state is active, clear when inactive.
-    if (!layerLibrary[layerNum_].style) lcd.setForeColor(BLACK);
+    if (!(soloMask & (1u << layerNum_))) lcd.setForeColor(BLACK);
     lcd.fillRect(kLayerBoxStyleX + 1, kLayerBoxY[layerNum_] + 1, kLayerBoxWidth - 2, kLayerBoxHeight - 2);
 }
 
@@ -13015,6 +13372,28 @@ void Controller::lcd_drawCopyPaste() {
         lcd.setForeColor(CYAN);
         lcd.drawText("PASTE", 5, 170, 112);
 
+        // Autosave could not write to the SD card.
+    } else if (textAutosaveErrFlag) {
+        textAutosaveErrFlag = false;
+        textShow = true;
+        startTextTimer();
+        lcd.setForeColor(RED);
+        lcd.drawText("SDERR", 5, 170, 112);
+
+        // F (FILL) key held: FKEY beats play, !FKEY beats rest. Shown until it is released.
+    } else if (textFkeyFlag) {
+        textFkeyFlag = false;
+        lcd.setForeColor(YELLOW);
+        lcd.drawText(" FKEY", 5, 170, 112);
+
+        // Undo / redo (MUTE + LEFT / RIGHT).
+    } else if (textUndoFlag || textRedoFlag || textUndoNone) {
+        lcd.setForeColor(textUndoNone ? GRAY_75 : CYAN);
+        lcd.drawText(textUndoNone ? "EMPTY" : (textUndoFlag ? " UNDO" : " REDO"), 5, 170, 112);
+        textUndoFlag = textRedoFlag = textUndoNone = false;
+        textShow = true;
+        startTextTimer();
+
         // Bank full: a beat could not be added.
     } else if (textFullFlag) {
         textFullFlag = false;
@@ -13168,6 +13547,10 @@ void Controller::lcd_calculateSongX() {
 
 void Controller::lcd_drawMeasureBar() {
     /// @brief Draws measure/bar grid markers across all layer song lanes.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. GRID SPACING PRE-CALC
     // Calculate bar and measure spacing in pixels.
@@ -13198,6 +13581,10 @@ void Controller::lcd_drawMeasureBar() {
 
 void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatNum_, bool selected_) {
     /// @brief Draws one beat cell for a layer/bank with style-aware fill rendering.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ACTIVE BANK GUARD
     // Render only for currently active song bank.
@@ -13212,11 +13599,8 @@ void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatN
 
         // 2. COLOR SELECTION
         // Resolve draw color from selection and layer context.
-        if (selected_) {
-            lcd.setForeColor(kBeatSelectedColor);
-        } else {
-            (layerNum_ == selectedLayerNum) ? lcd.setForeColor(kLayerSelectedColor) : lcd.setForeColor(kLayerColorPalette[layerNum_]);
-        }
+        const RGB16Color beatColor = selected_ ? kBeatSelectedColor : layerColor(layerNum_);
+        lcd.setForeColor(beatColor);
 
         // 3. BEAT SHAPE RENDER
         // Convert beat interval to pixel coords and draw by fill type.
@@ -13229,16 +13613,34 @@ void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatN
             uint16_t yStart = kImageLayerY[layerNum_] + kSongOffsetY;
 
             // Draw beat shape based on fill type
+            // Per-note settings made visible (LaneView.h): height = velocity, hollow = a chance
+            // below 100%, a dot above = a condition. A beat without them looks as before V1.14.
+            const uint16_t note = beat.getNote();
+            lcd.clearRect(xStart, yStart - kLaneDotRise, xEnd - xStart + 1, kLaneDotRise);
             if ((fillType == 0) && (fillPattern < 2)) {
                 lcd.clearRect(xStart, yStart, xEnd - xStart + 1, kSongHeight);
-                lcd.drawRect(xStart, yStart, 2, kSongHeight);
+                const uint8_t h = laneMarkHeight(beat.getVelocity(), (fillPattern == 0) ? 100 : 50);
+                if (laneMarkHollow(note) && (h >= 3)) {
+                    lcd.drawRect(xStart, yStart + kSongHeight - h, 3, h);
+                } else {
+                    lcd.fillRect(xStart, yStart + kSongHeight - h, 2, h);
+                }
             } else if ((fillType == 0) && (fillPattern == 2)) {
                 lcd.clearRect(xStart, yStart, xEnd - xStart + 1, kSongHeight);
                 for (uint8_t i = 0; i < 4; i++) {
                     lcd.drawPixel(xStart, yStart + (i * 3));
                 }
+            } else if (laneMarkHollow(note) && (xEnd > xStart + 2)) {
+                // A fill that may not play: its outline.
+                lcd.clearRect(xStart, yStart, xEnd - xStart + 1, kSongHeight);
+                lcd.drawRect(xStart, yStart, xEnd - xStart, kSongHeight);
             } else {
                 lcd.fillRect(xStart, yStart, xEnd - xStart, kSongHeight);
+            }
+            if (laneMarkDot(note)) {
+                lcd.setForeColor(selected_ ? kBeatSelectedColor : YELLOW);
+                lcd.fillRect(xStart, yStart - kLaneDotRise, 2, 2);
+                lcd.setForeColor(beatColor);
             }
         }
     }
@@ -13246,6 +13648,10 @@ void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatN
 
 void Controller::lcd_clearBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatNum_) {
     /// @brief Clears rendered area of one beat cell for a layer/bank.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ACTIVE BANK GUARD
     // Clear only when request targets currently active bank.
@@ -13265,12 +13671,16 @@ void Controller::lcd_clearBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beat
         // 3. REGION CLEAR
         // Clear beat rectangle to background color.
         lcd.setBackColor(BLACK);
-        lcd.clearRect(xStart, yStart, xEnd - xStart, (kSongHeight + 1));
+        lcd.clearRect(xStart, yStart - kLaneDotRise, xEnd - xStart, (kSongHeight + 1 + kLaneDotRise));
     }
 }
 
 void Controller::lcd_drawSong(uint8_t layerNum_, uint8_t bankNum_) {
     /// @brief Redraws all active beats for one layer in selected bank.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ACTIVE BANK GUARD
     // Draw only for currently active bank.
@@ -13298,6 +13708,10 @@ void Controller::lcd_drawSong(uint8_t layerNum_, uint8_t bankNum_) {
 
 void Controller::lcd_clearSong(uint8_t layerNum_, uint8_t bankNum_) {
     /// @brief Clears complete song lane region for one layer.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ACTIVE BANK GUARD
     // Clear only when request belongs to active bank.
@@ -13307,12 +13721,16 @@ void Controller::lcd_clearSong(uint8_t layerNum_, uint8_t bankNum_) {
         // 2. LANE CLEAR
         // Clear full lane rectangle in song area.
         lcd.setBackColor(BLACK);
-        lcd.clearRect(kSongX, yStart, kSongWidth + 1, kSongHeight + 1);
+        lcd.clearRect(kSongX, yStart - kLaneDotRise, kSongWidth + 1, kSongHeight + 1 + kLaneDotRise);
     }
 }
 
 void Controller::lcd_clearInterval(uint8_t layerNum_, uint8_t bankNum_, uint16_t startInterval_, uint16_t endInterval_) {
     /// @brief Clears a specific interval segment in one layer lane.
+    if (laneViewHidden()) {
+        viewDirty = true;  // a full-area view covers the lanes: refresh it instead
+        return;
+    }
 
     // 1. ACTIVE BANK GUARD
     // Clear only when request belongs to active bank.
@@ -13326,7 +13744,7 @@ void Controller::lcd_clearInterval(uint8_t layerNum_, uint8_t bankNum_, uint16_t
         // 3. SEGMENT CLEAR
         // Clear requested sub-region in lane.
         lcd.setBackColor(BLACK);
-        lcd.clearRect(xStart, yStart, xEnd - xStart, kSongHeight + 1);
+        lcd.clearRect(xStart, yStart - kLaneDotRise, xEnd - xStart, kSongHeight + 1 + kLaneDotRise);
     }
 }
 
@@ -13363,7 +13781,7 @@ void Controller::preMenuLayerClear() {
 
     // 3. LAYER SONG / EUCLID MENU CLEANUP
     // Clear selected beat/layer and redraw layer tab when leaving the layer song or EUCLID page.
-    if ((preMenu == LAYER_SONG_MENU) || (preMenu == EUCLID_MENU)) {
+    if ((preMenu == LAYER_SONG_MENU) || (preMenu == EUCLID_MENU) || (preMenu == NOTE_MENU)) {
         if ((layerLibrary[selectedLayerNum].bankLibrary[activeSongBank].lastActiveBeatNum != -1) && (selectedBeatNum != -1)) lcd_drawBeat(selectedLayerNum, activeSongBank, selectedBeatNum, false);
         uint8_t layerNum = selectedLayerNum;
         selectedLayerNum = -1;
@@ -13668,6 +14086,7 @@ void Controller::file_newAction() {
     reverb_reset();
 
     autosave_markClean();  // an empty song has nothing to autosave
+    undoLog.clear();
 }
 
 void Controller::file_loadSelect() {
@@ -13733,6 +14152,7 @@ void Controller::file_loadAction() {
     // Release load-in-progress flag after SD transaction completes.
     loadAction = false;
     if (alertType != ALERT_LOADERROR) autosave_markClean();
+    undoLog.clear();  // another song: its edits start a new history
 
     // 5. RESULT ALERT PRESENTATION
     // Display result alert and keep it visible for user acknowledgment.
@@ -15157,6 +15577,7 @@ void Controller::rhythm_setBar(uint8_t bar_) {
 
 void Controller::rhythm_setQuantize(uint8_t quantize_) {
     /// @brief Sets quantize grid and re-quantizes active song beats across banks.
+    undoLog.clear();  // every beat is re-quantized: older states no longer fit the grid
 
     // 1. INPUT VALIDATION
     // Accept only values inside configured quantize limits.
@@ -21220,6 +21641,80 @@ void Controller::song_toStartBank() {
 static Bank* const bankClipboard = reinterpret_cast<Bank*>(RAM_BANK_CLIPBOARD_ADDRESS);
 static_assert(RAM_BANK_CLIPBOARD_ADDRESS + kLayerLibrarySize * sizeof(Bank) <= 0xC0FB9640u, "bank clipboard must end before the images");
 
+// Undo history (UndoLog.h) in SDRAM after the bank clipboard: one Bank per entry.
+static Bank* const undoStore = reinterpret_cast<Bank*>((RAM_BANK_CLIPBOARD_ADDRESS + kLayerLibrarySize * sizeof(Bank) + 31u) & ~31u);
+static_assert(((RAM_BANK_CLIPBOARD_ADDRESS + kLayerLibrarySize * sizeof(Bank) + 31u) & ~31u) + kUndoEntries * sizeof(Bank) <= 0xC0FB9640u, "undo history must end before the images");
+
+void Controller::undo_capture(UndoKind kind_, int16_t layerNum_, uint8_t bankNum_) {
+    /// @brief Before an edit of one layer's bank: store it for undo, unless the edit joins the last
+    /// undo step (the same knob gesture, the same EUCLID visit).
+    if ((layerNum_ < 0) || (layerNum_ >= kLayerLibrarySize) || (bankNum_ >= kBankLibrarySize)) return;
+    undoRecordOpen = false;
+    uint16_t slot;
+    if (undoLog.begin(kind_, static_cast<uint8_t>(layerNum_), bankNum_, HAL_GetTick(), slot)) {
+        memcpy(static_cast<void*>(&undoStore[slot]), static_cast<const void*>(&layerLibrary[layerNum_].bankLibrary[bankNum_]), sizeof(Bank));
+    }
+}
+
+void Controller::undo_captureAllLayers(UndoKind kind_, uint8_t bankNum_) {
+    /// @brief Before an edit of a bank in every layer (whole-bank paste): one undo step.
+    undoRecordOpen = false;
+    undoLog.startGroup();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const uint16_t slot = undoLog.add(i, bankNum_);
+        memcpy(static_cast<void*>(&undoStore[slot]), static_cast<const void*>(&layerLibrary[i].bankLibrary[bankNum_]), sizeof(Bank));
+    }
+    undoLog.lastKind = kind_;
+    undoLog.lastLayer = 0xFF;
+}
+
+void Controller::undo_captureRecord(uint8_t layerNum_, uint8_t bankNum_) {
+    /// @brief A recorded hit: the take is one undo step; each layer/bank it touches is stored once.
+    if (!undoRecordOpen) {
+        undoLog.startGroup();
+        undoLog.lastKind = UNDO_RECORD;
+        undoLog.lastLayer = 0xFF;
+        undoRecordOpen = true;
+    }
+    if (undoLog.contains(layerNum_, bankNum_)) return;
+    const uint16_t slot = undoLog.add(layerNum_, bankNum_);
+    memcpy(static_cast<void*>(&undoStore[slot]), static_cast<const void*>(&layerLibrary[layerNum_].bankLibrary[bankNum_]), sizeof(Bank));
+}
+
+void Controller::undo_apply(bool redo_) {
+    /// @brief MUTE + LEFT (undo) / MUTE + RIGHT (redo): swaps the stored banks of the last step
+    /// with the live ones, each with the sequencer interrupt held off, so it works while playing.
+    uint16_t slots[kLayerLibrarySize * kBankLibrarySize];
+    const uint16_t n = redo_ ? undoLog.redo(slots, kLayerLibrarySize * kBankLibrarySize) : undoLog.undo(slots, kLayerLibrarySize * kBankLibrarySize);
+    undoRecordOpen = false;
+    if (n == 0) {
+        textUndoNone = true;
+        return;
+    }
+    for (uint16_t k = 0; k < n; k++) {
+        const UndoEntry& e = undoLog.entry[slots[k]];
+        Bank& live = layerLibrary[e.layer].bankLibrary[e.bank];
+        memcpy(static_cast<void*>(&layerSongScratch), static_cast<const void*>(&undoStore[slots[k]]), sizeof(Bank));
+        memcpy(static_cast<void*>(&undoStore[slots[k]]), static_cast<const void*>(&live), sizeof(Bank));
+        __disable_irq();
+        live = layerSongScratch;
+        layerSong_calculatePlayBeatNum(e.layer, e.bank, playInterval);
+        __enable_irq();
+        lcd_drawSong(e.layer, e.bank);
+    }
+    // The page of the selected layer shows the restored beats.
+    if (menu == EUCLID_MENU) {
+        euclidSnapshot = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+        euclidBank = activeSongBank;
+        euclidApplied = false;
+        euclidDropped = 0;
+        lcd_drawEuclidOverview();
+    } else {
+        layerPage_bankChanged();
+    }
+    redo_ ? (textRedoFlag = true) : (textUndoFlag = true);
+}
+
 void Controller::song_copyBank() {
     /// @brief SONG page, long COPY: copies the active bank of every layer (beats and fills).
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
@@ -21235,6 +21730,7 @@ void Controller::song_pasteBank() {
     /// layer is swapped in with the sequencer interrupt held off (as layerSong_commitBank does),
     /// so pasting while playing is safe. Beats past the song end (the song got shorter since the
     /// copy) are dropped.
+    if (bankCopyActive) undo_captureAllLayers(UNDO_BANK, activeSongBank);
     if (!bankCopyActive) return;
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
         memcpy(static_cast<void*>(&layerSongScratch), static_cast<const void*>(&bankClipboard[i]), sizeof(Bank));
@@ -21257,6 +21753,8 @@ void Controller::song_setActive(bool active_) {
     /// the bank playing now (or from step 1); while stopped, it starts from its current step.
     __disable_irq();
     songChain.active = active_;
+    chainPlay.skipCount = false;  // no jump or detour left over from before
+    chainPlay.detour = -1;
     if (active_ && playActive && (chainJumpToBank(songChain, chainPlay, activeSongBank) < 0)) chainRestart(songChain, chainPlay);
     __enable_irq();
     if (active_ && !playActive) song_toStartBank();
@@ -21264,13 +21762,13 @@ void Controller::song_setActive(bool active_) {
 }
 
 void Controller::song_manualBank(uint8_t bank_) {
-    /// @brief A bank picked by hand (SONG + pads) while the chain is on: the chain jumps to the step
-    /// that uses that bank; a bank the chain doesn't use turns chain play off.
+    /// @brief A bank picked by hand (SONG + pads) while the chain is on (SongChain.h,
+    /// chainManualBank): a bank the chain uses jumps the chain to its step; any other bank plays one
+    /// loop as a detour and the chain goes on from where it was. The chain is never turned off.
     chainActionFlag = true;  // the SONG page shows the active bank (copy hint)
     if (!songChain.active) return;
     __disable_irq();
-    const int8_t step = chainJumpToBank(songChain, chainPlay, bank_);
-    if (step < 0) songChain.active = false;
+    const int8_t step = chainManualBank(songChain, chainPlay, bank_, playActive);
     __enable_irq();
     if (step >= 0) songStepSel = static_cast<uint8_t>(step);
     chainActionFlag = true;
@@ -21380,11 +21878,12 @@ void Controller::lcd_drawSongOverview() {
                          : snprintf(line, sizeof(line), "HOLD COPY: COPY BANK %u", static_cast<unsigned>(activeSongBank + 1));
     lcd.setForeColor(GRAY_75);
     if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 3 * kLineStep);
+    viewDirty = true;  // the timeline below shows the same chain
 }
 
 bool Controller::layerPageMenu() const {
     /// @brief True on a page of one layer: instrument pages 1-3, song, EUCLID.
-    return (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU) || (menu == LAYER_SONG_MENU) || (menu == EUCLID_MENU);
+    return (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU) || (menu == LAYER_SONG_MENU) || (menu == EUCLID_MENU) || (menu == NOTE_MENU);
 }
 
 void Controller::euclid_select() {
@@ -21396,6 +21895,7 @@ void Controller::euclid_select() {
     euclidBank = activeSongBank;
     euclidApplied = false;
     euclidDropped = 0;
+    undoLog.newSession();  // one undo step for this visit's EUCLID edits
 
     preMenu = menu;
     preMenuTab = menuTab;
@@ -21404,12 +21904,14 @@ void Controller::euclid_select() {
     lcd_transitionMenu();
     lcd_transitionSelect();
     lcd_drawEuclidMenu();
+    lcd_drawLaneView();  // the lane area shows the rings while this page is open
     encoder_update();
 }
 
 void Controller::euclid_apply() {
     /// @brief Rebuilds the layer from the current settings: the pattern alone (REPLACE) or added
     /// to the beats from before (MERGE). Applied live, also while playing.
+    undo_capture(UNDO_EUCLID, selectedLayerNum, activeSongBank);
 
     if (selectedLayerNum == -1) return;
     if (activeSongBank != euclidBank) {
@@ -21424,11 +21926,13 @@ void Controller::euclid_apply() {
     layerSong_commitBank(0);
     if (euclidDropped) textFullFlag = true;
     lcd_drawEuclidOverview();
+    viewDirty = true;
 }
 
 void Controller::euclid_clear() {
     /// @brief CLEAR on the EUCLID page: gives the layer back the beats it had when the page was
     /// opened.
+    if (euclidApplied && (activeSongBank == euclidBank)) undo_capture(UNDO_EUCLID, selectedLayerNum, activeSongBank);
 
     if ((selectedLayerNum == -1) || !euclidApplied || (activeSongBank != euclidBank)) return;
     layerSongScratch = euclidSnapshot;
@@ -21470,6 +21974,833 @@ void Controller::euclid_step(EncoderFunc function_, bool up_) {
     }
     lcd_drawEuclid_Data();
     euclid_apply();
+}
+
+/* EUCLID rings: a full-area view (LaneView.h) --------------------------------*/
+
+// The view's rows on the right: layer number, name, beat count, the layer's beats as a row.
+static const uint16_t kRingRowNumX = 380, kRingRowNameX = 407, kRingRowCountX = 525, kRingRowBeatX = 560, kRingRowBeatW = 360;
+static const uint16_t kRingRowY = 196, kRingRowStep = 22, kRingRowPlayY = 186;
+
+bool Controller::laneViewHidden() const {
+    /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG, ROUTING,
+    /// FILTER and EQ pages). Everything that draws into a lane checks it, and asks for the view to be
+    /// refreshed instead.
+    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU);
+}
+
+void Controller::lcd_drawLaneView() {
+    /// @brief Draws the open page's full-area view from nothing: clears the lane area, then the view.
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
+    laneViewShown = menu;
+    for (uint8_t b = 0; b < kChainBanks; b++) songThumbDrawn[b] = 0;  // the cleared area holds no thumbnails
+    filterViewDrawn = false;                                          // and no curves
+    lcd_drawLaneViewData();
+}
+
+void Controller::lcd_drawLaneViewData() {
+    /// @brief Redraws what can change on the open page's view (not the whole area).
+    viewDirty = false;
+    viewFull = false;
+    viewDrawnMs = HAL_GetTick();
+    switch (menu) {
+        case EUCLID_MENU:
+            lcd_drawEuclidViewData();
+            break;
+        case SONG_MENU:
+            lcd_drawSongViewData();
+            break;
+        case ROUTING_MENU:
+            lcd_drawRoutingViewData();
+            break;
+        case FILTER_0_MENU:
+        case FILTER_1_MENU:
+            lcd_drawFilterViewData();
+            break;
+        case EQ_MENU:
+            lcd_drawEqViewData();
+            break;
+        default:
+            break;
+    }
+}
+
+void Controller::lcd_drawEuclidViewData() {
+    /// @brief Redraws what changes on the EUCLID view: title, summary line, rings and rows.
+    ringPlayShown = false;
+    if (selectedLayerNum == -1) return;
+    const uint8_t sel = static_cast<uint8_t>(selectedLayerNum);
+
+    // 1. TITLE (the selected layer) AND SUMMARY
+    char line[48];
+    int len = snprintf(line, sizeof line, "LAYER %.2s  %.12s", kDataLayerNum[sel], layerLibrary[sel].instLoadedData.nameShortL);
+    for (int i = (len > 0 ? len : 0); i < 22; i++) line[i] = ' ';  // fixed width: overwrites the old text
+    lcd.setBackColor(BLACK);
+    lcd.setFont(FONT_10x14);
+    lcd.setAlignment(LEFT);
+    lcd.setForeColor(CYAN);
+    lcd.drawText(line, 22, kRingRowNumX, 146);
+    len = snprintf(line, sizeof line, "%u HITS IN %u STEPS  ROT %u  ACC %u", static_cast<unsigned>(euclidHits), static_cast<unsigned>(euclidSteps),
+                             static_cast<unsigned>(euclidRotate), static_cast<unsigned>(euclidAccentCount));
+    for (int i = (len > 0 ? len : 0); i < 40; i++) line[i] = ' ';
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(LEFT);
+    lcd.setForeColor(WHITE);
+    lcd.drawText(line, 40, kRingRowNumX, 168);
+
+    // 2. RINGS: one turn = one loop, starting at the top; layer 1 is the outer ring.
+    lcd.clearRect(kRingCenterX - kRingPlayRadius - 4, kRingCenterY - kRingPlayRadius - 3, 2 * kRingPlayRadius + 8, 2 * kRingPlayRadius + 6);
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        const uint16_t r = ringRadius(l);
+        lcd.setForeColor((l == sel) ? GRAY_50 : GRAY_25);
+        lcd.drawCircle(kRingCenterX, kRingCenterY, r);
+        if (l == sel) {
+            // The EUCLID grid as ticks on the selected ring.
+            const uint16_t grid = kQuantizeInterval[euclidGrid];
+            if ((grid > 0) && (songInterval / grid <= 128)) {
+                lcd.setForeColor(WHITE);
+                for (uint32_t at = 0; at < songInterval; at += grid) {
+                    const RingPoint p = ringPoint(at, songInterval, r);
+                    lcd.drawPixel(static_cast<uint16_t>(p.x), static_cast<uint16_t>(p.y));
+                }
+            }
+        }
+        const Bank& bank = layerLibrary[l].bankLibrary[activeSongBank];
+        lcd.setForeColor(layerColor(l));
+        for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) {
+            const Beat& beat = bank.beatLibrary[b];
+            if (!beat.getActive()) continue;
+            const RingPoint p = ringPoint(beat.getStartInterval(), songInterval, r);
+            const bool plain = (beat.getFillType() == 0) && (beat.getFillPattern() <= 2);
+            if (plain && (beat.getFillPattern() == 2)) {
+                lcd.drawPixel(static_cast<uint16_t>(p.x), static_cast<uint16_t>(p.y));  // MUTED
+            } else {
+                const uint8_t level = (plain && (beat.getFillPattern() == 1)) ? 50 : 100;
+                lcd.fillCircle(static_cast<uint16_t>(p.x), static_cast<uint16_t>(p.y), ringDotRadius(l == sel, beat.getVelocity(), level));
+            }
+        }
+    }
+
+    // 3. ROWS: every layer's beats on a line, so layers can be compared.
+    lcd.clearRect(kRingRowBeatX, kRingRowPlayY, kRingRowBeatW + 3, 5);  // the playhead marker above them
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        const uint16_t y = static_cast<uint16_t>(kRingRowY + l * kRingRowStep);
+        const Bank& bank = layerLibrary[l].bankLibrary[activeSongBank];
+        lcd.setFont(FONT_07x09);
+        lcd.setAlignment(LEFT);
+        lcd.setForeColor(layerColor(l));
+        lcd.drawText(kDataLayerNum[l], 2, kRingRowNumX, y);
+        lcd.drawText(layerLibrary[l].instLoadedData.nameShortL, 12, kRingRowNameX, y);
+        char count[8];
+        snprintf(count, sizeof count, "%2d", static_cast<int>(bank.lastActiveBeatNum + 1));
+        lcd.drawText(count, 2, kRingRowCountX, y);
+        lcd.clearRect(kRingRowBeatX, y, kRingRowBeatW + 3, kSongHeight + 1);
+        for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) {
+            const Beat& beat = bank.beatLibrary[b];
+            if (!beat.getActive() || (songInterval == 0)) continue;
+            const uint16_t x = static_cast<uint16_t>(kRingRowBeatX + (static_cast<uint32_t>(beat.getStartInterval()) * kRingRowBeatW) / songInterval);
+            if ((beat.getFillType() == 0) && (beat.getFillPattern() < 2)) {
+                const uint8_t h = laneMarkHeight(beat.getVelocity(), (beat.getFillPattern() == 0) ? 100 : 50);
+                lcd.fillRect(x, y + kSongHeight - h, 2, h);
+            } else if ((beat.getFillType() == 0) && (beat.getFillPattern() == 2)) {
+                lcd.drawPixel(x, y + kSongHeight - 1);
+            } else {
+                const uint16_t xe = static_cast<uint16_t>(kRingRowBeatX + (static_cast<uint32_t>(beat.getEndInterval()) * kRingRowBeatW) / songInterval);
+                lcd.fillRect(x, y, (xe > x + 2) ? (xe - x - 1) : 2, kSongHeight);
+            }
+        }
+    }
+}
+
+void Controller::lcd_updateLaneView() {
+    /// @brief Main loop: keeps the open page's full-area view current (redrawn at most every 80 ms
+    /// while knobs turn), moves its playhead, and gives the lanes back when such a page was left.
+    if (!laneViewHidden()) {
+        if (laneViewShown != INIT_MENU) lcd_restoreLanes();
+        return;
+    }
+    // The filter pages have no draw call to hook: watch both filters' settings instead.
+    if (((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)) && (filterViewState() != filterViewStateDrawn)) viewDirty = true;
+    if ((menu == EQ_MENU) && (eqViewState() != filterViewStateDrawn)) viewDirty = true;
+    if ((laneViewShown != menu) || viewFull) {
+        lcd_drawLaneView();
+    } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
+        lcd_drawLaneViewData();
+    }
+    if (menu == EUCLID_MENU) {
+        lcd_drawEuclidViewPlay();
+    } else if (menu == SONG_MENU) {
+        lcd_drawSongViewPlay();
+    }
+}
+
+void Controller::lcd_drawEuclidViewPlay() {
+    /// @brief The EUCLID view's playhead: a marker that orbits outside the rings, and one above the rows.
+    if (songInterval == 0) return;
+    const uint16_t at = playInterval;
+    const RingPoint p = ringPoint(at, songInterval, kRingPlayRadius);
+    const uint16_t rowX = static_cast<uint16_t>(kRingRowBeatX + (static_cast<uint32_t>(at % songInterval) * kRingRowBeatW) / songInterval);
+    if (ringPlayShown && (p.x == ringPlayX) && (p.y == ringPlayY) && (rowX == ringPlayRowX)) return;
+    lcd.setBackColor(BLACK);
+    if (ringPlayShown) {
+        lcd.clearRect(static_cast<uint16_t>(ringPlayX - 1), static_cast<uint16_t>(ringPlayY - 1), 3, 3);
+        lcd.clearRect(ringPlayRowX, kRingRowPlayY, 3, 5);
+    }
+    lcd.setForeColor(YELLOW);
+    lcd.fillRect(static_cast<uint16_t>(p.x - 1), static_cast<uint16_t>(p.y - 1), 3, 3);
+    lcd.fillRect(rowX, kRingRowPlayY, 3, 5);
+    ringPlayX = p.x;
+    ringPlayY = p.y;
+    ringPlayRowX = rowX;
+    ringPlayShown = true;
+}
+
+void Controller::lcd_restoreLanes() {
+    /// @brief Leaving a full-area view: draws the ten lane frames again and everything in them.
+    laneViewShown = INIT_MENU;
+    viewDirty = false;
+    viewFull = false;
+    ringPlayShown = false;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const RGB16Color* indexPtr = (const RGB16Color*)((i % 2) == 0 ? RAM_IMAGE_LAYER_A_PALETTE_ADDRESS : RAM_IMAGE_LAYER_B_PALETTE_ADDRESS);
+        const uint8_t* dataPtr = (const uint8_t*)((i % 2) == 0 ? RAM_IMAGE_LAYER_A_DATA_ADDRESS : RAM_IMAGE_LAYER_B_DATA_ADDRESS);
+        lcd.drawRGB16Image(indexPtr, dataPtr, 64, kImageLayerX, kImageLayerY[i], kImageLayerWidth, kImageLayerHeight);
+    }
+    lcd_drawMeasureBar();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) lcd_drawLayerTab(i);
+}
+
+/* SONG timeline: a full-area view (LaneView.h) --------------------------------*/
+
+uint32_t Controller::songThumbState(uint8_t bank_, uint8_t color_) const {
+    /// @brief A fingerprint of what a bank's thumbnail shows (its beats, the loop length, its
+    /// colour), never 0: the thumbnail is redrawn only when this changes.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(color_);
+    mix(songInterval);
+    for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+        const Bank& bank = layerLibrary[l].bankLibrary[bank_];
+        mix(static_cast<uint32_t>(bank.lastActiveBeatNum + 1));
+        for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) {
+            const Beat& beat = bank.beatLibrary[b];
+            if (!beat.getActive()) continue;
+            mix((static_cast<uint32_t>(beat.getStartInterval()) << 16) | beat.getEndInterval());
+            mix((static_cast<uint32_t>(beat.getFillType()) << 8) | beat.getFillPattern());
+        }
+    }
+    return (h == 0) ? 1 : h;
+}
+
+void Controller::lcd_drawSongViewData() {
+    /// @brief Redraws the SONG view: the chain as boxes (each as wide as its repeats, the selected
+    /// step in cyan), the status line, and the five banks as thumbnails of their ten lanes.
+    songPlayShown = 0;
+    const uint16_t unit = songViewUnit(songChain);
+    const bool live = songChain.active;
+    char line[64];
+
+    // 1. THE CHAIN
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(kSongViewX - 6, kSongViewY - 2, kSongViewWidth + 12, (kSongViewLoopY + 3) - (kSongViewY - 2));
+    lcd.setAlignment(LEFT);
+    for (uint8_t i = 0; i < songChain.count; i++) {
+        const ChainStep& st = songChain.steps[i];
+        const uint16_t x = songViewStepX(songChain, i, unit), w = songViewBoxWidth(st.repeats, unit);
+        const RGB16Color c = (i == songStepSel) ? CYAN : GRAY_75;
+        lcd.setForeColor(c);
+        lcd.drawRect(x, kSongViewY, w, kSongViewHeight);
+        if (unit >= 12) {
+            // Dotted lines between the loops of one step.
+            for (uint8_t j = 1; j < st.repeats; j++)
+                for (uint16_t y = kSongViewY + 6; y < kSongViewY + kSongViewHeight - 4; y += 3) lcd.drawPixel(static_cast<uint16_t>(x + j * unit - 2), y);
+        }
+        if (w >= 34) {
+            line[0] = static_cast<char>('1' + st.bank);
+            lcd.setFont(FONT_10x14);
+            lcd.drawText(line, 1, x + 8, kSongViewY + 7);
+            const int len = snprintf(line, sizeof line, "X%u", static_cast<unsigned>(st.repeats));
+            lcd.setFont(FONT_07x09);
+            if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), x + 8, kSongViewY + 26);
+        } else if (w >= 13) {
+            line[0] = static_cast<char>('1' + st.bank);
+            lcd.setFont(FONT_07x09);
+            lcd.drawText(line, 1, x + 3, kSongViewY + 7);
+        }
+    }
+    // The loop playing now gets a bar inside its box; lcd_drawSongViewPlay fills it.
+    const bool onStep = live && !chainPlay.skipCount && (chainPlay.step < songChain.count);
+    if (onStep) {
+        const uint8_t loop = (chainPlay.loopsDone < songChain.steps[chainPlay.step].repeats) ? chainPlay.loopsDone : 0;
+        songPlayBarX = static_cast<uint16_t>(songViewStepX(songChain, chainPlay.step, unit) + loop * unit + songViewCellInset(unit));
+        songPlayBarW = songViewCellWidth(unit);
+        lcd.setForeColor(GRAY_35);
+        lcd.fillRect(songPlayBarX, kSongViewBarY, songPlayBarW, kSongViewBarHeight);
+    } else {
+        songPlayBarW = 0;
+    }
+    // What happens after the last step: a line back to the start (LOOP), or a stop mark.
+    const uint16_t endX = songViewStepX(songChain, songChain.count, unit);
+    lcd.setForeColor(GRAY_50);
+    if (songChain.loop) {
+        lcd.drawHLine(kSongViewX, kSongViewLoopY, static_cast<int16_t>(endX - kSongViewX - 1));
+        lcd.drawVLine(static_cast<uint16_t>(endX - 2), kSongViewY + kSongViewHeight + 2, static_cast<int16_t>(kSongViewLoopY - kSongViewY - kSongViewHeight - 2));
+        lcd.drawVLine(kSongViewX, kSongViewY + kSongViewHeight + 3, static_cast<int16_t>(kSongViewLoopY - kSongViewY - kSongViewHeight - 3));
+        for (uint16_t k = 1; k <= 3; k++) {  // arrow head pointing up at the first step
+            lcd.drawPixel(static_cast<uint16_t>(kSongViewX - k), static_cast<uint16_t>(kSongViewY + kSongViewHeight + 3 + k));
+            lcd.drawPixel(static_cast<uint16_t>(kSongViewX + k), static_cast<uint16_t>(kSongViewY + kSongViewHeight + 3 + k));
+        }
+    } else {
+        lcd.fillRect(static_cast<uint16_t>(endX - 6), kSongViewY + kSongViewHeight + 4, 5, 5);
+    }
+
+    // 2. STATUS LINE
+    int len;
+    const unsigned playing = static_cast<unsigned>(activeSongBank + 1);
+    if (!live) {
+        len = snprintf(line, sizeof line, "CHAIN OFF   %u LOOPS   BANK %u PLAYS", static_cast<unsigned>(chainTotalLoops(songChain)), playing);
+    } else if (!onStep) {
+        const uint8_t step = (chainPlay.step < songChain.count) ? chainPlay.step : 0;
+        len = snprintf(line, sizeof line, "BANK %u THIS LOOP   THEN STEP %u OF %u: BANK %u", playing, static_cast<unsigned>(step + 1), static_cast<unsigned>(songChain.count),
+                       static_cast<unsigned>(songChain.steps[step].bank + 1));
+    } else {
+        const ChainStep& now = songChain.steps[chainPlay.step];
+        const ChainNext next = chainNext(songChain, chainPlay);
+        len = snprintf(line, sizeof line, "STEP %u OF %u   LOOP %u OF %u   ", static_cast<unsigned>(chainPlay.step + 1), static_cast<unsigned>(songChain.count),
+                       static_cast<unsigned>(chainPlay.loopsDone + 1), static_cast<unsigned>(now.repeats));
+        if ((len > 0) && (len < static_cast<int>(sizeof line))) {
+            const size_t room = sizeof line - static_cast<size_t>(len);
+            int more;
+            if (chainPlay.detour >= 0) {
+                more = snprintf(line + len, room, "NEXT: BANK %u ONCE", static_cast<unsigned>(chainPlay.detour + 1));
+            } else if (next.bank < 0) {
+                more = snprintf(line + len, room, "END IN %u LOOP%s", static_cast<unsigned>(next.loops), (next.loops == 1) ? "" : "S");
+            } else {
+                more = snprintf(line + len, room, "NEXT: BANK %u IN %u LOOP%s", static_cast<unsigned>(next.bank + 1), static_cast<unsigned>(next.loops), (next.loops == 1) ? "" : "S");
+            }
+            if (more > 0) len += more;
+        }
+    }
+    const int kStatusChars = 58;
+    if (len < 0) len = 0;
+    if (len > kStatusChars) len = kStatusChars;
+    for (int i = len; i < kStatusChars; i++) line[i] = ' ';  // fixed width: overwrites the old text
+    lcd.setFont(FONT_07x09);
+    lcd.setForeColor(live ? CYAN : GRAY_75);
+    lcd.drawText(line, kStatusChars, kSongViewX, kSongViewTextY);
+
+    // 3. THE FIVE BANKS: the one playing in cyan, banks the chain uses in white, the others dimmed.
+    const uint8_t used = chainUsedBanks(songChain);
+    for (uint8_t b = 0; b < kChainBanks; b++) {
+        const uint16_t tx = songThumbX(b);
+        const uint8_t code = (b == activeSongBank) ? 2 : ((used & (1u << b)) ? 1 : 0);
+        const RGB16Color c = (code == 2) ? CYAN : ((code == 1) ? WHITE : GRAY_35);
+        const uint32_t state = songThumbState(b, code);
+        if (state == songThumbDrawn[b]) continue;
+        const bool blank = (songThumbDrawn[b] == 0);  // the whole area was just cleared
+        songThumbDrawn[b] = state;
+
+        snprintf(line, sizeof line, "BANK %u", static_cast<unsigned>(b + 1));
+        lcd.setFont(FONT_07x09);
+        lcd.setForeColor(c);
+        lcd.drawText(line, 6, tx, kSongThumbLabelY);
+        if (!blank) lcd.clearRect(tx, kSongThumbY, kSongThumbWidth, kSongThumbHeight);
+        lcd.setForeColor((code == 2) ? CYAN : GRAY_35);
+        lcd.drawRect(tx, kSongThumbY, kSongThumbWidth, kSongThumbHeight);
+        lcd.setForeColor(c);
+        bool any = false;
+        for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+            const Bank& bank = layerLibrary[l].bankLibrary[b];
+            const uint16_t y = static_cast<uint16_t>(kSongThumbRowY + l * kSongThumbRowStep);
+            for (int16_t n = 0; n <= bank.lastActiveBeatNum; n++) {
+                const Beat& beat = bank.beatLibrary[n];
+                if (!beat.getActive()) continue;
+                any = true;
+                const uint16_t x = songThumbBeatX(b, beat.getStartInterval(), songInterval);
+                if (beat.getFillType() == 0) {
+                    lcd.fillRect(x, y, 2, kSongThumbRowHeight);
+                } else {
+                    const uint16_t xe = songThumbBeatX(b, beat.getEndInterval(), songInterval);
+                    lcd.fillRect(x, y, (xe > x + 2) ? (xe - x) : 2, kSongThumbRowHeight);
+                }
+            }
+        }
+        if (!any) {
+            lcd.setForeColor(GRAY_35);
+            lcd.drawText("EMPTY", 5, tx + (kSongThumbWidth - 5 * 9) / 2, kSongThumbY + kSongThumbHeight / 2 - 4);
+        }
+    }
+}
+
+void Controller::lcd_drawSongViewPlay() {
+    /// @brief Fills the playing loop's bar in the SONG view as the loop goes by.
+    if ((songPlayBarW == 0) || (songInterval == 0) || !playActive) return;
+    uint16_t px = songViewProgress(playInterval, songInterval, songViewUnit(songChain));
+    if (px > songPlayBarW) px = songPlayBarW;
+    if (px == songPlayShown) return;
+    if (px < songPlayShown) {
+        // The loop started again before the chain's redraw arrived: empty the bar first.
+        lcd.setForeColor(GRAY_35);
+        lcd.fillRect(songPlayBarX, kSongViewBarY, songPlayBarW, kSongViewBarHeight);
+        songPlayShown = 0;
+    }
+    lcd.setForeColor(YELLOW);
+    lcd.fillRect(static_cast<uint16_t>(songPlayBarX + songPlayShown), kSongViewBarY, static_cast<uint16_t>(px - songPlayShown), kSongViewBarHeight);
+    songPlayShown = px;
+}
+
+/* ROUTING: a full-area view (LaneView.h) ---------------------------------------*/
+
+void Controller::lcd_drawRoutingViewData() {
+    /// @brief Redraws the ROUTING view: the modules joined as patched (those that get no signal
+    /// dimmed), and one row per source with a mark under the module it enters.
+    static const char* const kNodeName[kRouteNodeCount] = {"EQ", "FILTER 1", "FILTER 2", "EFFECT 1", "EFFECT 2", "REVERB", "MASTER"};
+    const uint16_t half = kRouteViewBoxWidth / 2, by = kRouteViewBoxY;
+
+    // Where each source enters, and which modules get any signal.
+    uint8_t entry[kRouteViewSources];
+    uint8_t masks[kRouteViewSources];
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) entry[i] = layerLibrary[i].mixerInMode;
+    entry[kRouteSourceMetro] = metroOut;
+    entry[kRouteSourceLineIn] = mixer.liMixerIn;
+    for (uint8_t i = 0; i < kRouteViewSources; i++) masks[i] = routeMaskFromEntry(entry[i]);
+    const uint8_t fed = static_cast<uint8_t>(routeFedModules(routePatch, masks, kRouteViewSources) | routeBit(NODE_MASTER));
+
+    // 1. MODULES: routes first (those of unfed modules below the live ones), then the boxes.
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(routeViewModuleX(0) - half - 2, kImageLayerY[0] + 2, routeViewModuleX(NODE_MASTER) - routeViewModuleX(0) + kRouteViewBoxWidth + 4, by + kRouteViewBoxHeight + 2 - (kImageLayerY[0] + 2));
+    for (uint8_t pass = 0; pass < 2; pass++) {
+        for (uint8_t m = 0; m < kRouteModuleCount; m++) {
+            const bool live = (fed & routeBit(m)) != 0;
+            if (live != (pass == 1)) continue;
+            lcd.setForeColor(live ? WHITE : GRAY_35);
+            for (uint8_t d = m + 1; d < kRouteNodeCount; d++) {
+                if (!(routePatch.moduleDest[m] & routeBit(d))) continue;
+                if (d == m + 1) {
+                    lcd.drawHLine(routeViewModuleX(m) + half, by + kRouteViewBoxHeight / 2, static_cast<int16_t>(kRouteViewModuleStep - kRouteViewBoxWidth));
+                } else {
+                    const uint16_t off = routeViewArcOffset(m), y = routeViewArcY(m);
+                    const uint16_t x0 = routeViewModuleX(m) + off, x1 = routeViewModuleX(d) - off;
+                    lcd.drawVLine(x0, y, static_cast<int16_t>(by - y));
+                    lcd.drawHLine(x0, y, static_cast<int16_t>(x1 - x0 + 1));
+                    lcd.drawVLine(x1, y, static_cast<int16_t>(by - y));
+                }
+            }
+        }
+    }
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(LEFT);
+    for (uint8_t n = 0; n < kRouteNodeCount; n++) {
+        const uint16_t len = static_cast<uint16_t>(strlen(kNodeName[n]));
+        lcd.setForeColor((fed & routeBit(n)) ? CYAN : GRAY_35);
+        lcd.drawRect(routeViewModuleX(n) - half, by, kRouteViewBoxWidth, kRouteViewBoxHeight);
+        lcd.drawText(kNodeName[n], len, static_cast<uint16_t>(routeViewModuleX(n) - (len * 7) / 2), by + 8);
+    }
+
+    // 2. SOURCES: name, a dotted guide, and a mark under the module the source enters.
+    const uint16_t guideEnd = routeViewModuleX(NODE_MASTER) + 30;
+    lcd.setFont(FONT_07x09);
+    for (uint8_t i = 0; i < kRouteViewSources; i++) {
+        const uint16_t y = routeViewRowY(i);
+        const RGB16Color c = (i < kLayerLibrarySize) ? layerColor(i) : GRAY_75;
+        char name[16];
+        if (i < kLayerLibrarySize) {
+            snprintf(name, sizeof name, "%.2s %-12.12s", kDataLayerNum[i], layerLibrary[i].instLoadedData.nameShortL);
+        } else {
+            snprintf(name, sizeof name, "%-15s", (i == kRouteSourceMetro) ? "MT METRONOME" : "LI LINE IN");
+        }
+        lcd.setForeColor(c);
+        lcd.drawText(name, 15, kRouteViewNameX, y);
+        lcd.clearRect(kRouteViewGuideX, y - 1, guideEnd - kRouteViewGuideX + 1, kRouteViewMark);
+        lcd.setForeColor(GRAY_25);
+        for (uint16_t x = kRouteViewGuideX + 4; x < guideEnd; x += 4) lcd.drawPixel(x, y + 4);
+        if (entry[i] < kRouteNodeCount) {
+            lcd.setForeColor(c);
+            lcd.fillRect(routeViewModuleX(entry[i]) - kRouteViewMark / 2, y - 1, kRouteViewMark, kRouteViewMark);
+        }
+    }
+}
+
+/* FILTER and EQ curves: full-area views (FilterCurve.h) ---------------------------*/
+
+uint32_t Controller::filterViewState() const {
+    /// @brief A fingerprint of everything the filter curves show: both filters' settings.
+    uint32_t h = 2166136261u;
+    for (uint8_t n = 0; n < 2; n++) {
+        const Filter& f = filter[n];
+        const uint8_t v[7] = {f.type, f.slope, f.frequency, f.resonance, f.dry, f.wet, static_cast<uint8_t>(f.active ? 1 : 0)};
+        for (uint8_t k = 0; k < 7; k++) h = (h ^ v[k]) * 16777619u;
+    }
+    return h;
+}
+
+uint32_t Controller::eqViewState() const {
+    /// @brief A fingerprint of everything the EQ curve shows.
+    uint32_t h = 2166136261u;
+    const uint8_t v[6] = {static_cast<uint8_t>(eq.active ? 1 : 0), eq.q, eq.freqLowShelf, eq.gainLowShelf, eq.freqHighShelf, eq.gainHighShelf};
+    for (uint8_t k = 0; k < 6; k++) h = (h ^ v[k]) * 16777619u;
+    for (uint8_t k = 0; k < 4; k++) h = (((h ^ eq.freqPeak[k]) * 16777619u) ^ eq.gainPeak[k]) * 16777619u;
+    return h;
+}
+
+void Controller::lcd_drawFilterCurve(const uint16_t* y_, bool thick_) {
+    /// @brief Draws one stored curve in the current colour, point to point.
+    for (uint16_t p = 1; p < kCurvePoints; p++) {
+        lcd.drawLine(curvePointX(p - 1), y_[p - 1], curvePointX(p), y_[p]);
+        if (thick_) lcd.drawLine(curvePointX(p - 1), y_[p - 1] + 1, curvePointX(p), y_[p] + 1);
+    }
+}
+
+void Controller::lcd_drawCurveAxes(float topDb_, float bottomDb_, bool labels_) {
+    /// @brief The plot's grid: dotted lines every 12 dB (0 dB brighter) and at 100 Hz, 1 kHz and
+    /// 10 kHz. With labels_, also the axis labels and ticks, which lie outside the plot.
+    const uint16_t bottom = kCurveY + kCurveHeight;
+    lcd.setBackColor(BLACK);
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(LEFT);
+    for (int db = 12; db > static_cast<int>(bottomDb_); db -= 12) {
+        const uint16_t y = curveYOfDbRange(static_cast<float>(db), topDb_, bottomDb_);
+        if (labels_) {
+            char text[16];
+            snprintf(text, sizeof text, "%+3d", db);
+            if (db == 0) memcpy(text, "  0", 4);
+            lcd.setForeColor(GRAY_75);
+            lcd.drawText(text, 3, kCurveX - 28, y - 3);
+        }
+        lcd.setForeColor((db == 0) ? GRAY_50 : GRAY_25);
+        for (uint16_t x = kCurveX; x <= kCurveX + kCurveWidth; x += ((db == 0) ? 2 : 4)) lcd.drawPixel(x, y);
+    }
+    static const uint16_t kGridHz[3] = {100, 1000, 10000};
+    lcd.setForeColor(GRAY_25);
+    for (uint8_t k = 0; k < 3; k++) {
+        const uint16_t x = curveXOfHz(kGridHz[k]);
+        for (uint16_t y = kCurveY; y <= bottom; y += 4) lcd.drawPixel(x, y);
+    }
+    if (labels_) {
+        lcd.setForeColor(GRAY_75);
+        lcd.drawText("20", 2, kCurveX, kCurveLabelY);
+        lcd.drawText("100", 3, curveXOfHz(100) - 10, kCurveLabelY);
+        lcd.drawText("1K", 2, curveXOfHz(1000) - 7, kCurveLabelY);
+        lcd.drawText("10K", 3, curveXOfHz(10000) - 10, kCurveLabelY);
+        lcd.drawText("20K", 3, kCurveX + kCurveWidth - 21, kCurveLabelY);
+        static const uint16_t kTickHz[7] = {20, 50, 200, 500, 2000, 5000, 20000};
+        for (uint8_t k = 0; k < 7; k++) lcd.drawVLine(curveXOfHz(kTickHz[k]), bottom + 2, 3);
+    }
+}
+
+void Controller::lcd_drawFilterViewData() {
+    /// @brief Redraws the FILTER view: this page's filter as a curve from 20 Hz to 20 kHz (cyan,
+    /// gray while the filter is off), the other filter behind it when it is on, and the cutoff as
+    /// a dotted line. A changed curve is erased by redrawing it in black, not by clearing the plot.
+    const uint8_t cur = (menu == FILTER_1_MENU) ? 1 : 0, other = static_cast<uint8_t>(1 - cur);
+    uint16_t* const store = reinterpret_cast<uint16_t*>(RAM_VIEW_SCRATCH_ADDRESS);  // [2][kCurvePoints], this page's filter first
+    const uint16_t bottom = kCurveY + kCurveHeight;
+    filterViewStateDrawn = filterViewState();
+
+    // 1. WHAT WAS THERE
+    const bool first = !filterViewDrawn;
+    if (!first) {
+        lcd.setForeColor(BLACK);
+        lcd_drawFilterCurve(store, true);
+        if (filterViewOther) lcd_drawFilterCurve(store + kCurvePoints, false);
+        for (uint16_t y = kCurveY; y <= bottom; y += 3) lcd.drawPixel(filterViewMarkX, y);
+    }
+
+    // 2. GRID
+    lcd_drawCurveAxes(kCurveTopDb, kCurveBottomDb, first);
+
+    // 3. THE CURVES: the other filter behind (only when it is on), this page's filter in front.
+    for (uint8_t k = 0; k < 2; k++) {
+        const Filter& f = filter[k ? other : cur];
+        FilterShape shape;
+        shape.section[0].b0 = f.b0, shape.section[0].b1 = f.b1, shape.section[0].b2 = f.b2, shape.section[0].a1 = f.a1, shape.section[0].a2 = f.a2;
+        shape.section[1] = f.stage2;
+        shape.sections = f.stages;
+        shape.wet = f.wetFloat, shape.dry = f.dryFloat, shape.on = true;
+        uint16_t* y = store + k * kCurvePoints;
+        for (uint16_t p = 0; p < kCurvePoints; p++) y[p] = curveYOfDb(filterShapeDb(shape, curvePointHz(p), AUDIO_SAMPLE_RATE));
+    }
+    filterViewOther = filter[other].active;
+    if (filterViewOther) {
+        lcd.setForeColor(GRAY_50);
+        lcd_drawFilterCurve(store + kCurvePoints, false);
+    }
+    lcd.setForeColor(filter[cur].active ? CYAN : GRAY_75);
+    lcd_drawFilterCurve(store, true);
+    filterViewMarkX = curveXOfHz(static_cast<float>(kFilterFrequencyDataLibrary[filter[cur].frequency].data));
+    for (uint16_t y = kCurveY; y <= bottom; y += 3) lcd.drawPixel(filterViewMarkX, y);
+    filterViewDrawn = true;
+
+    // 4. LEGEND
+    char text[16];
+    lcd.setFont(FONT_07x09);
+    snprintf(text, sizeof text, "FILTER %u %-3s", static_cast<unsigned>(cur + 1), filter[cur].active ? "" : "OFF");
+    lcd.drawText(text, 12, kCurveX, kCurveLegendY);
+    snprintf(text, sizeof text, "FILTER %u %-3s", static_cast<unsigned>(other + 1), filter[other].active ? "" : "OFF");
+    lcd.setForeColor(filter[other].active ? GRAY_50 : GRAY_35);
+    lcd.drawText(text, 12, kCurveX + 16 * 9, kCurveLegendY);
+}
+
+void Controller::lcd_drawEqViewData() {
+    /// @brief Redraws the EQ view: the six bands together as one curve from 20 Hz to 20 kHz (+24
+    /// to -36 dB; cyan, gray while the EQ is off), and each band as a handle at its frequency and
+    /// gain with its name above the plot (LO, 1-4, HI).
+    static const char* const kBandName[6] = {"LO", "1", "2", "3", "4", "HI"};
+    const float kTop = 24.0f, kBottom = -36.0f;
+    uint16_t* const store = reinterpret_cast<uint16_t*>(RAM_VIEW_SCRATCH_ADDRESS);
+    filterViewStateDrawn = eqViewState();
+    lcd.setBackColor(BLACK);
+
+    // 1. WHAT WAS THERE
+    const bool first = !filterViewDrawn;
+    if (!first) {
+        lcd.setForeColor(BLACK);
+        lcd_drawFilterCurve(store, true);
+        for (uint8_t k = 0; k < 6; k++) lcd.fillRect(eqViewMarkX[k] - 3, eqViewMarkY[k] - 3, 7, 7);
+    }
+    lcd.clearRect(kCurveX - 8, kCurveY - 9, kCurveWidth + 16, 7);  // the band names
+
+    // 2. GRID
+    lcd_drawCurveAxes(kTop, kBottom, first);
+
+    // 3. THE CURVE
+    BiquadCoef band[6];
+    const EqFilter* src[6] = {&eq.filterLowShelf, &eq.filterPeak[0], &eq.filterPeak[1], &eq.filterPeak[2], &eq.filterPeak[3], &eq.filterHighShelf};
+    for (uint8_t k = 0; k < 6; k++) band[k].b0 = src[k]->b0, band[k].b1 = src[k]->b1, band[k].b2 = src[k]->b2, band[k].a1 = src[k]->a1, band[k].a2 = src[k]->a2;
+    for (uint16_t p = 0; p < kCurvePoints; p++) store[p] = curveYOfDbRange(eqShapeDb(band, 6, curvePointHz(p), AUDIO_SAMPLE_RATE), kTop, kBottom);
+    const RGB16Color c = eq.active ? CYAN : GRAY_75;
+    lcd.setForeColor(c);
+    lcd_drawFilterCurve(store, true);
+
+    // 4. THE BANDS: a handle at each band's frequency and gain, its name above the plot.
+    const uint8_t freq[6] = {eq.freqLowShelf, eq.freqPeak[0], eq.freqPeak[1], eq.freqPeak[2], eq.freqPeak[3], eq.freqHighShelf};
+    const uint8_t gain[6] = {eq.gainLowShelf, eq.gainPeak[0], eq.gainPeak[1], eq.gainPeak[2], eq.gainPeak[3], eq.gainHighShelf};
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(LEFT);
+    for (uint8_t k = 0; k < 6; k++) {
+        eqViewMarkX[k] = curveXOfHz(static_cast<float>(kEqFreqDataLibrary[freq[k]].data));
+        eqViewMarkY[k] = curveYOfDbRange(static_cast<float>(kEqGainDataLibrary[gain[k]].data), kTop, kBottom);
+        lcd.setForeColor(BLACK);
+        lcd.fillRect(eqViewMarkX[k] - 3, eqViewMarkY[k] - 3, 7, 7);
+        lcd.setForeColor(eq.active ? WHITE : GRAY_50);
+        lcd.drawRect(eqViewMarkX[k] - 3, eqViewMarkY[k] - 3, 7, 7);
+        const uint16_t len = static_cast<uint16_t>(strlen(kBandName[k]));
+        lcd.drawText(kBandName[k], len, static_cast<uint16_t>(eqViewMarkX[k] - (len * 7) / 2 + 1), kCurveY - 9);
+    }
+    filterViewOther = false;
+    filterViewDrawn = true;
+
+    // 5. LEGEND
+    lcd.setFont(FONT_07x09);
+    lcd.setForeColor(c);
+    lcd.drawText(eq.active ? "EQ    " : "EQ OFF", 6, kCurveX, kCurveLegendY);
+}
+
+/* NOTE page (BeatNote.h) ----------------------------------------------------*/
+
+void Controller::note_select() {
+    /// @brief Opens the NOTE page for the selected layer (LAYER SONG tapped on the EUCLID page):
+    /// velocity, chance, condition and nudge of one beat, or of all beats with ADD held.
+
+    if ((menu == NOTE_MENU) || (selectedLayerNum == -1)) return;
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    if (bank.lastActiveBeatNum == -1) {
+        selectedBeatNum = -1;
+    } else if ((selectedBeatNum < 0) || (selectedBeatNum > bank.lastActiveBeatNum)) {
+        selectedBeatNum = 0;
+    }
+
+    preMenu = menu;
+    preMenuTab = menuTab;
+    menuTab = -1;  // every field has its own encoder
+    menu = NOTE_MENU;
+    lcd_transitionMenu();
+    lcd_transitionSelect();
+    lcd_drawNoteMenu();
+    if (selectedBeatNum != -1) lcd_drawBeat(selectedLayerNum, activeSongBank, static_cast<uint8_t>(selectedBeatNum), true);
+    encoder_update();
+}
+
+bool Controller::note_validSelection() {
+    /// @brief Keeps the selected beat inside the bank (beats can come and go while on the page).
+    if (selectedLayerNum == -1) return false;
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    if (bank.lastActiveBeatNum == -1) {
+        selectedBeatNum = -1;
+        return false;
+    }
+    if ((selectedBeatNum < 0) || (selectedBeatNum > bank.lastActiveBeatNum)) selectedBeatNum = 0;
+    return true;
+}
+
+uint8_t Controller::note_effectiveVelocity(const Beat& beat_) const {
+    /// @brief The velocity a beat plays with: its own, or its pattern's (FLAT 127, GHOST 64, MUTED 0).
+    if (beat_.getVelocity() != 0) return beat_.getVelocity();
+    if ((beat_.getFillType() == 0) && (beat_.getFillPattern() == 1)) return 64;
+    if ((beat_.getFillType() == 0) && (beat_.getFillPattern() == 2)) return 0;
+    return 127;
+}
+
+void Controller::note_step(EncoderFunc function_, bool up_) {
+    /// @brief Steps one NOTE field for the selected beat; with ADD held, VELOCITY, CHANCE and
+    /// NUDGE move every beat of the bank by the same amount and CONDITION sets them all alike.
+
+    if (!note_validSelection()) {
+        lcd_drawNote_Data();
+        lcd_drawNoteOverview();
+        return;
+    }
+    Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    const uint8_t last = static_cast<uint8_t>(bank.lastActiveBeatNum);
+    const bool all = keyboard.shiftKeyPress;
+    const int8_t dir = up_ ? 1 : -1;
+
+    if (function_ != ENC_NOTE_BEAT) undo_capture(UNDO_NOTE, selectedLayerNum, activeSongBank);
+    if (function_ == ENC_NOTE_BEAT) {
+        lcd_drawBeat(selectedLayerNum, activeSongBank, static_cast<uint8_t>(selectedBeatNum), false);
+        selectedBeatNum = up_ ? ((selectedBeatNum < last) ? selectedBeatNum + 1 : 0) : ((selectedBeatNum > 0) ? selectedBeatNum - 1 : last);
+        lcd_drawBeat(selectedLayerNum, activeSongBank, static_cast<uint8_t>(selectedBeatNum), true);
+    } else {
+        const Beat& selected = bank.beatLibrary[selectedBeatNum];
+        const uint8_t cond = noteCondStep(noteCondCode(selected.getNote()), up_);
+        for (uint8_t k = 0; k <= last; k++) {
+            if (!all && (k != selectedBeatNum)) continue;
+            Beat& beat = bank.beatLibrary[k];
+            switch (function_) {
+                case ENC_NOTE_VEL: {
+                    int16_t v = static_cast<int16_t>(note_effectiveVelocity(beat) + dir);
+                    if (v < 1) v = 1;
+                    if (v > 127) v = 127;
+                    beat.setVelocity(static_cast<uint8_t>(v));
+                } break;
+                case ENC_NOTE_PROB:
+                    beat.setNote(noteWithChancePercent(beat.getNote(), static_cast<int16_t>(noteChancePercent(beat.getNote()) + 5 * dir)));
+                    break;
+                case ENC_NOTE_COND:
+                    beat.setNote(noteWithCond(beat.getNote(), cond));
+                    break;
+                case ENC_NOTE_NUDGE:
+                    beat.setNote(noteWithNudge(beat.getNote(), static_cast<int16_t>(noteNudge(beat.getNote()) + dir)));
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+    if (function_ != ENC_NOTE_BEAT) lcd_drawSong(selectedLayerNum, activeSongBank);  // the marks follow the edit
+    lcd_drawNote_Data();
+    lcd_drawNoteOverview();
+}
+
+void Controller::note_clear() {
+    /// @brief CLEAR on the NOTE page: the selected beat (ADD held: every beat of the bank) plays
+    /// as before again: velocity from its pattern, 100%, always, not nudged.
+    if (!note_validSelection()) return;
+    undo_capture(UNDO_NOTE, selectedLayerNum, activeSongBank);
+    Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    for (int8_t k = 0; k <= bank.lastActiveBeatNum; k++) {
+        if (keyboard.shiftKeyPress || (k == selectedBeatNum)) bank.beatLibrary[k].resetNote();
+    }
+    lcd_drawSong(selectedLayerNum, activeSongBank);
+    lcd_drawNote_Data();
+    lcd_drawNoteOverview();
+}
+
+// NOTE page fields (index -> tab): NOTE, VELOCITY | the note | CHANCE, CONDITION, NUDGE.
+static const uint8_t kNoteFields = 5;
+static const uint8_t kNoteTab[kNoteFields] = {0, 1, 4, 5, 6};
+
+void Controller::lcd_drawNoteMenu() {
+    /// @brief Draws the NOTE page: fields and the selected note.
+    lcd_drawMenuIcon(NOTE_MENU);
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kDataMenuNum + selectedLayerNum, 1, kMenuNumX, kMenuNumY);
+    for (uint8_t f = 0; f < kNoteFields; f++) {
+        const uint8_t tab = kNoteTab[f];
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_NOTE_BEAT + f].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[tab], kMenuHeaderY[tab]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_NOTE_BEAT + f].sign, kMenuSignTextSize, kMenuSignBoxX[tab], kMenuSignBoxY[tab]);
+    }
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText("          ", kMenuHeaderTextSize, kMenuHeaderX[7], kMenuHeaderY[7]);
+    lcd_drawNote_Data();
+    lcd_drawNoteOverview();
+}
+
+void Controller::lcd_drawNote_Data() {
+    /// @brief Draws the NOTE field values of the selected beat.
+    char text[kNoteFields][kMenuDataTextSize + 1];
+    if (!note_validSelection()) {
+        for (uint8_t f = 0; f < kNoteFields; f++) memcpy(text[f], "         -", sizeof(text[f]));
+    } else {
+        const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+        const Beat& beat = bank.beatLibrary[selectedBeatNum];
+        char wide[32];
+        snprintf(wide, sizeof(wide), "%4u OF %2u", static_cast<unsigned>(selectedBeatNum + 1), static_cast<unsigned>(bank.lastActiveBeatNum + 1));
+        memcpy(text[0], wide, kMenuDataTextSize);
+        text[0][kMenuDataTextSize] = 0;
+        if (beat.getVelocity() != 0) {
+            snprintf(text[1], sizeof(text[1]), "%10u", static_cast<unsigned>(beat.getVelocity()));
+        } else if (beat.getFillType() != 0) {
+            memcpy(text[1], "      FILL", sizeof(text[1]));
+        } else {
+            memcpy(text[1], (beat.getFillPattern() == 1) ? "     GHOST" : ((beat.getFillPattern() == 2) ? "     MUTED" : "      FLAT"), sizeof(text[1]));
+        }
+        snprintf(text[2], sizeof(text[2]), "%10u", static_cast<unsigned>(noteChancePercent(beat.getNote())));
+        noteCondName(noteCondCode(beat.getNote()), text[3], sizeof(text[3]));
+        const int nudge = noteNudgePercent(beat.getNote());
+        (nudge == 0) ? snprintf(text[4], sizeof(text[4]), "%10d", 0) : snprintf(text[4], sizeof(text[4]), "%+10d", nudge);
+    }
+    lcd_setMenuDataState(WHITE);
+    for (uint8_t f = 0; f < kNoteFields; f++) {
+        const uint8_t tab = kNoteTab[f];
+        lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[tab], kMenuDataY[tab]);
+    }
+}
+
+void Controller::lcd_drawNoteOverview() {
+    /// @brief The selected note in words, in the top-right area (tabs 2-3), and the keys.
+    const uint16_t kX = 494, kY = 32, kLineStep = 11, kAreaX = 493, kAreaY = 30, kAreaW = 325, kAreaH = 60;
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(kAreaX, kAreaY, kAreaW, kAreaH);
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(LEFT);
+    char line[44];
+    int len;
+    if (!note_validSelection()) {
+        len = snprintf(line, sizeof(line), "NO BEATS IN THIS BANK");
+        lcd.setForeColor(GRAY_75);
+        if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY);
+        return;
+    }
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    const Beat& beat = bank.beatLibrary[selectedBeatNum];
+    char position[32];
+    beatListPosition(beat.getStartInterval(), barInterval, measureInterval, position, sizeof(position));
+    uint8_t set = 0;
+    for (int8_t k = 0; k <= bank.lastActiveBeatNum; k++) {
+        if (!noteIsDefault(bank.beatLibrary[k].getVelocity(), bank.beatLibrary[k].getNote())) set++;
+    }
+    len = snprintf(line, sizeof(line), "NOTE %d AT %s", selectedBeatNum + 1, position);
+    lcd.setForeColor(CYAN);
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY);
+
+    char cond[12];
+    noteCondName(noteCondCode(beat.getNote()), cond, sizeof(cond));
+    const char* c = cond;
+    while (*c == ' ') c++;
+    len = snprintf(line, sizeof(line), "VEL %u  %u%%  %s", static_cast<unsigned>(note_effectiveVelocity(beat)), static_cast<unsigned>(noteChancePercent(beat.getNote())), c);
+    lcd.setForeColor(WHITE);
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + kLineStep);
+    len = snprintf(line, sizeof(line), "%u OF %d BEATS HAVE SETTINGS", static_cast<unsigned>(set), bank.lastActiveBeatNum + 1);
+    lcd.setForeColor(GRAY_75);
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 2 * kLineStep);
+    len = snprintf(line, sizeof(line), "ADD+TURN: ALL BEATS");
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 3 * kLineStep);
+    len = snprintf(line, sizeof(line), "CLEAR: RESET  HOLD F: FKEY BEATS");
+    if (len > 0) lcd.drawText(line, static_cast<uint16_t>(len), kX, kY + 4 * kLineStep);
 }
 
 // EUCLID page fields (index -> tab): STEPS, HITS | pattern | ROTATE, GRID, MODE, ACCENTS.
@@ -21661,6 +22992,7 @@ void Controller::lcd_drawRoutingOverview() {
         lcd.setForeColor(GRAY_75);
         if (len > 0) lcd.drawText(more, (uint16_t)len, kX, kY + row * kLineStep);
     }
+    viewDirty = true;  // the diagram below shows the same patch
 }
 
 void Controller::routing_setMetroOut(uint8_t out_) {
@@ -21719,8 +23051,8 @@ void Controller::layerInst_setMute(uint8_t layerNum_, bool mute_) {
     layerLibrary[layerNum_].mute = mute_;
 
     // 2. UI REFRESH
-    // Redraw mute icon on layer tab.
-    lcd_drawLayerTab_Mute(layerNum_);
+    // The whole lane: a layer that does not sound is drawn dimmed (name, boxes, beats).
+    lcd_drawLayerTab(layerNum_);
 }
 
 void Controller::layerInst_setFill(uint8_t layerNum_, bool fill_) {
@@ -21743,8 +23075,40 @@ void Controller::layerInst_setStyle(uint8_t layerNum_, bool style_) {
     layerLibrary[layerNum_].style = style_;
 
     // 2. UI REFRESH
-    // Redraw style icon on layer tab.
-    lcd_drawLayerTab_Style(layerNum_);
+    // The STYLE field on instrument page 3 (the layer row's third box shows SOLO since V1.14).
+    if ((menu == LAYER_INST_2_MENU) && (selectedLayerNum == layerNum_)) lcd_drawLayerInst_StyleData(layerNum_);
+}
+
+RGB16Color Controller::layerColor(uint8_t layerNum_) const {
+    /// @brief A lane's colour: cyan when selected, dimmed when the layer does not sound (muted, or
+    /// another layer is soloed), else its own.
+    if (static_cast<int16_t>(layerNum_) == selectedLayerNum) return kLayerSelectedColor;
+    if (!layerAudible(layerNum_)) return GRAY_35;
+    return kLayerColorPalette[layerNum_];
+}
+
+bool Controller::layerAudible(uint8_t layerNum_) const {
+    /// @brief A layer sounds unless muted, or another layer is soloed and this one isn't.
+    return !layerLibrary[layerNum_].mute && ((soloMask == 0) || (soloMask & (1u << layerNum_)));
+}
+
+void Controller::layerInst_setSolo(uint8_t layerNum_, bool solo_) {
+    /// @brief SOLO (left S + pad): while any layer is soloed only the soloed ones sound (and send
+    /// MIDI). Not saved, and MUTE stays as it was.
+    if (layerNum_ >= kLayerLibrarySize) return;
+    bool was[kLayerLibrarySize];
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) was[i] = layerAudible(i);
+    soloMask = solo_ ? static_cast<uint16_t>(soloMask | (1u << layerNum_)) : static_cast<uint16_t>(soloMask & ~(1u << layerNum_));
+    // Redraw this lane and every lane that starts or stops sounding (they are dimmed).
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++)
+        if ((i == layerNum_) || (layerAudible(i) != was[i])) lcd_drawLayerTab(i);
+}
+
+void Controller::layerInst_clearSolo() {
+    /// @brief SOLO + CLEAR: every layer sounds again.
+    if (soloMask == 0) return;
+    soloMask = 0;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) lcd_drawLayerTab(i);
 }
 
 void Controller::layerInst_copy() {
@@ -21830,9 +23194,14 @@ void Controller::layerInst_paste() {
 void Controller::layerSong_select(uint8_t layerNum_, uint8_t bankNum_) {
     /// @brief Enters Layer Song menu and focuses requested layer/bank context.
 
-    // Same layer again on the song page: next page (EUCLID), as I does for the instrument pages.
+    // Same layer again on the song page: next page (EUCLID, then NOTE), as I does for the
+    // instrument pages.
     if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_)) {
         euclid_select();
+        return;
+    }
+    if ((menu == EUCLID_MENU) && (selectedLayerNum == layerNum_)) {
+        note_select();
         return;
     }
 
@@ -22081,7 +23450,15 @@ void Controller::layerSong_beatLeft() {
     }
 }
 
-void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_) {
+uint16_t Controller::layerSong_quantizeInterval(uint16_t interval_) const {
+    /// @brief Nearest grid position at the current QUANTIZE; the end of the song wraps to 0.
+    const uint16_t quantizeInterval = kQuantizeInterval[rhythm.quantize];
+    uint16_t startInterval = ((interval_ / quantizeInterval) + ((interval_ % quantizeInterval) / (quantizeInterval / 2))) * quantizeInterval;
+    if (startInterval == songInterval) startInterval = 0;
+    return startInterval;
+}
+
+void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_) {
     /// @brief Inserts a beat into target bank with quantization, ordering, and UI sync.
 
     Layer& layer = layerLibrary[layerNum_];
@@ -22093,15 +23470,9 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
     if (bank.lastActiveBeatNum >= static_cast<int16_t>(kBeatLibrarySize) - 1) {
         textFullFlag = true;
     } else {
-        uint16_t quantizeInterval = kQuantizeInterval[rhythm.quantize];
-
-        // Quantize incoming interval using nearest-grid rounding.
-        uint16_t startInterval = ((interval_ / quantizeInterval) + ((interval_ % quantizeInterval) / (quantizeInterval / 2))) * quantizeInterval;
+        // Quantize incoming interval using nearest-grid rounding; the end of the song is its start.
+        uint16_t startInterval = layerSong_quantizeInterval(interval_);
         uint16_t endInterval;
-
-        // 2. LOOP BOUNDARY NORMALIZATION
-        // Remap end-of-song interval to loop start.
-        if (startInterval == songInterval) startInterval = 0;
 
         // 3. INSERTION INDEX RESOLUTION
         // Detect duplicates and compute sorted insertion index.
@@ -22166,6 +23537,7 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
         if (!duplicate) {
             bank.setBeat(beatNum, startInterval, endInterval);
             bank.setBeatFill(beatNum, fillType_, fillPattern_, fillTime_, fillLevel_);
+            bank.beatLibrary[beatNum].setVelocity(velocity_);  // 0 = from the pattern (BeatNote.h)
             layerSong_calculateLastActiveBeatNum(layerNum_, bankTab_);
             layerSong_calculatePlayBeatNum(layerNum_, bankTab_, playInterval);
             if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_) && (selected_)) {
@@ -22195,6 +23567,7 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
 
 void Controller::layerSong_setSelectedBeatFill(uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_) {
     /// @brief Applies fill type/pattern/time/level to selected beat and refreshes UI.
+    undo_capture(UNDO_FILL, selectedLayerNum, activeSongBank);  // UndoLog.h: before the edit
 
     // 1. SIMPLE FILL NORMALIZATION
     // Reset time/level modifiers for simple fill modes.
@@ -22223,6 +23596,7 @@ void Controller::layerSong_setSelectedBeatFill(uint8_t fillType_, uint8_t fillPa
 
 void Controller::layerSong_setSelectedBeatFillTime(uint8_t fillTime_) {
     /// @brief Updates selected beat fill-time mode and refreshes dependent UI.
+    undo_capture(UNDO_FILL, selectedLayerNum, activeSongBank);
 
     // 1. TIME MODE RE-CALCULATION
     // Recompute selected beat fill-time profile and play cursor.
@@ -22237,6 +23611,7 @@ void Controller::layerSong_setSelectedBeatFillTime(uint8_t fillTime_) {
 
 void Controller::layerSong_setSelectedBeatFillLevel(uint8_t fillLevel_) {
     /// @brief Updates selected beat fill-level mode and refreshes dependent UI.
+    undo_capture(UNDO_FILL, selectedLayerNum, activeSongBank);
 
     // 1. LEVEL MODE RE-CALCULATION
     // Recompute selected beat fill-level profile and play cursor.
@@ -22251,6 +23626,7 @@ void Controller::layerSong_setSelectedBeatFillLevel(uint8_t fillLevel_) {
 
 void Controller::layerSong_generateBeat(uint8_t type) {
     /// @brief Generates predefined beat layouts for the active layer song bank.
+    undo_capture(UNDO_GENERATE, selectedLayerNum, activeSongBank);
 
     uint16_t interval;
 
@@ -22345,6 +23721,7 @@ void Controller::layerSong_generateBeat(uint8_t type) {
 void Controller::layerSong_shiftSelectedBeat(bool direction_) {
     /// @brief Moves the selected beat one quantize step, jumping over neighbouring beats and
     /// wrapping at the song end. The beat keeps its fill (recomputed for its new length).
+    undo_capture(UNDO_MOVE, selectedLayerNum, activeSongBank);
 
     if ((selectedLayerNum == -1) || (selectedBeatNum == -1)) return;
     const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
@@ -22357,6 +23734,7 @@ void Controller::layerSong_shiftSelectedBeat(bool direction_) {
 void Controller::layerSong_shiftAll(bool forward_) {
     /// @brief Shifts every beat of the selected layer one quantize step, wrapping at the song
     /// end. Fills move with their beats; shifting back restores the layer exactly.
+    undo_capture(UNDO_MOVE, selectedLayerNum, activeSongBank);
 
     if (selectedLayerNum == -1) return;
     const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
@@ -22378,6 +23756,7 @@ void Controller::layerSong_shiftAll(bool forward_) {
 void Controller::layerSong_insertBeat() {
     /// @brief Inserts a plain beat on the quantize grid in the middle of the gap after the
     /// selected beat (at the song start in an empty bank) and selects it.
+    undo_capture(UNDO_MOVE, selectedLayerNum, activeSongBank);
 
     if (selectedLayerNum == -1) return;
     const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
@@ -22423,6 +23802,7 @@ void Controller::layerSong_commitBank(int16_t selectedBeatNum_) {
 
 void Controller::layerSong_resetSelectedBeat() {
     /// @brief Removes selected beat, compacts beat list, and refreshes selection/UI.
+    undo_capture(UNDO_DELETE, selectedLayerNum, activeSongBank);
 
     // 1. SELECTION & BANK VALIDATION
     // Continue only when selected layer and bank contain active beats.
@@ -22758,6 +24138,7 @@ void Controller::layerSong_copy() {
 
 void Controller::layerSong_paste() {
     /// @brief Pastes clipboard beat data into selected layer active song bank.
+    if (layerSongCopy.copyActive) undo_capture(UNDO_PASTE, selectedLayerNum, activeSongBank);
 
     // 1. CLIPBOARD & TARGET VALIDATION
     // Continue only when clipboard is active and selection is valid.
@@ -22811,26 +24192,38 @@ void Controller::layerSong_selectBank(uint8_t bankNum_) {
             activeSongBank = bankNum_;
             lcd_drawSongBankTab(bankNum_, false);
 
-            // 3. ACTIVE MENU REFRESH
-            // Refresh selected beat and visible Layer Song widgets.
-            if (menu == LAYER_SONG_MENU) {
-                (layerLibrary[selectedLayerNum].bankLibrary[activeSongBank].lastActiveBeatNum != -1) ? selectedBeatNum = 0 : selectedBeatNum = -1;
-                lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
-                lcd_drawLayerSong_PositionData(selectedLayerNum);
-                lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
-                lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
-                lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
-                lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
-            }
-
-            // 4. GLOBAL LAYER REFRESH
+            // 3. GLOBAL LAYER REFRESH
             // Redraw all layer song lanes and update play pointers.
             for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                 lcd_clearSong(i, preBankNum);
                 lcd_drawSong(i, activeSongBank);
                 layerSong_calculatePlayBeatNum(i, activeSongBank, playInterval);
             }
+
+            // 4. ACTIVE MENU REFRESH
+            // Selected beat and the visible song / NOTE page widgets follow the new bank.
+            layerPage_bankChanged();
         }
+    }
+}
+
+void Controller::layerPage_bankChanged() {
+    /// @brief After the active bank changed: on the song or NOTE page, select the new bank's first
+    /// beat and redraw the fields (they showed the old bank's beat, and edits went to the wrong one).
+    if ((selectedLayerNum == -1) || ((menu != LAYER_SONG_MENU) && (menu != NOTE_MENU))) return;
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    selectedBeatNum = (bank.lastActiveBeatNum != -1) ? 0 : -1;
+    if (selectedBeatNum != -1) lcd_drawBeat(selectedLayerNum, activeSongBank, 0, true);
+    if (menu == LAYER_SONG_MENU) {
+        lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+        lcd_drawLayerSong_PositionData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillPatternData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
+        lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
+    } else {
+        lcd_drawNote_Data();
+        lcd_drawNoteOverview();
     }
 }
 
@@ -22860,6 +24253,8 @@ void Controller::layerSong_triggerBank(uint8_t bankNum_) {
 
 void Controller::record() {
     /// @brief Toggles recording state and synchronizes transport/icon state.
+
+    undoRecordOpen = false;  // a new take (or its end): its hits make one undo step
 
     // 1. TRANSPORT STATE BRANCH
     // Resolve behavior for idle, recording, and play-only states.
@@ -22903,6 +24298,7 @@ void Controller::record() {
         stopFlag = false;
         resetFlag = false;
         midi_clockOnPlayStart();
+        note_restartLoops();
         playActive = true;
         if (io.syncOut == 1) {
             HAL_GPIO_WritePin(SYNC_OUT_GATE_GPIO_Port, SYNC_OUT_GATE_Pin, GPIO_PIN_SET);
@@ -22966,9 +24362,11 @@ void Controller::play() {
     // 3. TRANSPORT STATE UPDATE
     // Set playback flags and transport icons for running state.
     // Song mode: playing from the top starts on the chain's current step.
-    if (songChain.active && (playInterval == 0)) song_toStartBank();
+    // (Not after a bank picked by hand while stopped: that bank plays first, SongChain.h.)
+    if (songChain.active && (playInterval == 0) && !chainPlay.skipCount) song_toStartBank();
 
     midi_clockOnPlayStart();
+    note_restartLoops();
     stopFlag = false;
     resetFlag = false;
     playActive = true;
@@ -23079,6 +24477,7 @@ void Controller::reset() {
     // Song mode: RESET goes back to the first step of the chain.
     chainRestart(songChain, chainPlay);
     chainActionFlag = true;
+    note_restartLoops();  // RESET: the next loop is the first again (trig conditions)
 
     if ((playInterval != 0) || (metronome.precountState)) {
         // 3. PRECOUNT STATE RESET
@@ -23207,9 +24606,7 @@ void Controller::triggerReset() {
 void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffer_) {
     /// @brief Orchestrates the complete real-time audio processing pipeline, managing signal generation, sequential DSP stages, and final output buffering.
 
-#ifdef DSP_PROFILE
-    const uint32_t dspStart = DWT_CYCCNT;
-#endif
+    const uint32_t dspStart = DWT_CYCCNT;  // for the CPU monitor (LoadMeter.h)
 
     // 0. I2S ERROR FLAG POLL
     // Count and clear overrun/underrun. The HAL never enables these interrupts, so polling
@@ -23247,42 +24644,58 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
         processAudioSend(outputBuffer_);
     }
 
-#ifdef DSP_PROFILE
     // 5. LOAD MEASUREMENT
     // Unsigned subtraction handles the 32-bit cycle counter wrapping.
-    const uint32_t dspCycles = DWT_CYCCNT - dspStart;
-    dspCyclesSum += dspCycles;
-    dspBlocks += 1;
-    if (dspCycles > dspCyclesPeak) dspCyclesPeak = dspCycles;
-#endif
+    dspLoad.add(DWT_CYCCNT - dspStart);
 }
 
-#ifdef DSP_PROFILE
-void Controller::lcd_drawDspProfile() {
-    /// @brief Shows DSP load as a share of the audio block time, refreshed twice a second.
-    ///        AVG and PEAK cover the last half second, MAX everything since power-on.
+void Controller::lcd_drawMonitor() {
+    /// @brief The CPU and MEM bars in the top-right box, on every page, four times a second.
+    ///        CPU: the worst audio block of the last quarter second as a share of the block time
+    ///        (magenta from 80%). MEM: the loaded samples as a share of the sample memory.
 
     if ((menu == INIT_MENU) || (menu == TEST_MENU)) return;
-    if ((HAL_GetTick() - dspLastDrawTick) < 500) return;
-    dspLastDrawTick = HAL_GetTick();
+    const uint32_t now = HAL_GetTick();
+    if (!monitorFull && ((now - monitorTick) < kMonitorPeriodMs)) return;
+    monitorTick = now;
 
-    // Snapshot and reset the interval counters with the audio interrupt held off.
+    // Read and restart the meter with the audio interrupt held off.
     __disable_irq();
-    const uint32_t sum = dspCyclesSum, blocks = dspBlocks, peak = dspCyclesPeak;
-    dspCyclesSum = 0;
-    dspBlocks = 0;
-    dspCyclesPeak = 0;
+    const LoadReading load = loadMeterTake(dspLoad);
     __enable_irq();
-    if (blocks == 0) return;
-    if (peak > dspCyclesPeakAll) dspCyclesPeakAll = peak;
 
-    // Cycles available per block: core clock x block length.
-    const float budget = (float)SystemCoreClock * (float)I2S_BLOCK_SIZE / AUDIO_SAMPLE_RATE;
-    // Tenths of a percent as integers: newlib-nano's printf has no %f.
-    const unsigned long avg = (unsigned long)(1000.0f * ((float)sum / (float)blocks) / budget);
-    const unsigned long pk = (unsigned long)(1000.0f * (float)peak / budget);
-    const unsigned long mx = (unsigned long)(1000.0f * (float)dspCyclesPeakAll / budget);
+    // 1. FRAME: the labels, once (over the four dots of the frame image).
+    lcd.setBackColor(BLACK);
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(LEFT);
+    if (monitorFull) {
+        monitorFull = false;
+        lcd.clearRect(kMonitorClearX, kMonitorClearY, kMonitorClearW, kMonitorClearH);
+        lcd.setForeColor(GRAY_75);
+        lcd.drawText("CPU", 3, kMonitorX, kMonitorCpuTextY);
+        lcd.drawText("MEM", 3, kMonitorX, kMonitorMemTextY);
+        monitorCpuDrawn = 0xFFFFFFFFu;
+        monitorMemDrawn = 0xFFFFFFFFu;
+    }
 
+    // 2. CPU
+    const uint32_t budget = loadBlockBudget(SystemCoreClock, I2S_BLOCK_SIZE, static_cast<uint32_t>(AUDIO_SAMPLE_RATE));
+    if (load.blocks > 0) {
+        const uint32_t peak = loadPermille(load.peak, budget);
+        monitorCpuShown = monitorHold(monitorCpuShown, peak);
+        if (peak > monitorCpuMax) monitorCpuMax = peak;
+    }
+    lcd_drawMonitorBar(kMonitorCpuTextY, kMonitorCpuBarY, monitorCpuShown, monitorCpuDrawn);
+
+    // 3. MEM
+    uint32_t sizes[kLayerLibrarySize];
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) sizes[i] = layerLibrary[i].sampleLoadedData.sampleSize;
+    lcd_drawMonitorBar(kMonitorMemTextY, kMonitorMemBarY, sampleMemPermille(sizes, kLayerLibrarySize, kSampleSize), monitorMemDrawn);
+
+#ifdef DSP_PROFILE
+    // 4. MEASUREMENT BUILD (make PROFILE=1): the figures as text, and the I2S error counts.
+    if (load.blocks == 0) return;
+    const unsigned long avg = loadPermille(load.average, budget), pk = loadPermille(load.peak, budget), mx = monitorCpuMax;
     char text[96];
     int len = snprintf(text, sizeof(text), "DSP AVG %3lu.%lu%%  PEAK %3lu.%lu%%  MAX %3lu.%lu%%  UDR %3lu  OVR %3lu",
                        avg / 10, avg % 10, pk / 10, pk % 10, mx / 10, mx % 10, (unsigned long)i2sUdrCount, (unsigned long)i2sOvrCount);
@@ -23293,8 +24706,35 @@ void Controller::lcd_drawDspProfile() {
     lcd.setAlignment(CENTER);
     lcd.setFont(FONT_05x07);
     lcd.drawText(text, strlen(text), 480, 524);
-}
 #endif
+}
+
+void Controller::lcd_drawMonitorBar(uint16_t textY_, uint16_t barY_, uint32_t permille_, uint32_t& drawn_) {
+    /// @brief One row of the monitor: the percentage beside its label and the bar below. Draws
+    ///        only when the number, the bar or the colour changed since the last time.
+    const uint16_t fill = monitorBarFill(permille_, kMonitorBarWidth);
+    const uint16_t percent = monitorPercent(permille_);
+    const bool warn = monitorWarn(permille_);
+    const uint32_t state = (static_cast<uint32_t>(percent) << 16) | (static_cast<uint32_t>(fill) << 1) | (warn ? 1u : 0u);
+    if (state == drawn_) return;
+    drawn_ = state;
+
+    char number[8];
+    snprintf(number, sizeof number, "%3u", static_cast<unsigned>(percent));
+    lcd.setBackColor(BLACK);
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(LEFT);
+    lcd.setForeColor(warn ? MAGENTA : GRAY_75);
+    lcd.drawText(number, 3, kMonitorValueX, textY_);
+    if (fill > 0) {
+        lcd.setForeColor(warn ? MAGENTA : CYAN);
+        lcd.fillRect(kMonitorX, barY_, fill, kMonitorBarHeight);
+    }
+    if (fill < kMonitorBarWidth) {
+        lcd.setForeColor(GRAY_35);
+        lcd.fillRect(kMonitorX + fill, barY_, kMonitorBarWidth - fill, kMonitorBarHeight);
+    }
+}
 
 // Scale applied to the summed L+R input. 2^-32 maps a full-scale ADC pair to 1.0, which is
 // the natural mapping and costs nothing in SNR - it undoes an attenuation rather than adding
@@ -23934,16 +25374,15 @@ float Controller::processAudioFilterHelper(uint8_t filterNum_, float audio_) {
         filter_.y2 = filter_.y1;
         filter_.y1 = filteredSample;
 
-        // 5. SLOPE & MIX RESOLUTION
-        // Resolve slope mode and wet/dry transition mix.
-
-        float finalFilterOut;
-
-        // Determine filter slope (0 = 6dB, 1 = 12dB)
-        if (filter_.slope == 0) {
-            finalFilterOut = (filteredSample * 0.5f) + (input * 0.5f);
-        } else {
-            finalFilterOut = filteredSample;
+        // 5. SECOND SECTION (24 dB slope)
+        float finalFilterOut = filteredSample;
+        if (filter_.stages == 2) {
+            const BiquadCoef& c = filter_.stage2;
+            finalFilterOut = (c.b0 * filteredSample) + (c.b1 * filter_.u1) + (c.b2 * filter_.u2) - (c.a1 * filter_.v1) - (c.a2 * filter_.v2);
+            filter_.u2 = filter_.u1;
+            filter_.u1 = filteredSample;
+            filter_.v2 = filter_.v1;
+            filter_.v1 = finalFilterOut;
         }
 
         // Apply transition mix or standard wet/dry levels
@@ -24690,6 +26129,28 @@ float Controller::processAudioLpfHelper(uint8_t lpfNum_, float audio_) {
 /* Interrupt Functions -------------------------------------------------------*/
 ////////////////////////////////////////////////////////////////////////////////
 
+bool Controller::note_plays(uint8_t layerNum_, uint16_t note_) {
+    /// @brief Whether a beat with these note settings plays now (BeatNote.h): its condition (loop
+    /// of the bank, FILL key, the layer's PRE) and its chance. Called from the sequencer tick.
+    if (note_ == 0) return true;  // no condition, 100%: nothing to roll, PRE unchanged
+    NoteState state;
+    state.loop = noteLoop;
+    state.fillHeld = keyboard.fillKeyPress;
+    state.pre = notePre[layerNum_];
+    const bool plays = notePlays(note_, state, static_cast<uint16_t>(rand() % 10000));
+    notePre[layerNum_] = state.pre;
+    return plays;
+}
+
+void Controller::note_restartLoops() {
+    /// @brief Play from stop, RESET or a new bank: the next loop is the first (1ST, A:B).
+    noteLoop = 0;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        notePre[i] = true;
+        noteFillSkip[i] = false;
+    }
+}
+
 void Controller::interruptPlay() {
     /// @brief The central heartbeat of the sequencer. Manages metronome pre-counts, real-time beat triggering for all layers (simple and complex fills), hardware sync pulses, and LFO phase synchronization.
 
@@ -24744,9 +26205,9 @@ void Controller::interruptPlay() {
                 // time for the very next tick's beat-trigger pass to play them in sync.
                 for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                     if (precountPendingBeat[i]) {
-                        const uint8_t pattern = static_cast<uint8_t>(precountPendingBeat[i] - 1);
+                        const uint8_t velocity = static_cast<uint8_t>(precountPendingBeat[i] - 1);
                         precountPendingBeat[i] = 0;
-                        layerSong_setBeat(i, activeSongBank, playInterval, 0, pattern, 0, 0, true);
+                        layerSong_setBeat(i, activeSongBank, playInterval, 0, 0, 0, 0, true, velocity);
                     }
                 }
             }
@@ -24796,20 +26257,13 @@ void Controller::interruptPlay() {
                     // SIMPLE BEAT HANDLING
                     // Trigger simple beats at the main beat interval.
                     if ((beat.getFillType() == 0) && (beat.getFillPattern() <= 2) && (beat.getFillTarget() == NULL_FILL_TARGET)) {
-                        if (beat.getStartInterval() == playInterval) {
-                            if ((!layer.mute) && (layer.samplePlay)) {
-                                switch (beat.getFillPattern()) {
-                                    case 0:
-                                        fillVolMultiplier = kNumberDataLibrary[100].powMultiplier;
-                                        break;  // FLAT: 100% velocity
-
-                                    case 1:
-                                        fillVolMultiplier = kNumberDataLibrary[50].powMultiplier;
-                                        break;  // GHOST: 50% velocity
-
-                                    case 2:
-                                        break;  // MUTED: 0% velocity
-                                }
+                        // NUDGE moves when the beat plays (BeatNote.h); without one it is its start.
+                        if (noteDueInterval(beat.getStartInterval(), beat.getNote(), songInterval) == playInterval) {
+                            // Condition and chance first (they also feed PRE), then the level:
+                            // FLAT 100 / GHOST 50 unless the beat has its own velocity; MUTED stays silent.
+                            if (note_plays(i, beat.getNote()) && layerAudible(i) && (layer.samplePlay) && (beat.getFillPattern() != 2)) {
+                                const uint8_t level = noteLevel(beat.getVelocity(), (beat.getFillPattern() == 0) ? 100 : 50);
+                                fillVolMultiplier = kNumberDataLibrary[level].powMultiplier;
                             }
                             if (fillVolMultiplier > 0.0f) layer_playBeat(layer.number, fillVolMultiplier);
 
@@ -24825,8 +26279,12 @@ void Controller::interruptPlay() {
                     else if ((beat.getFillTarget() != NULL_FILL_TARGET) && (playBeatMicroNum != -1)) {
                         BeatMicro& beatMicro = bank.beatFillLibrary[beat.getFillTarget()].beatMicroLibrary[playBeatMicroNum];
                         if (beatMicro.getInterval() == playInterval) {
-                            if ((!layer.mute) && (layer.samplePlay) && ((playBeatMicroNum == 0) || ((playBeatMicroNum != 0) && (layer.fill)))) {
+                            // The whole fill plays or not (condition and chance at its first hit);
+                            // its own velocity scales every hit.
+                            if (playBeatMicroNum == 0) noteFillSkip[i] = !note_plays(i, beat.getNote());
+                            if (!noteFillSkip[i] && layerAudible(i) && (layer.samplePlay) && ((playBeatMicroNum == 0) || ((playBeatMicroNum != 0) && (layer.fill)))) {
                                 fillVolMultiplier = kNumberDataLibrary[beatMicro.getLevel()].powMultiplier;
+                                if (beat.getVelocity() != 0) fillVolMultiplier *= kNumberDataLibrary[noteLevel(beat.getVelocity(), 100)].powMultiplier;
                                 if (fillVolMultiplier > 0.0f) layer_playBeat(layer.number, fillVolMultiplier);
                             }
 
@@ -24883,11 +26341,15 @@ void Controller::interruptPlay() {
                 // A manual bank change wins (song_manualBank already moved the chain); otherwise
                 // song mode says which bank comes next (SongChain.h).
                 bool chainEnded = false;
-                if (bankShiftFlag) {
+                const uint8_t bankBefore = activeSongBank;
+                if (bankShiftFlag && !songChain.active) {
                     bankShiftFlag = false;
                     activeSongBank = targetSongBank;
                     bankActionFlag = true;
                 } else if (songChain.active) {
+                    // Song mode decides, manual picks included (song_manualBank set up the jump or
+                    // the detour in chainPlay).
+                    bankShiftFlag = false;
                     const int8_t next = chainLoopEnd(songChain, chainPlay);
                     if (next == kChainStop) {
                         chainEnded = true;
@@ -24904,6 +26366,9 @@ void Controller::interruptPlay() {
                     }
                     chainActionFlag = true;
                 }
+
+                // Trig conditions count the loops of a bank (BeatNote.h): a new bank starts at 0.
+                noteLoop = (activeSongBank != bankBefore) ? 0 : static_cast<uint16_t>(noteLoop + 1);
 
                 // Reset all layer playback pointers for the new loop
                 for (uint8_t i = 0; i < kLayerLibrarySize; i++) {

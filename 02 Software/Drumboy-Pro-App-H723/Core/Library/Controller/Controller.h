@@ -100,14 +100,14 @@ class Controller {
     RouteState routeState;                                              // module output fades (audio interrupt only)
     RouteFade lineInFade;                                               // line-in route fade (audio interrupt only)
     RouteFade metroFade;                                                // metronome route fade (audio interrupt only)
-#ifdef DSP_PROFILE
-    // DSP load measurement (make PROFILE=1): CPU cycles spent in processAudioBlock
-    volatile uint32_t dspCyclesSum = 0;                                 // summed since the last readout
-    volatile uint32_t dspBlocks = 0;                                    // blocks since the last readout
-    volatile uint32_t dspCyclesPeak = 0;                                // worst block since the last readout
-    uint32_t dspCyclesPeakAll = 0;                                      // worst block since power-on
-    uint32_t dspLastDrawTick = 0;
-#endif
+    // CPU and MEM monitor (LoadMeter.h): the audio engine's load, measured in every build.
+    LoadMeter dspLoad;                                                  // filled by processAudioBlock
+    bool monitorFull = true;                                            // draw the labels (first time)
+    uint32_t monitorTick = 0;
+    uint32_t monitorCpuShown = 0;                                       // tenths of a percent on the bar
+    uint32_t monitorCpuMax = 0;                                         // worst block since power-on
+    uint32_t monitorCpuDrawn = 0xFFFFFFFFu;                             // what the screen shows (number, bar, colour)
+    uint32_t monitorMemDrawn = 0xFFFFFFFFu;
 
     /* Audio Buffers (I2s Block Processing) ---------------------- */
 
@@ -193,7 +193,7 @@ class Controller {
     TriggerMode triggerMode = TRIG_BAR;                                 // Quantization setting
     bool playActive;                                                    // Transport status: Playing
     bool recordActive;                                                  // Transport status: Recording
-    uint8_t precountPendingBeat[kLayerLibrarySize];                     // Layer hits during precount (0 none, fill pattern + 1), committed when playback starts
+    uint8_t precountPendingBeat[kLayerLibrarySize];                     // Layer hits during precount (0 none, velocity + 1), committed when playback starts
     bool playArmed;                                                     // Slave mode: waiting for master START to play
     bool recordArmed;                                                   // Slave mode: waiting for master START to record
     bool ignoreNextMidiStopAfterSpecialCmd;
@@ -298,10 +298,88 @@ class Controller {
     void file_encodeKit(uint8_t* data);
     void file_encodeLayerSong(uint8_t layerNum_, uint8_t* data);
     uint32_t file_stateCrc();
+    uint16_t file_noteEntryCount();
+    uint32_t file_noteCrc(uint32_t crc_);
+    bool file_writeNotes();
+    void file_readNotes(const char* fileName_);
+    uint16_t layerSong_quantizeInterval(uint16_t interval_) const;
+    // Trig conditions (BeatNote.h): loops of the active bank, each layer's PRE, fills skipped whole.
+    volatile uint16_t noteLoop = 0;
+    bool notePre[kLayerLibrarySize] = {true, true, true, true, true, true, true, true, true, true};
+    bool noteFillSkip[kLayerLibrarySize] = {false};
+    bool note_plays(uint8_t layerNum_, uint16_t note_);
+    void note_restartLoops();
+    void layerPage_bankChanged();
+    // SOLO (left S key + pads, V1.14): soloed layers, not saved.
+    uint16_t soloMask = 0;
+    bool layerAudible(uint8_t layerNum_) const;
+    RGB16Color layerColor(uint8_t layerNum_) const;
+    // Full-area views over the lanes (LaneView.h): EUCLID rings, SONG timeline, ROUTING diagram.
+    Menu laneViewShown = INIT_MENU;         // the page whose view is on screen (INIT_MENU: the lanes are)
+    bool viewDirty = false;                 // something the view shows changed: redraw its data
+    bool viewFull = false;                  // something drew over it (an alert): redraw all of it
+    uint32_t viewDrawnMs = 0;
+    bool ringPlayShown = false;
+    int16_t ringPlayX = 0, ringPlayY = 0;
+    uint16_t ringPlayRowX = 0;
+    uint32_t songThumbDrawn[kChainBanks] = {0};  // what each bank's thumbnail shows (songThumbState), 0 = nothing
+    uint16_t songPlayBarX = 0, songPlayBarW = 0, songPlayShown = 0;  // the playing loop's progress bar
+    bool laneViewHidden() const;
+    void lcd_drawLaneView();
+    void lcd_drawLaneViewData();
+    void lcd_updateLaneView();
+    void lcd_restoreLanes();
+    void lcd_drawEuclidViewData();
+    void lcd_drawEuclidViewPlay();
+    uint32_t songThumbState(uint8_t bank_, uint8_t color_) const;
+    void lcd_drawSongViewData();
+    void lcd_drawSongViewPlay();
+    void lcd_drawRoutingViewData();
+    bool filterViewDrawn = false;           // curves are on screen (and stored in the view scratch)
+    bool filterViewOther = false;           // the other filter's curve is among them
+    uint16_t filterViewMarkX = 0;           // the cutoff line
+    uint32_t filterViewStateDrawn = 0;      // the settings those curves were drawn from
+    uint32_t filterViewState() const;
+    void lcd_drawFilterCurve(const uint16_t* y_, bool thick_);
+    void lcd_drawFilterViewData();
+    uint16_t eqViewMarkX[6] = {0}, eqViewMarkY[6] = {0};  // the EQ view's band handles
+    uint32_t eqViewState() const;
+    void lcd_drawCurveAxes(float topDb_, float bottomDb_, bool labels_);
+    void lcd_drawEqViewData();
+    void layerInst_setSolo(uint8_t layerNum_, bool solo_);
+    void layerInst_clearSolo();
+    void lcd_drawLayerInst_StyleData(uint8_t layerNum_);
+    // Undo / redo of beat and bank edits (UndoLog.h); the stored banks live in SDRAM.
+    UndoLog<kUndoEntries> undoLog;
+    bool undoRecordOpen = false;
+    bool textUndoFlag = false, textRedoFlag = false, textUndoNone = false;
+    bool textFkeyFlag = false;  // F key held: show FKEY
+    void undo_capture(UndoKind kind_, int16_t layerNum_, uint8_t bankNum_);
+    void undo_captureAllLayers(UndoKind kind_, uint8_t bankNum_);
+    void undo_captureRecord(uint8_t layerNum_, uint8_t bankNum_);
+    void undo_apply(bool redo_);
+    void note_select();
+    bool note_validSelection();
+    uint8_t note_effectiveVelocity(const Beat& beat_) const;
+    void note_step(EncoderFunc function_, bool up_);
+    void note_clear();
+    void lcd_drawNoteMenu();
+    void lcd_drawNote_Data();
+    void lcd_drawNoteOverview();
     void autosave_setInterval(uint8_t interval_);
     void autosave_markClean();
     void autosave_scanFile(uint8_t slot_, AutosaveFile& file_);
     bool autosave_write();
+    bool autosave_writeFiles();
+    uint32_t autosaveLastMs = 0;            // how long the last autosave took (Metronome page)
+    bool autosaveLastOk = true;
+    bool textAutosaveErrFlag = false;
+    void lcd_drawStatusNow(const char* text5_, RGB16Color color_);
+    // Crash record (CrashRecord.h): the last crash, shown at start-up.
+    char crashText[32] = "";
+    bool crash_report();
+    void watchdog_start();
+    void watchdog_stage(uint32_t stage_);
     void autosave_deleteAll();
     void autosave_update();
     void autosave_offerRestore();
@@ -587,9 +665,8 @@ class Controller {
     // Sd functions
     void lcd_drawSdDataIntro();
     void lcd_drawSdData();
-#ifdef DSP_PROFILE
-    void lcd_drawDspProfile();
-#endif
+    void lcd_drawMonitor();
+    void lcd_drawMonitorBar(uint16_t textY_, uint16_t barY_, uint32_t permille_, uint32_t& drawn_);
     void lcd_clearSdData();
     void lcd_drawSdAlert(SdResult result_);
     void lcd_clearSdAlert();
@@ -1121,7 +1198,7 @@ class Controller {
     void layerSong_beatRight();
     void layerSong_beatLeft();
 
-    void layerSong_setBeat(uint8_t layerNum_, uint8_t bankNum_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_);
+    void layerSong_setBeat(uint8_t layerNum_, uint8_t bankNum_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_ = 0);
     void layerSong_setSelectedBeatFill(uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_);
     void layerSong_setSelectedBeatFillTime(uint8_t fillTime_);
     void layerSong_setSelectedBeatFillLevel(uint8_t fillLevel_);

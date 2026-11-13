@@ -42,6 +42,20 @@ This work lives in the fork **MiguelMoraleja/Drumboy-Pro**. Upstream (**Randomwa
 | 32 | [Autosave](#32-autosave) | Feature | A: M, B: M–L |
 | 33 | [Per-note editing: velocity, probability and more](#33-per-note-editing-velocity-probability-and-more) | Feature | M–L |
 | 34 | [MIDI clock slave: drift and 200 BPM runaway](#34-midi-clock-slave-drift-and-200-bpm-runaway) | Bug | M |
+| 35 | [LFO destinations for the per-note settings](#35-lfo-destinations-for-the-per-note-settings) | Feature | M |
+| 36 | [Per-layer panning](#36-per-layer-panning) | Feature | A: S–M, B: L |
+| 37 | [Measure first: drawing speed, loop time, audio load](#37-measure-first-drawing-speed-loop-time-audio-load) | Groundwork | S |
+| 38 | [Per-note settings and layer state visible in the lanes](#38-per-note-settings-and-layer-state-visible-in-the-lanes) | UX | S–M |
+| 39 | [Graphic overviews: NOTE, EUCLID, SONG, ROUTING](#39-graphic-overviews-note-euclid-song-routing) | UX | M |
+| 40 | [Curves and cursors on the sound pages](#40-curves-and-cursors-on-the-sound-pages) | UX | M |
+| 41 | [Live feedback: layer meters and status indicators](#41-live-feedback-layer-meters-and-status-indicators) | UX | M |
+| 42 | [Key hints, status line, page dots, value popup](#42-key-hints-status-line-page-dots-value-popup) | UX | M |
+| 43 | [Fonts with lowercase and symbols; colour roles](#43-fonts-with-lowercase-and-symbols-colour-roles) | UX | M |
+| 44 | [Notes triggered outside the main loop; draw budget](#44-notes-triggered-outside-the-main-loop-draw-budget) | Groundwork | M |
+| 45 | [Full-area views: MIX, note editor, sample editor, patchbay, performance](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance) | UX | L each |
+| 46 | [Sends: a level per layer into the shared effects (SENDS mode)](#46-sends-a-level-per-layer-into-the-shared-effects-sends-mode) | Feature | M |
+| 47 | [Channel filter and drive per layer](#47-channel-filter-and-drive-per-layer) | Feature | M |
+| 48 | [Master EQ stage, stereo returns, a third send effect](#48-master-eq-stage-stereo-returns-a-third-send-effect) | Feature | M–L |
 
 Sizes are rough: S = a day, M = a few days, L = a week or more, including hardware testing.
 
@@ -65,27 +79,36 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 
 **Sprint 4, "MIDI, autosave and notes" (proposed 2026-11-07).** Two releases, so the MIDI fix and the safety net reach the device first.
 
-*V1.13 "MIDI and autosave"* (done, tested on hardware)
+*V1.13 "MIDI and autosave"* (done, tested on hardware, released as v1.13)
 1. ✅ MIDI IN that loses nothing: USART1 RX FIFO or a circular DMA ring, an overrun counter shown on the test page, and a hardware-free parser (`MidiParser.h`) with running status, Note On velocity 0 = Note Off, and a 16-event queue. From [30](#30-midi-inout-velocity-running-status-note-queue-cc); CC input stays for later. (S–M)
 2. ✅ Incoming notes play at their velocity; MIDI out sends the velocity that played. From [30](#30-midi-inout-velocity-running-status-note-queue-cc). (S)
 3. ✅ Clock slave locked to the incoming ticks (`MidiClock.h`): the playhead never runs ahead of the clock, microsecond tempo measurement, fractional tempo inside; no independent clock out while slaved (forward the incoming ticks or none), doubled ticks rejected. [34](#34-midi-clock-slave-drift-and-200-bpm-runaway). (M)
 4. ✅ Autosave, part A: checksum-based change detection, AUTOSAVE OFF/2/5/10/20 min, two alternating reserved files written via rename, `RESTORE AUTOSAVE?` at power-on, autosave before LOAD over unsaved work. [32](#32-autosave). (M)
 5. ✅ Hardware test with Loopy Pro → Scarlett: 30 minutes at a fractional tempo in time, no runaway with a MIDI loop set up on purpose, overrun counter at 0 with clock and dense notes, power pulled mid-session restores the autosave. Then package, app (MIDI and autosave explained in their tabs), release.
 
-*V1.14 "Notes"*
-6. Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)
-7. NOTE page with VEL and PROB; MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
-8. COND (`A:B`, `!A:B`, `1ST`, `PRE`, `FILL` and negations) with the FILL performance key. (M)
-9. NUDGE. (S)
+*V1.14 "Notes"* (built, waiting for the hardware test). Also in V1.14, asked by the owner: undo/redo ([28](#28-undo-for-bank-edits-lxr)), SONG + pads never turn the chain off, and the left S key (STYLE) became SOLO, with STYLE moved to a field on instrument page 3. After a freeze on the owner's device (cause not found yet): the clock lock no longer speeds up the sequencer timer while stopped, autosave shows SAVE / SDERR and its duration, and a crash now restarts the firmware and leaves a record (`CrashRecord.h`, `System/Crash.log`). The watchdog for stalls that are not faults is built too (6 s, `CRASH 7`, see the status of the crash record). First UX items, also in V1.14: per-note marks and dimmed lanes on the main screen ([38](#38-per-note-settings-and-layer-state-visible-in-the-lanes)) and the Euclid rings view over the lane area ([45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)). The Song timeline and Routing views followed, and the CPU and MEM monitor. The Filter and EQ curves followed too, and the filters got a 24 dB slope and a real 6 dB one ([50](#50-filter-slopes-24-db-and-a-real-6-db)). Next view: the sample view or the dub mixer.
+6. ✅ Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)
+7. ✅ NOTE page with VEL and PROB (plus undo/redo of beat and bank edits, [28](#28-undo-for-bank-edits-lxr)); MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
+8. ✅ COND (`A:B`, `!A:B`, `1ST`, `PRE`, `FILL` and negations) with the FILL performance key. (M)
+9. ✅ NUDGE. (S)
 10. Hardware test, package, app (a Notes tab to try VEL/PROB/COND on a pattern), release.
 
 Every step keeps the rules: hardware-free logic in `Core/Library/Global/*.h` with host tests, `make WERROR=1` clean, and songs from V1.12 load unchanged. Left for after sprint 4: phase B of 33 (PITCH, DECAY per beat), 14 part B (EUCLID VELOCITY, now just a way to fill VEL), CC input from 30, autosave history (32 B).
 
 **After sprint 4 (ideas from the LXR firmware):** [18](#18-swing--shuffle-lxr) swing, [19](#19-choke-groups-lxr) choke groups, [22](#22-live-roll-lxr) live roll, [25](#25-lfo-retrigger-and-free-running-lxr) LFO retrigger, [27](#27-erase-while-recording-lxr) erase while recording. Later, together with [14](#14-euclid-velocity-and-variance) part B (they share one per-beat data extension and one file format bump): [20](#20-parameter-locks-per-beat-lxr), [21](#21-probability-per-beat-lxr), [24](#24-velocity-modulates-a-parameter-lxr).
 
+**UX and signal path (analysis of 2026-11-13, [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-path-analysis.md); mockups in the app's Screen ideas tab).** Suggested order:
+1. [37](#37-measure-first-drawing-speed-loop-time-audio-load) measurements, then [38](#38-per-note-settings-and-layer-state-visible-in-the-lanes) and [39](#39-graphic-overviews-note-euclid-song-routing): what V1.10–V1.14 added becomes visible.
+2. [42](#42-key-hints-status-line-page-dots-value-popup) and [43](#43-fonts-with-lowercase-and-symbols-colour-roles): the device explains itself.
+3. [40](#40-curves-and-cursors-on-the-sound-pages) and [41](#41-live-feedback-layer-meters-and-status-indicators): sound pages and live feedback.
+4. Full-area views from [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance) that need no new engine work (Euclid rings, Song timeline, Routing, Filter curve): the owner wants the big main area used for dedicated views. Then [44](#44-notes-triggered-outside-the-main-loop-draw-budget), [46](#46-sends-a-level-per-layer-into-the-shared-effects-sends-mode) sends with the MIX page, [47](#47-channel-filter-and-drive-per-layer) channel filter, [36](#36-per-layer-panning) A pan, and the MIX view from [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance).
+5. [48](#48-master-eq-stage-stereo-returns-a-third-send-effect) only after the measurements.
+
+The sends, the channel filter and the MIX view are now designed as one dub mixer page ([49](#49-dub-mixer-page-dub-mode)), in phases D1–D5; its own open decisions are listed there. Open decisions for the owner: sends as a per-song mode next to today's chain (recommended) or a replacement; whether the channel filter replaces Filter 1/2; whether a third send effect is worth giving up undo history or a sample slot.
+
 **On hold:** [16](#16-kids-firmware) kids firmware (shape decided, waiting for the owner's go).
 
-**Later:** [3](#3-lfos-cant-modulate-filters-or-effects) (needs 9), [6](#6-routing-extra-effect-slots) (needs CPU measurement), the rest of [10](#10-housekeeping) alongside other work.
+**Later:** [3](#3-lfos-cant-modulate-filters-or-effects) (needs 9), together with [24](#24-velocity-modulates-a-parameter-lxr), [35](#35-lfo-destinations-for-the-per-note-settings) and [36](#36-per-layer-panning) part A (one format extension for the new per-layer bytes), [6](#6-routing-extra-effect-slots) (needs CPU measurement), the rest of [10](#10-housekeeping) alongside other work.
 
 ---
 
@@ -250,7 +273,7 @@ Kit and song files have a signature but no format version. Several items above c
 
 **Today.** Every hit the EUCLID page makes is a plain beat at full velocity (BASIC / FLAT), so the pattern sounds mechanical. Plain beats have only three velocities: FLAT (100), GHOST (50) and MUTED (0), set by the beat's fill PATTERN; the VELOCITY field (FLAT, STEP, DESCEND, ASCEND, RANDOM) only shapes the micro-hits of a complex fill, not single beats. Variance is possible today only indirectly: an LFO on the layer's LEVEL (RANDOM type for humanising) with STYLE on changes each hit, and since V1.10 the instrument page shows the value used.
 
-**Status: part A done in V1.11** (ACCENTS on EUCLID tab 7, `euclidAccents()` in `Euclid.h`). Part B open; its per-beat velocity storage is now planned in [33](#33-per-note-editing-velocity-probability-and-more), and the VELOCITY field here becomes one way to fill it.
+**Status: part A done in V1.11** (ACCENTS on EUCLID tab 7, `euclidAccents()` in `Euclid.h`). Part B open; the per-beat velocity exists since V1.14 ([33](#33-per-note-editing-velocity-probability-and-more)), so part B is now only a way to fill it from the EUCLID page.
 
 **Proposal**, in two parts:
 
@@ -263,7 +286,7 @@ Kit and song files have a signature but no format version. Several items above c
 
 ### 15. Song mode: chain the banks
 
-**Status: done in V1.12** (`SongChain.h`, `test_songchain`). SONG page: tap the SONG key (the one held to pick banks); fields STEP, BANK, REPEATS, LENGTH, END (LOOP/STOP), CHAIN. Decided: a manual bank pick jumps the chain to the step using that bank (a bank not in the chain turns chain play off); STOP keeps the position, RESET goes to step 1. The chain is saved after the song file's EOF (marker `CHN`), so older firmware ignores it and no format version change was needed. Also in V1.12: whole-bank copy/paste on the SONG page (long COPY / PASTE, all 10 layers; clipboard in SDRAM after the preview ring).
+**Status: done in V1.12** (`SongChain.h`, `test_songchain`). SONG page: tap the SONG key (the one held to pick banks); fields STEP, BANK, REPEATS, LENGTH, END (LOOP/STOP), CHAIN. Decided: a manual bank pick jumps the chain to the step using that bank; since V1.14 a bank not in the chain plays one loop as a detour and the chain goes on (it used to turn chain play off, which the owner found confusing; `chainManualBank`); STOP keeps the position, RESET goes to step 1. The chain is saved after the song file's EOF (marker `CHN`), so older firmware ignores it and no format version change was needed. Also in V1.12: whole-bank copy/paste on the SONG page (long COPY / PASTE, all 10 layers; clipboard in SDRAM after the preview ring).
 
 **Today.** Each layer has 5 song banks (`kBankLibrarySize`), and the active bank (`activeSongBank`) is the same for all layers. Holding the SONG key and pressing a pair of layer pads picks a bank (pads 1–2 = bank 1 … 9–10 = bank 5). While playing, `layerSong_triggerBank()` arms the change (`bankShiftFlag`, `targetSongBank`) and the sequencer switches at the next loop end; when stopped it switches at once (`layerSong_selectBank()`). Nothing plays the banks in sequence: every change is by hand.
 
@@ -347,7 +370,7 @@ Reviewed from the owner's fork of the Erica Synths LXR V2 desktop firmware (Migu
 
 ### 21. Probability per beat (LXR)
 
-**LXR:** a 0–100% probability per step. **Today:** one PROB per layer. **Proposal:** a probability per beat (and per fill micro-hit?) on the song page, rolled at each hit. Same per-beat storage as 20. Now part of [33](#33-per-note-editing-velocity-probability-and-more).
+**LXR:** a 0–100% probability per step. **Today:** one PROB per layer. **Proposal:** a probability per beat (and per fill micro-hit?) on the song page, rolled at each hit. Same per-beat storage as 20. **Done in V1.14** as CHANCE on the NOTE page ([33](#33-per-note-editing-velocity-probability-and-more)), per beat; a fill plays or not as a whole.
 
 ### 22. Live roll (LXR)
 
@@ -374,6 +397,8 @@ Reviewed from the owner's fork of the Erica Synths LXR V2 desktop firmware (Migu
 **LXR:** while recording, hold a key and the hits that pass the play position are erased. **Today:** only CLEAR (one beat or the whole layer). **Proposal:** while recording, hold CLEAR + a layer pad: beats of that layer under the play position are removed as it passes.
 
 ### 28. Undo for bank edits (LXR)
+
+**Status: done in V1.14** (`UndoLog.h`, `test_undo`). Multi-level undo and redo (MUTE + LEFT / RIGHT) for every beat and bank edit: 64 entries of one bank each in SDRAM after the bank clipboard (about 185 KB); undo/redo swap the stored bank with the live one under the interrupt lock; a knob gesture (2 s), an EUCLID visit and a recording take are one step; a whole-bank paste is one step of 10 banks. The history is cleared on LOAD, NEW, restore and when MEASURE/BAR/QUANTIZE change the grid. Sound settings (knobs) are not undoable (see the owner's choice, 2026-11-08: note level is enough).
 
 **LXR:** a backup buffer to return a pattern to how it was. **Today:** only EUCLID CLEAR. **Proposal:** one level of undo per bank for destructive edits (paste, EUCLID apply, CLEAR all, SHIFT ALL): snapshot before, a key combination to swap back. The SDRAM gap has room (one bank of 10 layers is ~28 KB, like the bank clipboard).
 
@@ -427,6 +452,8 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 
 ### 33. Per-note editing: velocity, probability and more
 
+**Status: phase A done in V1.14** (`BeatNote.h`, `test_beatnote`). Stored in the Beat itself in 3 bytes (velocity + a 16-bit word: chance in 5% steps, 51 conditions, nudge ±12 steps of 2 ticks), because internal RAM is tight (Beat 8 → 10 bytes, about 4 KB left); the BTX block is sparse (7 bytes per beat with settings) and matched by start on load. !A:B only for B up to 4 and no NEI, to fit 6 bits. Phase B (PITCH, DECAY) needs RAM: move the song banks to SDRAM first.
+
 **Today.** A beat (a note on Layer Song) has a start, a fill (type, pattern, time, level) and an active flag, stored in 4 bytes per beat in the song file (257 bytes per bank per layer). Plain beats only have FLAT (100), GHOST (50) and MUTED (0). Probability exists only per layer (PROB). Incoming MIDI velocity is ignored ([30](#30-midi-inout-velocity-running-status-note-queue-cc)), and MIDI out always sends 100.
 
 **Proposal.** One per-beat extension that several items need, done once:
@@ -443,7 +470,7 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 - **Phase A, the core (this item):**
   1. **VEL** 0–127.
   2. **PROB** 0–100%, combined with the layer's PROB.
-  3. **COND:** `A:B` (plays on loop A of every B, up to 8:8) and its negation `!A:B`, `1ST` / `!1ST` (first time the bank plays since START or a bank change), `PRE` / `!PRE` (the previous conditioned beat of this layer played / did not), `FILL` / `!FILL` (plays only while a FILL key is held / only while it is not). FILL needs a performance key: hold a key combination (e.g. ADD + PLAY) while playing. The loop counter per layer and bank resets on START and on a bank change (song chain steps included).
+  3. **COND:** `A:B` (plays on loop A of every B, up to 8:8) and its negation `!A:B`, `1ST` / `!1ST` (first time the bank plays since START or a bank change), `PRE` / `!PRE` (the previous conditioned beat of this layer played / did not), `FILL` / `!FILL` (plays only while a FILL key is held / only while it is not; shown as `FKEY` / `!FKEY` on the device so it isn't mistaken for the layer's FILL switch). FILL needs a performance key: hold a key combination (e.g. ADD + PLAY) while playing. The loop counter per layer and bank resets on START and on a bank change (song chain steps included).
   4. **NUDGE:** micro timing, a signed offset of up to ± half a quantize step applied at playback. The beat keeps its place in the beat list, so moves, Euclid and copy/paste are unaffected. Resolution: the sequencer tick (800 per quarter, 200 per 16th), finer than Elektron's 1/384 of a step.
 - **Phase B, toward parameter locks (after A is tested):** **PITCH** per beat in semitones (reusing `Pitch.h`), then **DECAY / LENGTH** per beat, then the full parameter locks of [20](#20-parameter-locks-per-beat-lxr).
 - **Ties to other items:** this is the storage that [14](#14-euclid-velocity-and-variance) part B (EUCLID VELOCITY / RANDOM spread) and [21](#21-probability-per-beat-lxr) (probability per beat) were waiting for, and the base of [20](#20-parameter-locks-per-beat-lxr) (parameter locks). EUCLID can then fill VEL and PROB with its own patterns.
@@ -474,3 +501,256 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 **Done when.** Slaved to Loopy Pro at a fractional tempo for 30 minutes, the Drumboy stays in time (by ear and on a recording, against a click from Loopy). With a MIDI loop deliberately set up, it neither runs away nor doubles its tempo. The overrun counter stays at 0 with clock and dense notes coming in together.
 
 **Workarounds until then.** Turn the Drumboy's MIDI OUT clock off while it is slaved (or turn MIDI thru off in Loopy Pro) to avoid the loop. Set Loopy Pro to a whole-number tempo, preferably one that divides evenly into the timer (120, 125, 100, 150…); this reduces the drift but does not remove it. STOP/START from Loopy realigns it.
+
+### 35. LFO destinations for the per-note settings
+
+**Asked by the owner (2026-11-08):** can VELOCITY, CHANCE, CONDITION and NUDGE (NOTE page, [33](#33-per-note-editing-velocity-probability-and-more)) be moved by an LFO?
+
+**Today.** No. They are fixed values stored in each beat. The layer's LFO slots (LEVEL, PITCH, DIRECTION, RESOLUTION, START, END, TIMING, PROB, only while the layer's STYLE is on, sampled at each hit) get close:
+- LFO → LEVEL multiplies with each note's velocity.
+- LFO → PROB is a second roll on top of each note's chance.
+- LFO → TIMING only delays hits.
+
+**Proposal.**
+- **New LFO destinations per layer:**
+  - **NOTE VEL:** an offset to each note's velocity, so accents keep their order and the line breathes.
+  - **CHANCE:** an offset to each note's chance, applied before the roll.
+  - **NUDGE:** an offset in both directions, unlike TIMING, clamped to ±12 % of a 16th like the field.
+- **No CONDITION destination:** conditions are on/off rules per loop, not a scale.
+- **Where the offsets apply:** at playback, in `note_plays` and in the level and due-time computation (`BeatNote.h`). The beats themselves don't change, so turning the LFO off gives the written pattern back.
+- **Applies to:** plain beats and fills alike, like the fields. Only while STYLE is on, like the other LFO slots.
+- **Depth:** the existing LFO DEPTH, mapped to a fixed full-scale range per destination (e.g. ±64 velocity, ±50 % chance, ±12 nudge steps).
+- **Storage:** the layer record in the kit block is full (25 bytes per layer: 0–22 parameters and LFO slots, 23 routing, 24 semitones). The three new LFO slot numbers need a format extension. Either:
+  - a kit block after the song's BTX block (same "older firmware stops before it" trick), or
+  - a format version bump together with [3](#3-lfos-cant-modulate-filters-or-effects) and [24](#24-velocity-modulates-a-parameter-lxr), which also add modulation slots.
+
+  Doing all three at once costs one format change instead of three.
+- **UI:** a fourth layer instrument page (LFO slots for NOTE VEL, CHANCE, NUDGE, and later the [3](#3-lfos-cant-modulate-filters-or-effects) destinations), or extra fields on instrument page 3.
+- **Tests:** hardware-free offset math in `BeatNote.h` with host tests (clamping at 1/127, 0/100 %, ±12; depth 0 = no change; nudge offsets keep neighbours from swapping, so the ±12 limit stays).
+
+**Done when.** A RANDOM LFO on NOTE VEL makes a straight 16th hi-hat vary in loudness while its accents stay louder than the rest; a SINE LFO on CHANCE thins the layer out and fills it back over the LFO's period; with the LFO off or STYLE off the pattern plays exactly as written; songs from V1.14 load unchanged.
+
+### 36. Per-layer panning
+
+**Asked by the owner (2026-11-08).**
+
+**Today.**
+- **One PAN only:** the Mixer page has a single PAN (0–40, centre 20, `mixer.pan`, saved in the system preset and the song's kit block). It is a balance on the whole output: `mixer.volumeLeftFloat` and `mixer.volumeRightFloat` are applied at the very end of `processAudioBlock`, after the reverb.
+- **Mono up to the reverb:** layers are summed into one channel and EQ, filters and effects process mono ("copy mono accumulation to stereo output" when an effect is bypassed).
+- **The reverb is the only stereo:** its SURROUND makes the right side. There is no per-layer or per-note pan.
+
+**Proposal**, in three parts:
+
+- **A. Pan on the direct path (S–M), first.**
+  - **Field:** a PAN per layer (e.g. 0–40 like the mixer, constant-power law) on an instrument page.
+  - **Where it acts:** only on what a layer sends straight to MASTER (layer OUT = MASTER in the routing patch). Those layers are summed into a separate left/right direct bus, added to the output before master volume and the mixer PAN.
+  - **Other routes:** layers routed through EQ, filters or effects stay centred, as now. The field shows that when the layer's OUT isn't MASTER, e.g. the header dimmed like unused modules on the ROUTING page.
+  - **CPU:** two gains per active layer per sample, plus one stereo sum.
+  - **Storage:** one byte per layer. The layer record in the kit block is full (25 bytes), so it needs the same format extension as [3](#3-lfos-cant-modulate-filters-or-effects), [24](#24-velocity-modulates-a-parameter-lxr) and [35](#35-lfo-destinations-for-the-per-note-settings): do them together, one change.
+  - **Old songs:** load centred, so they sound the same.
+- **B. Stereo all the way (L), only after measuring.**
+  - **Change:** the whole chain processes left and right, and PAN works for every route.
+  - **Cost:** roughly doubles the DSP cost of EQ, filters and effects. V1.04 worst case was 34 % of the audio block, more since routing.
+  - **Gate:** measure with `make PROFILE=1` first, against the gate of [4](#4-routing-multiple-destinations-per-source) (< 80 % of the block, UDR/OVR = 0).
+  - **Effects:** some (delay, chorus) could become true stereo; others may need to stay mono to fit.
+- **C. Modulation, on top of A or B.**
+  - **Auto-pan:** an LFO → PAN slot per layer, in the same new LFO page as [35](#35-lfo-destinations-for-the-per-note-settings).
+  - **Pan per note:** a PAN on the NOTE page. Beats have no room left (RAM about 4 KB free since V1.14), so this waits until the song banks move to SDRAM, like phase B of [33](#33-per-note-editing-velocity-probability-and-more).
+
+**Tests.** Hardware-free pan law (`Pan.h`) with host tests: centre −3 dB per side, the ends fully one side, monotonic, and sums that don't clip more than today.
+
+**Done when (A).** Hats panned left and a shaker panned right are heard on their sides through headphones while kick and snare (through the EQ) stay centred. The mixer PAN still balances everything. CPU is measured before and after. Songs from V1.14 load centred and sound the same.
+
+---
+
+## UX and signal path (items 37–50)
+
+From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-path-analysis.md), which has the facts about the screen (960×540, 16-bit colour, drawn directly, no frame buffer), the layout, the cost estimates and the reasoning. The codes in brackets (U1, E2, S1…) are that document's. Mockups of the proposed screens, drawn with the device's own fonts and frame, are in the app's **Screen ideas** tab. Nothing here was measured on the device: item 37 comes first.
+
+### 37. Measure first: drawing speed, loop time, audio load
+
+[E1, S0, analysis section 5.] Every size and viability claim in items 38–48 rests on estimates.
+
+- **Drawing benchmark** on the test page: fill, text and image speed in megapixels per second (DWT cycle counter).
+- **Main-loop pass time** while idle, while playing, and during a full lane redraw; shown like the DSP profile.
+- **Audio load today** on full songs with `make PROFILE=1`: average, peak, UDR/OVR. The last figure is 34% worst case at V1.04, before the routing engine.
+- **Data cache experiment** (separate): is `SCB_EnableDCache()` safe with the DMA buffers for audio, SD and MIDI, and what does it save.
+
+**Done when.** The four numbers are in this file, and a draw budget per main-loop pass is set from them.
+
+**Status: the audio load is now on screen in every build** (V1.14, `LoadMeter.h`, `test_loadmeter`): the CPU bar in the top-right box shows the worst audio block of the last quarter second as a share of the block time, with its percentage, magenta from 80%. So the audio-load figure can be read on real songs without a special build; `make PROFILE=1` still adds average, peak, maximum and the I2S error counts as text. Open: the drawing benchmark, the main-loop pass time and the data-cache experiment.
+
+### 38. Per-note settings and layer state visible in the lanes
+
+[U1, U6.] **Today:** a beat with velocity 20, chance 30% and a condition looks the same as a plain beat; a muted or non-soloed layer differs only by a 10 px box.
+
+- **Beats** (`lcd_drawBeat`): height or brightness = velocity; hollow = chance below 100%; a dot above = has a condition; drawn at its nudged position.
+- **Lanes:** a muted layer, or a layer silenced by another layer's solo, is drawn dimmed (name and beats).
+- Hardware-free helper for the beat's look (velocity → height, flags) with a host test.
+
+**Done when.** On the main screen you can tell loud from soft beats, see which beats are uncertain or conditional, and see at a glance which layers sound.
+
+**Status: built in V1.14, waiting for the hardware test** (`LaneView.h`, `test_laneview`). Height = velocity (FLAT 9 px, GHOST 6 px, velocity 1 = 2 px), hollow = chance below 100%, a yellow dot above = condition; a layer that is muted or silenced by a solo is drawn in dark gray (number, name, beats). A beat without note settings looks as before. Open: drawing a beat at its nudged position (a nudge is at most 2 px on a 32-step loop).
+
+### 39. Graphic overviews: NOTE, EUCLID, SONG, ROUTING
+
+[U2–U5.] The 325×60 area on tabs 2–3 shows text on these four pages.
+
+- **NOTE:** one bar per beat (height = velocity, hatch = chance, tag = condition), the selected beat highlighted. 64 beats fit at 5 px each.
+- **EUCLID:** the pattern on a ring (radius about 28 px) with hits, accents and rotation, next to the linear row.
+- **SONG:** one block per chain step, width = repeats, colour = bank, the playing step highlighted with its loop count.
+- **ROUTING:** boxes for EQ, F1, F2, FX1, FX2, REV, OUT joined by lines; modules nothing feeds are dimmed.
+
+**Done when.** Each page can be read without parsing text, and the drawing stays inside the 325×60 area and the draw budget from 37.
+
+### 40. Curves and cursors on the sound pages
+
+[U7–U13.] Computed in the main loop when a field changes (no audio cost). The Filter, EQ, effect and reverb pages use all eight fields, so their graphics go in a panel over the song part of the top three lanes (about 623×90 px) while the page is open, and those lanes are redrawn on leaving. The LFO and instrument pages keep their 325×60 area.
+
+- **Filter:** response curve from type, cutoff, resonance and slope (magnitude at about 160 frequencies).
+- **EQ:** the six bands summed, a marker per band.
+- **Compressor / expander:** transfer curve; a live gain-reduction bar (needs a value from the audio interrupt, see 41).
+- **Delay:** taps on a beat grid. **Reverb:** pre-delay gap and decay slope.
+- **LFO:** a phase dot moving on the existing shape while playing, and the list of what the LFO modulates.
+- **Sample waveform:** play cursor, start and end handles, direction.
+- Curve maths in hardware-free headers with host tests (known filter magnitudes at known frequencies).
+
+**Done when.** Turning CUTOFF or an EQ gain moves the curve as you turn, also while playing, with no audio glitches.
+
+**Status: the filter curve is built in V1.14 as a full-area view** (see [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)), waiting for the hardware test. The EQ curve is built too. Open: cursors on the effect and reverb pages.
+
+### 41. Live feedback: layer meters and status indicators
+
+[U14–U18, E4.]
+
+- **Meter taps in the audio interrupt:** peak per layer per block (one compare per sample), gain reduction of the compressor and limiter; read and reset by the main loop.
+- **Layer meters** in the lanes with a clip mark. The master already has the two 12-LED meters.
+- **Indicators** in the strip between the top menu and the lanes: MIDI in / out / clock (locked or free, tempo with decimals, error count), unsaved-changes dot and time since the last autosave, undo depth.
+
+**Done when.** Each layer's level is visible while it plays, and the strip shows MIDI, save and undo state without opening a page.
+
+**Status: a first indicator is built in V1.14** (asked by the owner with a picture of it): CPU and MEM bars in the top-right box of every page (`lcd_drawMonitor`). MEM is the loaded samples as a share of the ten sample slots. The rest is open.
+
+### 42. Key hints, status line, page dots, value popup
+
+[U19–U22.] The confusion met while testing V1.14 (two S keys, hidden combinations, FILL meaning two things, a 5-character status spot) is about finding functions, not about missing ones.
+
+- **Key-hint line:** while ADD, M, F, S, SONG, L, I, the right S or the encoder key is held, show what the other keys do on the current page (a table per page and modifier, in flash).
+- **Status line** instead of the 5-character spot: "UNDO: MOVE", "CHAIN: BANK 3 FOR 1 LOOP", "FKEY HELD", "SAVING".
+- **Page dots** for pages that cycle (instrument 1/2/3, song / EUCLID / NOTE).
+- **Value popup** while a knob turns: name, value, unit and a bar for the range.
+
+**Done when.** Holding any modifier shows its combinations for the current page, and every action confirms itself in words.
+
+### 43. Fonts with lowercase and symbols; colour roles
+
+[U23, U24.]
+
+- **Glyphs:** lowercase for the 7×9 and 10×14 fonts, and symbols (arrows, note, mute, solo, lock, ghost). About 256 KB of flash is free. Removes workarounds such as `+` for ghost hits and uppercase-only text.
+- **Colour roles:** one colour per meaning (header, value, status, error, selected, modulated), and optionally a colour per layer, applied across all pages.
+
+**Done when.** `X.xX.xx.` shows as written on the EUCLID page, and the same colour always means the same thing.
+
+### 44. Notes triggered outside the main loop; draw budget
+
+[E2, E3.] **Today:** pad and MIDI-in notes are triggered from the main loop, the same loop that draws, reads keys, writes to the SD card and runs autosave, so anything slow there delays notes.
+
+- **Trigger notes from an interrupt** (a short timer tick reading the MIDI note queue and the pad events), keeping recording and undo capture in the main loop.
+- **Draw budget:** a small queue of dirty regions, drawn a few per pass, so a large redraw never holds the loop.
+- Check the shared state touched by `layer_playBeat` (it already runs from the sequencer interrupt) and the recording path.
+
+**Done when.** A note from Loopy sounds at the same time whether or not an autosave, a bank redraw or a sample load is running; the loop-time figure from 37 stays under the budget during a full redraw. Required for 45.
+
+### 45. Full-area views: MIX, note editor, sample editor, patchbay, performance
+
+[U25–U29.] **Owner's direction (2026-11-13): the dedicated visualizations should use the big main area**, where the ten lanes are (920×310), not only the small 325×60 spot. While a feature's page is open, the lane area shows that feature; leaving the page redraws the lanes. Mockups of each are in the app's Screen ideas tab.
+
+- **Euclid rings:** the ten layers as rings around one centre with the playhead as a clock hand, the selected layer highlighted, and every layer's pattern as a row beside it (different lengths compare at a glance).
+- **Song timeline:** the chain across the full width (step width = repeats, the playing step and loop marked) and all five banks as thumbnails of their ten lanes.
+- **Routing:** the modules along the top joined as patched, one row per layer with a mark under the module it enters; with sends (46) each mark becomes a level bar. This is the patchbay.
+- **Filter and EQ curves:** the response over the whole area (both filters, cutoff marked); replaces the three-lane panel of [40](#40-curves-and-cursors-on-the-sound-pages).
+- **Sample:** the waveform at full width with START and END handles, the unused part dimmed, a play cursor; later zoom and slices. The waveform shown today has 60 points, so this needs a pass over the sample in SDRAM.
+- **MIX view:** the ten lanes as channel strips: level, pan, sends and filter as bars with live meters ([41](#41-live-feedback-layer-meters-and-status-indicators)). The home of the sends (46).
+- **Note editor:** one layer across the full width, beats as blocks, a velocity lane and a chance lane below.
+- **Performance view:** large mute and solo states, chain progress, bar counter and tempo.
+
+**Cost.** Opening such a view draws the whole area once (about 285,000 pixels, like a bank change today), then only what changes: a playhead, a bar, a handle. That does not need [44](#44-notes-triggered-outside-the-main-loop-draw-budget). Continuous animation of the whole area does. Measure the page-open time in [37](#37-measure-first-drawing-speed-loop-time-audio-load) first.
+
+**Order.** Euclid rings and Song timeline first (the data exists, no new engine work), then Routing and the Filter curve, then MIX with 46, then the editors.
+
+**Status: Euclid rings built in V1.14, waiting for the hardware test** (`LaneView.h`, `lcd_drawEuclidView`). While the EUCLID page is open the lane area shows the ten layers as rings (layer 1 outside, one turn = one loop from the top, the selected layer cyan with its grid as ticks, larger dots for louder beats) and every layer's beats as a row with its count. The playhead is a marker that orbits outside the rings and one above the rows, not a clock hand: a hand would have to be erased and redrawn across all the dots. Everything that draws into a lane is held back while the view is shown (`laneViewHidden()`) and asks for a refresh of the view instead, at most every 80 ms; leaving the page redraws the lane frames, measure marks and lanes (`lcd_restoreLanes`). The mechanism is now general (`lcd_drawLaneView`, `lcd_updateLaneView`): a page names its view, the view redraws only what changed. To check on the device: how long the view takes to open and to refresh while a knob turns, and whether pads still feel immediate meanwhile.
+
+**Also built in V1.14, waiting for the hardware test:**
+- **Song timeline** (`lcd_drawSongViewData`): the chain as boxes as wide as their repeats (the selected step cyan), a bar in the playing loop that fills in yellow, a line back to the start for LOOP or a stop mark, a status line (step, loop, what comes next, also a detour), and the five banks as thumbnails. A thumbnail is redrawn only when its beats or its colour change (a fingerprint per bank), so a bank change at a loop end redraws two thumbnails, not five.
+- **Routing** (`lcd_drawRoutingViewData`): the six modules and the master as boxes joined as patched (next module: a line between the boxes; further: over them, each module at its own height), unfed modules dimmed, and one row per source (ten layers, metronome, line-in) with a mark under the module it enters. With sends ([49](#49-dub-mixer-page-dub-mode)) the marks become level bars.
+
+- **Filter curve** (`FilterCurve.h`, `test_filtercurve`, `lcd_drawFilterViewData`): on the FILTER 1 and FILTER 2 pages, the response from 20 Hz to 20 kHz (+18 to -48 dB) computed from the coefficients the audio code runs, including the 6 dB setting and DRY/WET with their phase; the page's filter in cyan (gray while off) with its cutoff as a dotted line, the other filter behind it when it is on. A changed curve is erased by redrawing it in black (its points are kept in a scratch area at the end of the SDRAM), so turning FREQ does not clear the plot.
+
+- **EQ curve** (`lcd_drawEqViewData`): on the EQ page, the six bands in series as one curve (+24 to -36 dB) with a handle per band at its frequency and gain and its name above the plot (LO, 1-4, HI); gray while the EQ is off.
+
+Open from this item: Sample, MIX (as the dub mixer, [49](#49-dub-mixer-page-dub-mode)), Note editor, Performance view.
+
+### 46. Sends: a level per layer into the shared effects (SENDS mode)
+
+[S1.] Finishes [4](#4-routing-multiple-destinations-per-source) and [5](#5-routing-send-levels): the routing engine already sends one source to several destinations with a gain per sample; the UI and the file side are missing.
+
+- **Per layer:** dry to MASTER plus SEND A (Effect 1), SEND B (Effect 2) and SEND REV, each with a level that follows the knob with a short ramp.
+- **Per song:** a mode, CHAIN (today) or SENDS. In SENDS mode Effect 1, Effect 2 and Reverb return to MASTER, and an effect's DRY is off (its WET is the return level). Old songs load as CHAIN and sound the same.
+- **Files:** about 8 bytes per layer for sends, pan (36) and the channel filter (47) in one block after the song's `CHN` and `BTX` blocks; older firmware ignores it. The same block serves [3](#3-lfos-cant-modulate-filters-or-effects), [24](#24-velocity-modulates-a-parameter-lxr), [35](#35-lfo-destinations-for-the-per-note-settings).
+- **UI:** a MIX page per layer (a fourth instrument page): FILTER TYPE, CUTOFF, RESONANCE, DRIVE | PAN, SEND A, SEND B, SEND REV. The ROUTING page shows the mode.
+- **Gain staging:** dry plus three returns is louder than the serial chain; set return levels and the limiter ceiling by ear.
+- **Cost (estimate):** 1–2% of the audio block. Host tests in `test_routing` for levels, ramps and the mode.
+
+**Done when.** The snare has a long reverb and the kick almost none, on the same reverb; a V1.14 song loads as CHAIN and sounds identical.
+
+### 47. Channel filter and drive per layer
+
+[S2.] The part that makes it "per-channel effects".
+
+- **Per layer:** one multimode filter (12 dB) and a drive stage, processed on the layer's own buffer before routing. State in the unused DTCM RAM (128 KB, the fastest memory), since internal RAM is nearly full.
+- **Modulation:** LFO → cutoff per layer, a first part of [3](#3-lfos-cant-modulate-filters-or-effects).
+- **Not per layer:** delay, chorus and reverb (384 KB and 96 KB of SDRAM per instance, and ten times the cost); the sends cover them.
+- **Decide:** whether Filter 1 and Filter 2 stay as bus filters or go.
+- **Cost (estimate):** filter 1.6–3.2% of the audio block, drive under 1%; idle layers cost nothing. A 2-band EQ per layer would add 3–6.5%.
+
+**Done when.** A low-pass on the hats does not touch the snare routed the same way; load measured before and after stays under the 80% gate.
+
+### 48. Master EQ stage, stereo returns, a third send effect
+
+[S5.] Only after the measurements of 37 and the experience of 46–47.
+
+- **Master EQ:** modules run in a fixed order with EQ first, so EQ on the sum needs a separate master stage (simpler than a user-set module order, [7](#7-routing-open-design-questions)). On a stereo master it costs twice the mono EQ.
+- **Stereo returns:** stereo through the effects doubles their cost ([36](#36-per-layer-panning) B).
+- **A third send effect:** a delay plus a chorus buffer is 480 KB and about 650 KB of SDRAM is free, so one more fits; two (960 KB, [6](#6-routing-extra-effect-slots)) do not unless the undo history shrinks or a sample slot (960 KB) is given up.
+
+### 49. Dub mixer page (DUB mode)
+
+Asked by the owner on 2026-11-13: the mixer page in the fashion of a dub desk, with sends to the effects and filters. Design: [`docs/dub-mixer-design.md`](docs/dub-mixer-design.md); mockup in the app's Screen ideas tab ("Dub mixer"). It is the concrete form of [46](#46-sends-a-level-per-layer-into-the-shared-effects-sends-mode), [47](#47-channel-filter-and-drive-per-layer) and the MIX view of [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance).
+
+- **Mode per song:** CHAIN (today) or DUB. In DUB mode each layer and line-in is a strip: channel filter, level, a bus (FILT: EQ and Filter 1 as the dub filter; DIR: straight to master), sends to the echo (through Filter 2 into Effect 1), the reverb and Effect 2. The echo return can feed the reverb.
+- **Page:** MIXER → DUB → ROUTING. The lane area shows eleven strips with faders, the ECHO and VERB returns, and the DUB FILTER as a big dial over the master meters. Top row = selected strip (LEVEL, FILTER, ECHO, VERB); bottom row = the desk, always the same (FEEDBACK, ECHO RTN, VERB RTN, DUB FILTER).
+- **Gestures:** drop (MUTE + pad; tails ring on), throw (EFFECT 1 + pad or REVERB + pad opens that send fully while held, also on a muted strip), feedback past 100 % with a soft clipper, the dub filter in steps.
+- **Stereo** (owner: yes, if the processing room allows): everything is mono until the reverb today. The design adds pan on strips that go straight to the master (DIR) and a ping-pong echo (the repeats alternate left and right, from a second read point in the same delay buffer, ECHO WIDTH 0–100 %). Estimated under 1 % of the audio block together; to confirm with [37](#37-measure-first-drawing-speed-loop-time-audio-load).
+- **Phases:** D1 mode, sends, returns, page, file block; D2 throws, feedback past 100 %, dotted echo times, echo into reverb, ping-pong echo; D3 channel filter and drive, pan on DIR strips ([36](#36-per-layer-panning) A), page 2; D4 meters ([41](#41-live-feedback-layer-meters-and-status-indicators)) and the line-in strip; D5 a stereo FILT bus and a filter over the whole mix ([36](#36-per-layer-panning), [48](#48-master-eq-stage-stereo-returns-a-third-send-effect)).
+- **Open decisions** (section 6 of the design): whether filters are also send destinations with a level; the throw keys; whether a throw pad plays the sound; the big knob on the bus or over the whole mix; page order; the role of Effect 2.
+
+**Done when (D1 + D2).** With a pattern playing, the snare is thrown into the echo for one hit, FEEDBACK is ridden until the echo builds and pulled back, and the dub filter thins the drums while a kick on DIR keeps its weight. A V1.14 song loads as CHAIN and sounds identical.
+
+### 50. Filter slopes: 24 dB and a real 6 dB
+
+Asked by the owner on 2026-11-13: "a 24 would be nice, actually the 6 is more EQ than filter".
+
+**Before:** SLOPE 12 was one biquad; SLOPE 06 was that same biquad mixed half and half with the unfiltered signal, so it never took off more than 6 dB.
+
+**Status: built in V1.14, waiting for the hardware test** (`filterDesign` in `FilterCurve.h`, `test_filtercurve`). The design moved out of `Global.h` into a hardware-free function that the audio code and the curve share.
+- **24:** two sections in series. Low- and high-pass: the first at Q 0.54, the second at 1.85 x the RESONANCE's Q, which is a Butterworth response at the lowest RESONANCE and one peak of about Q above it. Band-pass and band-stop: the same section twice. Costs one more biquad per sample for that filter.
+- **06:** low- and high-pass are a first-order filter (6 dB per octave, RESONANCE has no effect); band-pass and band-stop use one section at half the Q, a wide band. **A song that used 06 sounds different.**
+- **12:** unchanged.
+- **Files:** SLOPE is stored as before (0, 1, now also 2). Older firmware refuses the value 2 and keeps its default for that filter.
+
+To judge on the device: whether 24 dB with high RESONANCE is too loud at the peak (up to about +15 dB), and whether the old 06 sound is missed. If it is, it can come back as a separate SLOPE value.
+
+### 51. Watchdog for stalls
+
+**Status: built in V1.14, waiting for the hardware test.** The independent watchdog (IWDG1) starts when start-up ends (start-up, with its animation and SD scan, is not watched) and is fed once per main-loop pass; 6 seconds without a feed restarts the device. The loop writes a stage number and the page into DTCM RAM as it goes (`WdStage` in `CrashRecord.h`), which survives the restart, so at start-up the record reads `CRASH 7 AT 0000sssm` (stage, page) and goes to `System/Crash.log` like a fault. Stages: 1 keys, 2 screen, 3 full-area view, 4 SD, 5 rhythm, 6 mixer, 7 autosave, 9 test page. It cannot name the exact function, only the part of the loop. Unverified: that the bootloader leaves the reset flag (RCC_RSR) alone; if a freeze restarts the device but shows no CRASH 7, that is why. Open: feeding it inside very long operations if a legitimate one ever exceeds 6 s (autosave, loading a song).
+

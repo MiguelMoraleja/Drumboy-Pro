@@ -9,6 +9,10 @@ Fork: MiguelMoraleja/Drumboy-Pro. Firmware: `02 Software/Drumboy-Pro-App-H723`. 
 - Put hardware-free logic in `Core/Library/Global/*.h` with a host test.
 - Test builds for the owner's device: `make package`; the file must reach the SD card at its exact size (the bootloader shows SIZE-CHECK otherwise).
 
+## Crash reports
+
+A crash restarts the firmware and shows `CRASH k AT pppppppp` (also a line in `System/Crash.log` on the SD card; `CrashRecord.h`). To find the code: check out the commit of that firmware, `make`, then `arm-none-eabi-addr2line -f -C -e build/app.elf 0xpppppppp` (also the `lr` value from the log). Builds are reproducible, so the addresses match the released file. kind: 1 HardFault, 2 MemManage, 3 BusFault, 4 UsageFault, 5 NMI, 6 Error_Handler.
+
 ## Every release
 
 1. Bump `Version.h`, merge to `main`; the owner creates the release `vX.YY` (lowercase v) on github.com.

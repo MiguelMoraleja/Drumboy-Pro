@@ -74,6 +74,7 @@ y 511  └───────────────────────�
 | Kind of drawing | Size | Verdict |
 |---|---|---|
 | A graph in the 325×60 area | 19,500 px | Fine on every change, also while playing |
+| A panel over three lanes (sound-page curves) | 623×90 ≈ 56,000 px | Fine on a field change |
 | One lane redrawn | 623×29 ≈ 18,000 px | Fine |
 | All ten lanes | ≈ 285,000 px | Fine on a page or bank change (done today); not as animation |
 | Meters, cursors, moving dots | hundreds of px each | Fine at 20–30 updates per second |
@@ -96,13 +97,15 @@ Sizes: S = a day, M = a few days, L = a week or more, including the hardware tes
 
 ### 2.2 Curves for the sound pages
 
+The Filter, EQ, effect and reverb pages use all eight fields, so tabs 2–3 are not free there. Their graphics go in a **panel over the song part of the top three lanes** (about 623×90 px) while the page is open; the three lanes are redrawn on leaving (about 54,000 pixels). The LFO and instrument pages keep their 325×60 area.
+
 | # | Idea | Area | Size | Notes |
 |---|---|---|---|---|
-| U7 | **Filter response curve** from type, cutoff, resonance and slope | 325×60 | S–M | Evaluate the filter's magnitude at about 160 frequencies when a field changes. Runs in the main loop, no audio cost |
-| U8 | **EQ curve**, six bands summed, with a marker per band | 325×60 | S–M | Same method |
-| U9 | **Compressor and expander transfer curve** with a live gain-reduction bar | 325×60 | M | The gain reduction needs one value handed over from the audio interrupt |
-| U10 | **Delay taps** on a beat grid (time, feedback, damping) | 325×60 | S | Static drawing from the settings |
-| U11 | **Reverb shape**: pre-delay gap and decay slope | 325×60 | S | Static drawing from the settings |
+| U7 | **Filter response curve** from type, cutoff, resonance and slope | Lane panel | S–M | Evaluate the filter's magnitude at about 160 frequencies when a field changes. Runs in the main loop, no audio cost |
+| U8 | **EQ curve**, six bands summed, with a marker per band | Lane panel | S–M | Same method |
+| U9 | **Compressor and expander transfer curve** with a live gain-reduction bar | Lane panel | M | The gain reduction needs one value handed over from the audio interrupt |
+| U10 | **Delay taps** on a beat grid (time, feedback, damping) | Lane panel | S | Static drawing from the settings |
+| U11 | **Reverb shape**: pre-delay gap and decay slope | Lane panel | S | Static drawing from the settings |
 | U12 | **LFO phase dot** moving on the existing shape while playing, plus the list of what the LFO modulates | 325×60 | S | The graph exists |
 | U13 | **Sample waveform cursor**: play position, start and end handles, direction | 325×60 | S–M | The waveform exists |
 

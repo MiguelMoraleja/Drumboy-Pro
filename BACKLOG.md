@@ -601,7 +601,7 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 ### 40. Curves and cursors on the sound pages
 
-[U7–U13.] All drawn in the 325×60 area, computed in the main loop when a field changes (no audio cost).
+[U7–U13.] Computed in the main loop when a field changes (no audio cost). The Filter, EQ, effect and reverb pages use all eight fields, so their graphics go in a panel over the song part of the top three lanes (about 623×90 px) while the page is open, and those lanes are redrawn on leaving. The LFO and instrument pages keep their 325×60 area.
 
 - **Filter:** response curve from type, cutoff, resonance and slope (magnitude at about 160 frequencies).
 - **EQ:** the six bands summed, a marker per band.

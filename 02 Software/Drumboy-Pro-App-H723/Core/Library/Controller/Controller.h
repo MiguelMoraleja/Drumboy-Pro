@@ -371,6 +371,14 @@ class Controller {
     float dubGainState[kDubStrips][kRouteNodeCount] = {{0}};  // the gains each strip reached in the last block (audio interrupt)
     float fxDryScale = 1.0f;                                // 0 in DUB mode: effects and reverb run without their DRY
     uint8_t dubStripSel = 0;                                // the strip the DUB page edits (a pad press selects it)
+    uint32_t dubStripDrawn[kDubStrips] = {0};               // the desk: what each strip shows (a fingerprint), 0 = nothing
+    uint32_t dubReturnDrawn[2] = {0, 0};
+    uint16_t dubMeterDrawn[kDubStrips];                     // the desk's meter heights as drawn (0xFFFF = nothing)
+    uint32_t dubViewStateDrawn = 0;
+    uint32_t dubViewState() const;
+    void lcd_drawDubViewData();
+    void lcd_drawDubMeters();
+    void lcd_drawDeskFader(uint16_t x_, uint8_t level_, RGB16Color color_);
     void dub_select();
     void dub_step(EncoderFunc function_, bool up_);
     void lcd_drawDubMenu();

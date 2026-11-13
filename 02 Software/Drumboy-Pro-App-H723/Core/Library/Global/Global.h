@@ -18,6 +18,7 @@
 #include "StatusLine.h"
 #include "SampleView.h"
 #include "DubMix.h"
+#include "DubView.h"
 #include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"

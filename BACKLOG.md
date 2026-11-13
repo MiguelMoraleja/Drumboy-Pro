@@ -101,7 +101,7 @@ Every step keeps the rules: hardware-free logic in `Core/Library/Global/*.h` wit
 1. [37](#37-measure-first-drawing-speed-loop-time-audio-load) measurements, then [38](#38-per-note-settings-and-layer-state-visible-in-the-lanes) and [39](#39-graphic-overviews-note-euclid-song-routing): what V1.10–V1.14 added becomes visible.
 2. [42](#42-key-hints-status-line-page-dots-value-popup) and [43](#43-fonts-with-lowercase-and-symbols-colour-roles): the device explains itself.
 3. [40](#40-curves-and-cursors-on-the-sound-pages) and [41](#41-live-feedback-layer-meters-and-status-indicators): sound pages and live feedback.
-4. [44](#44-notes-triggered-outside-the-main-loop-draw-budget), then [46](#46-sends-a-level-per-layer-into-the-shared-effects-sends-mode) sends with the MIX page, [47](#47-channel-filter-and-drive-per-layer) channel filter, [36](#36-per-layer-panning) A pan, and the MIX view from [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance).
+4. Full-area views from [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance) that need no new engine work (Euclid rings, Song timeline, Routing, Filter curve): the owner wants the big main area used for dedicated views. Then [44](#44-notes-triggered-outside-the-main-loop-draw-budget), [46](#46-sends-a-level-per-layer-into-the-shared-effects-sends-mode) sends with the MIX page, [47](#47-channel-filter-and-drive-per-layer) channel filter, [36](#36-per-layer-panning) A pan, and the MIX view from [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance).
 5. [48](#48-master-eq-stage-stereo-returns-a-third-send-effect) only after the measurements.
 
 Open decisions for the owner: sends as a per-song mode next to today's chain (recommended) or a replacement; whether the channel filter replaces Filter 1/2; whether a third send effect is worth giving up undo history or a sample slot.
@@ -655,15 +655,20 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 ### 45. Full-area views: MIX, note editor, sample editor, patchbay, performance
 
-[U25–U29.] Views that take over the lane area (920×310) while a page is open. Needs 44.
+[U25–U29.] **Owner's direction (2026-11-13): the dedicated visualizations should use the big main area**, where the ten lanes are (920×310), not only the small 325×60 spot. While a feature's page is open, the lane area shows that feature; leaving the page redraws the lanes. Mockups of each are in the app's Screen ideas tab.
 
-- **MIX view:** the ten lanes become channel strips: level, pan, sends and filter as bars with live meters (41). The home of the sends (46).
+- **Euclid rings:** the ten layers as rings around one centre with the playhead as a clock hand, the selected layer highlighted, and every layer's pattern as a row beside it (different lengths compare at a glance).
+- **Song timeline:** the chain across the full width (step width = repeats, the playing step and loop marked) and all five banks as thumbnails of their ten lanes.
+- **Routing:** the modules along the top joined as patched, one row per layer with a mark under the module it enters; with sends (46) each mark becomes a level bar. This is the patchbay.
+- **Filter and EQ curves:** the response over the whole area (both filters, cutoff marked); replaces the three-lane panel of [40](#40-curves-and-cursors-on-the-sound-pages).
+- **Sample:** the waveform at full width with START and END handles, the unused part dimmed, a play cursor; later zoom and slices. The waveform shown today has 60 points, so this needs a pass over the sample in SDRAM.
+- **MIX view:** the ten lanes as channel strips: level, pan, sends and filter as bars with live meters ([41](#41-live-feedback-layer-meters-and-status-indicators)). The home of the sends (46).
 - **Note editor:** one layer across the full width, beats as blocks, a velocity lane and a chance lane below.
-- **Sample editor:** the waveform at full width with zoom, start and end; later slices. The waveform shown today has 60 points, so this needs a pass over the sample in SDRAM.
-- **Routing patchbay:** sources as rows, destinations as columns, a cell per send level.
 - **Performance view:** large mute and solo states, chain progress, bar counter and tempo.
 
-Build the MIX view first, with 46.
+**Cost.** Opening such a view draws the whole area once (about 285,000 pixels, like a bank change today), then only what changes: a playhead, a bar, a handle. That does not need [44](#44-notes-triggered-outside-the-main-loop-draw-budget). Continuous animation of the whole area does. Measure the page-open time in [37](#37-measure-first-drawing-speed-loop-time-audio-load) first.
+
+**Order.** Euclid rings and Song timeline first (the data exists, no new engine work), then Routing and the Filter curve, then MIX with 46, then the editors.
 
 ### 46. Sends: a level per layer into the shared effects (SENDS mode)
 

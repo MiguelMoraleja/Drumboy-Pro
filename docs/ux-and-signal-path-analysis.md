@@ -136,6 +136,8 @@ These are not visualizations, but they address what has caused the most confusio
 
 These replace the lanes while a page is open. They are the "dedicated visualizations" in the strong sense.
 
+**Owner's direction (2026-11-13): use this big area for the dedicated views.** Opening one draws the area once (about 285,000 pixels, like a bank change today) and then only what changes, so static views with a moving playhead or bar do not need E2; only continuous animation of the whole area does. Further views in this style, mocked up in the app's Screen ideas tab: **Euclid rings** (ten layers as concentric rings with a clock-hand playhead), **Song timeline** (the chain plus all five banks as thumbnails), **Routing** (modules and one row per layer), **Filter and EQ curves** over the whole area.
+
 | # | Idea | Size | Notes |
 |---|---|---|---|
 | U25 | **MIX view.** The ten lanes become ten channel strips: level, pan, sends and filter as horizontal bars, with live meters | M–L | The natural home for per-channel sends (section 3). Lanes are already one row per layer |

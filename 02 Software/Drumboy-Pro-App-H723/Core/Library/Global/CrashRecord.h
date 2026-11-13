@@ -100,13 +100,20 @@ enum WdStageCode {
     WD_STAGE_MIDI = 8,
     WD_STAGE_TEST = 9,
     WD_STAGE_FILE = 10,      // loading or saving a file
+    WD_STAGE_PRESET = 11,    // saving the system or encoder preset to the SD card
+    WD_STAGE_CLIPBOARD = 12, // copy, paste and reset of LFOs, instruments and songs
+    WD_STAGE_NAV = 13,       // long key navigation
+    WD_STAGE_MIDITX = 14,    // MIDI out
+    WD_STAGE_MIDIRX = 15,    // MIDI notes in
+    WD_STAGE_TRANSPORT = 16, // MIDI transport and clock in
+    WD_STAGE_SYNC = 17,      // sync in
 };
 
 typedef struct {
     uint32_t stage;  // WdStageCode
     uint32_t menu;   // page being shown
     uint32_t loops;  // main loop passes since power-on
-    uint32_t spare;
+    uint32_t spare;  // the audio load (the CPU bar) in tenths of a percent, as last shown
 } WdStage;
 
 // The record a watchdog restart leaves: pc = (stage << 8) | menu so the screen shows it.
@@ -116,7 +123,7 @@ static inline void crashFromWatchdog(CrashRecord* r_, const WdStage* w_, uint32_
     r_->pc = ((w_->stage & 0xFFFFu) << 8) | (w_->menu & 0xFFu);
     r_->lr = w_->loops;
     r_->psr = 0;
-    r_->sp = 0;
+    r_->sp = w_->spare;  // the audio load when it stopped: near 1000 means the audio starved the loop
     r_->cfsr = 0;
     r_->hfsr = 0;
     r_->bfar = 0;

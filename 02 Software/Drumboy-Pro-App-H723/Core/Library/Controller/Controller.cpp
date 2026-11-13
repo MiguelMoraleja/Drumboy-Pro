@@ -490,11 +490,13 @@ void Controller::update() {
             if (!mixer.liMute) mixer_setLiMute(true);
         }
 
+        watchdog_stage(WD_STAGE_PRESET);
         // 7. PRESET PERSISTENCE
         // Commit dirty preset data to storage.
         if (systemPresetSaveFlag) saveSystemPreset();
         if (encoderPresetSaveFlag) saveEncoderPreset();
 
+        watchdog_stage(WD_STAGE_CLIPBOARD);
         // 8. CLIPBOARD OPERATIONS (LFO)
         // Handle copy, paste, and reset actions for LFO data.
         if ((lfoCopyActionFlag) && (selectedLfoNum != -1)) {
@@ -551,6 +553,7 @@ void Controller::update() {
             song_pasteBank();
         }
 
+        watchdog_stage(WD_STAGE_NAV);
         // 11. SECONDARY NAVIGATION
         // Execute long-press navigation handlers.
         if (keyboard.upActionFlag) {
@@ -562,6 +565,7 @@ void Controller::update() {
             keyboard_downLong();
         }
 
+        watchdog_stage(WD_STAGE_MIDITX);
         // 12. OUTBOUND MIDI TRANSMISSION
         // Enqueue pending MIDI note events for each layer into the TX ring buffer.
         for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
@@ -579,6 +583,7 @@ void Controller::update() {
             }
         }
 
+        watchdog_stage(WD_STAGE_MIDIRX);
         // 13. INBOUND MIDI PROCESSING
         // Translate incoming MIDI events to playback and recording actions.
         // Every note in the queue (MidiParser.h), at its velocity: chords and fast runs all play.
@@ -607,6 +612,7 @@ void Controller::update() {
             }
         }
 
+        watchdog_stage(WD_STAGE_TRANSPORT);
         // 14. INBOUND MIDI TRANSPORT AND CLOCK
         // Handle transport commands and tempo updates signaled by the MIDI RX ISR.
         // Executed here in main context so that LCD, timers, and state can be safely updated.
@@ -734,6 +740,7 @@ void Controller::update() {
             io.midi.rxClockFlag = false;
         }
 
+        watchdog_stage(WD_STAGE_SYNC);
         // 15. INBOUND SYNC HANDLING (MODE-A / MODE-B)
         // MODE-A: clock-only sync; local play/record can arm and start on next clock.
         // MODE-B: gate controls play/stop; clock continuously updates tempo.
@@ -25396,6 +25403,7 @@ void Controller::lcd_drawMonitor() {
         monitorCpuShown = monitorHold(monitorCpuShown, peak);
         if (peak > monitorCpuMax) monitorCpuMax = peak;
     }
+    reinterpret_cast<WdStage*>(WATCHDOG_STAGE_ADDRESS)->spare = monitorCpuShown;  // for the record a watchdog restart leaves
     lcd_drawMonitorBar(kMonitorCpuTextY, kMonitorCpuBarY, monitorCpuShown, monitorCpuDrawn);
 
     // 3. MEM

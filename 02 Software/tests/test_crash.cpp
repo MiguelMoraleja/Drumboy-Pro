@@ -79,6 +79,9 @@ int main() {
         char text[32];
         crashAlertText(&w, text, sizeof text);
         CHECK(std::string(text) == "CRASH 7 AT 00000416", "alert %s", text);
+        st.spare = 987;
+        crashFromWatchdog(&w, &st, (1u << 8) | 15u);
+        CHECK(w.sp == 987 && crashValid(&w), "the audio load goes into the record");
         CHECK(watchdogReload(6) == 750 && watchdogReload(1000) == 4095, "reload %u", watchdogReload(6));
         CHECK(sizeof(WdStage) == 16 && WATCHDOG_STAGE_ADDRESS + sizeof(WdStage) <= CRASH_RECORD_ADDRESS, "stage block sits below the record");
     }

@@ -279,7 +279,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.14 (testing)</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.14</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -846,7 +846,7 @@ function mOverviewText(lines) { lines.forEach(([t, c], k) => P.text(t, 494, 32 +
 const IDEAS = [
   { id: "lanes", group: 0, name: "Main screen", item: "38, 41, 42", size: "S–M each", today: true,
     note: ["Today every beat is the same mark, a muted layer differs only by its box, and messages get a 5-character spot.",
-           "Built in V1.14 (waiting for the hardware test): beat height shows velocity, a hollow beat has a chance below 100 %, a yellow dot marks a condition, and the muted layer (7) is dimmed. Still proposals: each layer has a small meter, and a status line names the last action, the MIDI clock and unsaved work."],
+           "Built in V1.14: beat height shows velocity, a hollow beat has a chance below 100 %, a yellow dot marks a condition, and the muted layer (7) is dimmed. Still proposals: each layer has a small meter, and a status line names the last action, the MIDI clock and unsaved work."],
     draw(idea) {
       mLanes(idea, { dim: [6], meters: true });
       if (!idea) { P.text(" UNDO", 170, 112, 5, LC.CY, "C"); return; }
@@ -1073,7 +1073,7 @@ const EUC = [[16, 4, 0], [8, 2, 2], [16, 8, 0], [8, 3, 3], [16, 5, 2], [12, 7, 0
 const BIG = [
   { id: "bigeuclid", group: 0, name: "Euclid rings", item: "45", size: "M–L", today: true, built: "V1.14",
     note: ["Today the EUCLID page shows one layer's pattern as a row of characters above the lanes.",
-           "Built in V1.14 (waiting for the hardware test). While the EUCLID page is open, the lanes give way to this view: all ten layers as rings around one centre, the outer ring being layer 1. One turn is one loop, starting at the top; a yellow marker orbits with the playhead. The selected layer (5) is cyan, with its grid as ticks and larger dots for louder beats; a muted layer (8) is dimmed. On the right, every layer's beats as a row with their count, so layers can be compared. Leaving the page brings the lanes back."],
+           "Built in V1.14. While the EUCLID page is open, the lanes give way to this view: all ten layers as rings around one centre, the outer ring being layer 1. One turn is one loop, starting at the top; a yellow marker orbits with the playhead. The selected layer (5) is cyan, with its grid as ticks and larger dots for louder beats; a muted layer (8) is dimmed. On the right, every layer's beats as a row with their count, so layers can be compared. Leaving the page brings the lanes back."],
     draw(idea) {
       mMenu("EU", 5);
       mField(0, "STEPS", "16"); mField(1, "HITS", "5");
@@ -1111,7 +1111,7 @@ const BIG = [
     } },
   { id: "bigsong", group: 0, name: "Song timeline", item: "45", size: "M–L", today: true, built: "V1.14",
     note: ["Today the SONG page lists the chain as text above the lanes, and you only see the bank that is playing.",
-           "Built in V1.14 (waiting for the hardware test). While the SONG page is open, the lanes give way to the chain as a timeline: each step is a box as wide as its repeats, the selected step is cyan, and the loop playing now has a bar that fills in yellow as it goes by. The line below says where the chain is and what comes next. Under it, all five banks as thumbnails of their ten lanes: the playing bank is cyan, banks the chain uses are white, the others are dimmed."],
+           "Built in V1.14. While the SONG page is open, the lanes give way to the chain as a timeline: each step is a box as wide as its repeats, the selected step is cyan, and the loop playing now has a bar that fills in yellow as it goes by. The line below says where the chain is and what comes next. Under it, all five banks as thumbnails of their ten lanes: the playing bank is cyan, banks the chain uses are white, the others are dimmed."],
     draw(idea) {
       mMenu("SG");
       mField(0, "STEP", "   2 OF  4"); mField(1, "BANK", "2");
@@ -1152,7 +1152,7 @@ const BIG = [
     } },
   { id: "bigrouting", group: 0, name: "Routing", item: "45", size: "M–L", today: true, built: "V1.14",
     note: ["Today the ROUTING page writes the chains as text above the lanes.",
-           "Built in V1.14 (waiting for the hardware test). While the ROUTING page is open, the lanes give way to the patch as a diagram: the six modules and the master along the top, joined as they are patched (a route to the next module is a line between the boxes, a longer one goes over them). Modules that get no signal are dimmed. Below, one row per source (the ten layers, the metronome and line-in) with a mark under the module it enters. With sends (item 46), each mark becomes a level bar and a layer can have several."],
+           "Built in V1.14. While the ROUTING page is open, the lanes give way to the patch as a diagram: the six modules and the master along the top, joined as they are patched (a route to the next module is a line between the boxes, a longer one goes over them). Modules that get no signal are dimmed. Below, one row per source (the ten layers, the metronome and line-in) with a mark under the module it enters. With sends (item 46), each mark becomes a level bar and a layer can have several."],
     draw(idea) {
       mMenu("RT");
       mField(0, "EQ OUT", "FILTER-1"); mField(1, "FILTER-1", "EFFECT-1");
@@ -1189,7 +1189,7 @@ const BIG = [
     } },
   { id: "bigfilter", group: 0, name: "Filter curve", item: "40, 45", size: "M", today: true, built: "V1.14",
     note: ["Today the filter page is eight numbers above the lanes.",
-           "Built in V1.14 (waiting for the hardware test). While a FILTER page is open, the lanes give way to the filter's response from 20 Hz to 20 kHz: the page's filter in cyan (gray while it is off) with its cutoff as a dotted line, the other filter in gray behind it when it is on. The curve is computed from the same numbers the audio uses, so TYPE, SLOPE, FREQ, RESONANCE, DRY and WET all show; DRIVE is a gain with a soft clip before the filter and is not part of the shape."],
+           "Built in V1.14. While a FILTER page is open, the lanes give way to the filter's response from 20 Hz to 20 kHz: the page's filter in cyan (gray while it is off) with its cutoff as a dotted line, the other filter in gray behind it when it is on. The curve is computed from the same numbers the audio uses, so TYPE, SLOPE, FREQ, RESONANCE, DRY and WET all show; DRIVE is a gain with a soft clip before the filter and is not part of the shape."],
     draw(idea) {
       mMenu("F1");
       mField(0, "ACTIVE", "ON"); mField(1, "TYPE", "LOWPASS"); mField(2, "SLOPE", "12", " DB"); mField(3, "FREQ", "1.2", "KHZ");
@@ -1212,7 +1212,7 @@ const BIG = [
     } },
   { id: "bigeq", group: 0, name: "EQ curve", item: "40, 45", size: "M", today: true, built: "V1.14",
     note: ["Today the EQ page is eight fields above the lanes; each band's frequency and gain are numbers.",
-           "Built in V1.14 (waiting for the hardware test). While the EQ page is open, the lanes give way to the six bands together as one curve from 20 Hz to 20 kHz. Each band has a small square at its frequency and gain, with its name above the plot: LO and HI are the shelves, 1 to 4 the peaks. The curve is gray while the EQ is off."],
+           "Built in V1.14. While the EQ page is open, the lanes give way to the six bands together as one curve from 20 Hz to 20 kHz. Each band has a small square at its frequency and gain, with its name above the plot: LO and HI are the shelves, 1 to 4 the peaks. The curve is gray while the EQ is off."],
     draw(idea) {
       mMenu("EQ");
       mField(0, "ACTIVE", "ON"); mField(1, "Q", "02"); mField(2, "LO-SHELF", "+4", " DB"); mField(3, "HI-SHEL", "-4", " DB");
@@ -2224,7 +2224,7 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
-  { v: "V1.14", date: "2026-11-08", status: "Testing, not published",
+  { v: "V1.14", date: "2026-11-13", status: "GitHub release v1.14 · tested", pub: true,
     nw: ["NOTE page (song → EUCLID → NOTE): each beat gets its own VELOCITY, CHANCE (5 % steps), CONDITION (A:B, !A:B, 1ST, PRE, FKEY and negations) and NUDGE (±12 % of a 16th)",
          "FKEY condition: those beats play only while the F (FILL) key is held (the screen shows FKEY); !FKEY only while it is not",
          "ADD + turn changes every beat of the bank; CLEAR resets a beat, ADD + CLEAR the bank",

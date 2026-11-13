@@ -9408,7 +9408,7 @@ void Controller::lcd_setLayerTabState(uint8_t layerNum_) {
 
     // 1. STYLE APPLY
     // Apply selected/default foreground color and shared text style.
-    (layerNum_ == selectedLayerNum) ? lcd.setForeColor(kLayerSelectedColor) : lcd.setForeColor(kLayerColorPalette[layerNum_]);
+    lcd.setForeColor(layerColor(layerNum_));
     lcd.setBackColor(BLACK);
     lcd.setFont(FONT_07x09);
     lcd.setAlignment(LEFT);
@@ -13511,11 +13511,8 @@ void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatN
 
         // 2. COLOR SELECTION
         // Resolve draw color from selection and layer context.
-        if (selected_) {
-            lcd.setForeColor(kBeatSelectedColor);
-        } else {
-            (layerNum_ == selectedLayerNum) ? lcd.setForeColor(kLayerSelectedColor) : lcd.setForeColor(kLayerColorPalette[layerNum_]);
-        }
+        const RGB16Color beatColor = selected_ ? kBeatSelectedColor : layerColor(layerNum_);
+        lcd.setForeColor(beatColor);
 
         // 3. BEAT SHAPE RENDER
         // Convert beat interval to pixel coords and draw by fill type.
@@ -13528,16 +13525,34 @@ void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatN
             uint16_t yStart = kImageLayerY[layerNum_] + kSongOffsetY;
 
             // Draw beat shape based on fill type
+            // Per-note settings made visible (LaneView.h): height = velocity, hollow = a chance
+            // below 100%, a dot above = a condition. A beat without them looks as before V1.14.
+            const uint16_t note = beat.getNote();
+            lcd.clearRect(xStart, yStart - kLaneDotRise, xEnd - xStart + 1, kLaneDotRise);
             if ((fillType == 0) && (fillPattern < 2)) {
                 lcd.clearRect(xStart, yStart, xEnd - xStart + 1, kSongHeight);
-                lcd.drawRect(xStart, yStart, 2, kSongHeight);
+                const uint8_t h = laneMarkHeight(beat.getVelocity(), (fillPattern == 0) ? 100 : 50);
+                if (laneMarkHollow(note) && (h >= 3)) {
+                    lcd.drawRect(xStart, yStart + kSongHeight - h, 3, h);
+                } else {
+                    lcd.fillRect(xStart, yStart + kSongHeight - h, 2, h);
+                }
             } else if ((fillType == 0) && (fillPattern == 2)) {
                 lcd.clearRect(xStart, yStart, xEnd - xStart + 1, kSongHeight);
                 for (uint8_t i = 0; i < 4; i++) {
                     lcd.drawPixel(xStart, yStart + (i * 3));
                 }
+            } else if (laneMarkHollow(note) && (xEnd > xStart + 2)) {
+                // A fill that may not play: its outline.
+                lcd.clearRect(xStart, yStart, xEnd - xStart + 1, kSongHeight);
+                lcd.drawRect(xStart, yStart, xEnd - xStart, kSongHeight);
             } else {
                 lcd.fillRect(xStart, yStart, xEnd - xStart, kSongHeight);
+            }
+            if (laneMarkDot(note)) {
+                lcd.setForeColor(selected_ ? kBeatSelectedColor : YELLOW);
+                lcd.fillRect(xStart, yStart - kLaneDotRise, 2, 2);
+                lcd.setForeColor(beatColor);
             }
         }
     }
@@ -13564,7 +13579,7 @@ void Controller::lcd_clearBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beat
         // 3. REGION CLEAR
         // Clear beat rectangle to background color.
         lcd.setBackColor(BLACK);
-        lcd.clearRect(xStart, yStart, xEnd - xStart, (kSongHeight + 1));
+        lcd.clearRect(xStart, yStart - kLaneDotRise, xEnd - xStart, (kSongHeight + 1 + kLaneDotRise));
     }
 }
 
@@ -13606,7 +13621,7 @@ void Controller::lcd_clearSong(uint8_t layerNum_, uint8_t bankNum_) {
         // 2. LANE CLEAR
         // Clear full lane rectangle in song area.
         lcd.setBackColor(BLACK);
-        lcd.clearRect(kSongX, yStart, kSongWidth + 1, kSongHeight + 1);
+        lcd.clearRect(kSongX, yStart - kLaneDotRise, kSongWidth + 1, kSongHeight + 1 + kLaneDotRise);
     }
 }
 
@@ -13625,7 +13640,7 @@ void Controller::lcd_clearInterval(uint8_t layerNum_, uint8_t bankNum_, uint16_t
         // 3. SEGMENT CLEAR
         // Clear requested sub-region in lane.
         lcd.setBackColor(BLACK);
-        lcd.clearRect(xStart, yStart, xEnd - xStart, kSongHeight + 1);
+        lcd.clearRect(xStart, yStart - kLaneDotRise, xEnd - xStart, kSongHeight + 1 + kLaneDotRise);
     }
 }
 
@@ -21945,6 +21960,7 @@ void Controller::note_step(EncoderFunc function_, bool up_) {
             }
         }
     }
+    if (function_ != ENC_NOTE_BEAT) lcd_drawSong(selectedLayerNum, activeSongBank);  // the marks follow the edit
     lcd_drawNote_Data();
     lcd_drawNoteOverview();
 }
@@ -21958,6 +21974,7 @@ void Controller::note_clear() {
     for (int8_t k = 0; k <= bank.lastActiveBeatNum; k++) {
         if (keyboard.shiftKeyPress || (k == selectedBeatNum)) bank.beatLibrary[k].resetNote();
     }
+    lcd_drawSong(selectedLayerNum, activeSongBank);
     lcd_drawNote_Data();
     lcd_drawNoteOverview();
 }
@@ -22305,8 +22322,8 @@ void Controller::layerInst_setMute(uint8_t layerNum_, bool mute_) {
     layerLibrary[layerNum_].mute = mute_;
 
     // 2. UI REFRESH
-    // Redraw mute icon on layer tab.
-    lcd_drawLayerTab_Mute(layerNum_);
+    // The whole lane: a layer that does not sound is drawn dimmed (name, boxes, beats).
+    lcd_drawLayerTab(layerNum_);
 }
 
 void Controller::layerInst_setFill(uint8_t layerNum_, bool fill_) {
@@ -22333,6 +22350,14 @@ void Controller::layerInst_setStyle(uint8_t layerNum_, bool style_) {
     if ((menu == LAYER_INST_2_MENU) && (selectedLayerNum == layerNum_)) lcd_drawLayerInst_StyleData(layerNum_);
 }
 
+RGB16Color Controller::layerColor(uint8_t layerNum_) const {
+    /// @brief A lane's colour: cyan when selected, dimmed when the layer does not sound (muted, or
+    /// another layer is soloed), else its own.
+    if (static_cast<int16_t>(layerNum_) == selectedLayerNum) return kLayerSelectedColor;
+    if (!layerAudible(layerNum_)) return GRAY_35;
+    return kLayerColorPalette[layerNum_];
+}
+
 bool Controller::layerAudible(uint8_t layerNum_) const {
     /// @brief A layer sounds unless muted, or another layer is soloed and this one isn't.
     return !layerLibrary[layerNum_].mute && ((soloMask == 0) || (soloMask & (1u << layerNum_)));
@@ -22342,16 +22367,19 @@ void Controller::layerInst_setSolo(uint8_t layerNum_, bool solo_) {
     /// @brief SOLO (left S + pad): while any layer is soloed only the soloed ones sound (and send
     /// MIDI). Not saved, and MUTE stays as it was.
     if (layerNum_ >= kLayerLibrarySize) return;
+    bool was[kLayerLibrarySize];
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) was[i] = layerAudible(i);
     soloMask = solo_ ? static_cast<uint16_t>(soloMask | (1u << layerNum_)) : static_cast<uint16_t>(soloMask & ~(1u << layerNum_));
-    lcd_drawLayerTab_Style(layerNum_);
+    // Redraw this lane and every lane that starts or stops sounding (they are dimmed).
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++)
+        if ((i == layerNum_) || (layerAudible(i) != was[i])) lcd_drawLayerTab(i);
 }
 
 void Controller::layerInst_clearSolo() {
     /// @brief SOLO + CLEAR: every layer sounds again.
-    const uint16_t was = soloMask;
+    if (soloMask == 0) return;
     soloMask = 0;
-    for (uint8_t i = 0; i < kLayerLibrarySize; i++)
-        if (was & (1u << i)) lcd_drawLayerTab_Style(i);
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) lcd_drawLayerTab(i);
 }
 
 void Controller::layerInst_copy() {

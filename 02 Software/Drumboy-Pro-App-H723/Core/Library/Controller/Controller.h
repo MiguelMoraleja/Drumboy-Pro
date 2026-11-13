@@ -313,6 +313,7 @@ class Controller {
     // SOLO (left S key + pads, V1.14): soloed layers, not saved.
     uint16_t soloMask = 0;
     bool layerAudible(uint8_t layerNum_) const;
+    RGB16Color layerColor(uint8_t layerNum_) const;
     void layerInst_setSolo(uint8_t layerNum_, bool solo_);
     void layerInst_clearSolo();
     void lcd_drawLayerInst_StyleData(uint8_t layerNum_);

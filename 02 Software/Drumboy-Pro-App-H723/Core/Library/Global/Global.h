@@ -12,6 +12,7 @@
 #include "Autosave.h"
 #include "BeatNote.h"
 #include "CrashRecord.h"
+#include "LaneView.h"
 #include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"

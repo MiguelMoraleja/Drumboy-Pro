@@ -78,7 +78,17 @@ int main() {
         CHECK(w.pc == ((4u << 8) | 0x16u) && w.lr == 123456u, "stage and page: %08X", w.pc);
         char text[32];
         crashAlertText(&w, text, sizeof text);
-        CHECK(std::string(text) == "CRASH 7 AT 00000416", "alert %s", text);
+        CHECK(std::string(text) == "CRASH 7 S04 P16 L00", "alert %s", text);
+        st.spare = 995;
+        crashFromWatchdog(&w, &st, (1u << 8) | 14u);
+        crashAlertText(&w, text, sizeof text);
+        CHECK(std::string(text) == "CRASH 7 S04 P16 LOV" && strlen(text) <= 19, "overload alert %s", text);
+        st.spare = 412;
+        crashFromWatchdog(&w, &st, (1u << 8) | 14u);
+        crashAlertText(&w, text, sizeof text);
+        CHECK(std::string(text) == "CRASH 7 S04 P16 L41", "load alert %s", text);
+        st.spare = 0;
+        crashFromWatchdog(&w, &st, (1u << 8) | 14u);
         st.spare = 987;
         crashFromWatchdog(&w, &st, (1u << 8) | 15u);
         CHECK(w.sp == 987 && crashValid(&w), "the audio load goes into the record");

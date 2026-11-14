@@ -20,6 +20,7 @@
 #include "DubMix.h"
 #include "DubView.h"
 #include "NoteView.h"
+#include "Pan.h"
 #include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"
@@ -1283,6 +1284,8 @@ typedef enum {
     ENC_DUB_ECHORTN                                 = 0x86,
     ENC_DUB_VERBRTN                                 = 0x87,
 
+    ENC_INST_2_PAN                                  = 0x88,  // layer PAN (page 3, Pan.h)
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1322,7 +1325,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // LAYER_INST_1_MENU = 0x10
     {ENC_INST_1_INST, ENC_INST_1_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_1_START, ENC_INST_1_END, ENC_INST_1_TIMING, ENC_INST_1_PROB},
     // LAYER_INST_2_MENU = 0x11
-    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_INST_2_STYLE, ENC_FNC_NONE, ENC_FNC_NONE},
+    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_INST_2_STYLE, ENC_INST_2_PAN, ENC_FNC_NONE},
     // LAYER_SONG_MENU = 0x12
     // Tabs 2-3 hold the fill graph.
     {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_SONG_MOVE, ENC_SONG_SHIFT},
@@ -1515,7 +1518,9 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_DUB_MODE,            ENC_RES_S, "MODE      ", "DUB   ", "   ", false},
     {ENC_DUB_FEEDBACK,        ENC_RES_M, "FEEDBACK  ", "DUB   ", "  %", false},
     {ENC_DUB_ECHORTN,         ENC_RES_M, "ECHO RTN  ", "DUB   ", "  %", false},
-    {ENC_DUB_VERBRTN,         ENC_RES_M, "VERB RTN  ", "DUB   ", "  %", false}
+    {ENC_DUB_VERBRTN,         ENC_RES_M, "VERB RTN  ", "DUB   ", "  %", false},
+
+    {ENC_INST_2_PAN,          ENC_RES_M, "PAN       ", "LAYER ", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");

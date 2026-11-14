@@ -782,5 +782,7 @@ Reported by the owner (2026-11-13) while testing V1.15: fills are not drawn on t
 
 **Headroom first.** Stereo EQ and filters, and then effects, add to a load that the owner's heavy dub test (several effects, 24 dB filters, reverb) already took to a watchdog restart (`CRASH 7`, [51](#51-watchdog-for-stalls)). So the order is: read the load figure of the next restart, [37](#37-measure-first-drawing-speed-loop-time-audio-load) measurements, then room: the data cache (off today; the audio, SD and MIDI DMA buffers need cache-safe placement), faster inner loops that sound the same, and a specialized build for heavy use if all that is not enough. No thinning of the sound.
 
+**Status: step 1 built in V1.15, waiting for the hardware test** (`Pan.h`, `test_pan`; the router's master pan in `Routing.h`). PAN on instrument page 3 (tab 6, next to STYLE; ADD + turn moves all layers), 0 to 40 with 20 the centre, constant power with 0 dB at the centre (the centre is exactly 1 on both sides, tested), gains ramped per block. Heard for a layer that goes straight to the master (OUT = MASTER in CHAIN; a DIR strip in DUB, shown as `DIR L5` on the desk); layers through the chain stay centred and their field is gray. Stored in the DUB block (version 2, 55 bytes; version 1 still reads, everything centred), in CHAIN and in DUB. Not built: stereo EQ and filters (step 2).
+
 **Done when (1).** A hat panned left and a shaker panned right, both on DIR, are heard on their sides; a centred layer and a song from V1.14 sound identical. **(2)** The same through the EQ and filters.
 

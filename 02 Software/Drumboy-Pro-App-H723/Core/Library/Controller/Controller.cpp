@@ -4132,6 +4132,22 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             }
         } break;
 
+        case ENC_INST_2_PAN: {
+            // ADD + turn: every layer moves by the same step.
+            const int8_t dir = 1;
+            const uint8_t cur = dubMix.pan[selectedLayerNum];
+            if (((dir > 0) && (cur < kPanMax)) || ((dir < 0) && (cur > 0))) {
+                if (keyboard.shiftKeyPress) {
+                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+                        const uint8_t v = dubMix.pan[i] + dir;
+                        if (v <= kPanMax) layerInst_setPan(i, v);
+                    }
+                } else {
+                    layerInst_setPan(selectedLayerNum, static_cast<uint8_t>(cur + dir));
+                }
+            }
+        } break;
+
         case ENC_ROUTE_EQ_OUT:
         case ENC_ROUTE_F1_OUT:
         case ENC_ROUTE_F2_OUT:
@@ -4744,6 +4760,22 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
                 for (uint8_t i = 0; i < kLayerLibrarySize; i++) layerInst_setStyle(i, style);
             } else {
                 layerInst_setStyle(selectedLayerNum, style);
+            }
+        } break;
+
+        case ENC_INST_2_PAN: {
+            // ADD + turn: every layer moves by the same step.
+            const int8_t dir = -1;
+            const uint8_t cur = dubMix.pan[selectedLayerNum];
+            if (((dir > 0) && (cur < kPanMax)) || ((dir < 0) && (cur > 0))) {
+                if (keyboard.shiftKeyPress) {
+                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+                        const uint8_t v = dubMix.pan[i] + dir;
+                        if (v <= kPanMax) layerInst_setPan(i, v);
+                    }
+                } else {
+                    layerInst_setPan(selectedLayerNum, static_cast<uint8_t>(cur + dir));
+                }
             }
         } break;
 
@@ -12291,6 +12323,13 @@ void Controller::lcd_drawLayerInst2Menu(uint8_t layerNum_) {
     lcd_setMenuSignState(GRAY_75);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
     lcd_drawLayerInst_StyleData(layerNum_);
+
+    // PAN (tab 6): left to right, heard for a layer that goes straight to the master.
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kHeaderPan, kMenuHeaderTextSize, kMenuHeaderX[6], kMenuHeaderY[6]);
+    lcd_setMenuSignState(GRAY_75);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[6], kMenuSignBoxY[6]);
+    lcd_drawLayerInst_PanData(layerNum_);
 }
 
 void Controller::lcd_drawLayerInst_StyleData(uint8_t layerNum_) {
@@ -22832,6 +22871,7 @@ uint32_t Controller::dubViewState() const {
         mix(st.bus);
         mix(st.echo);
         mix(st.verb);
+        mix(dubMix.pan[i]);
         mix(layerLibrary[i].level);
         mix(layerAudible(i) ? 1u : 0u);
         mix(layerLibrary[i].mute ? 1u : 0u);
@@ -22871,7 +22911,7 @@ void Controller::lcd_drawDubViewData() {
         const DubStrip& st = dubMix.strip[i];
         const bool audible = layerAudible(i), sel = (i == dubStripSel);
         uint32_t fp = 2166136261u;
-        const uint32_t parts[8] = {st.bus, st.echo, st.verb, layerLibrary[i].level, audible ? 1u : 0u, layerLibrary[i].mute ? 1u : 0u, sel ? 1u : 0u, 7u};
+        const uint32_t parts[8] = {st.bus, st.echo, st.verb, layerLibrary[i].level, audible ? 1u : 0u, layerLibrary[i].mute ? 1u : 0u, sel ? 1u : 0u, dubMix.pan[i]};
         for (uint8_t k = 0; k < 8; k++) fp = (fp ^ parts[k]) * 16777619u;
         for (const char* c = layerLibrary[i].instLoadedData.nameShortL; *c; c++) fp = (fp ^ static_cast<uint8_t>(*c)) * 16777619u;
         if (fp == 0) fp = 1;
@@ -22913,7 +22953,14 @@ void Controller::lcd_drawDubViewData() {
         lcd_drawDeskFader(x, layerLibrary[i].level, c);
         lcd.setFont(FONT_05x07);
         lcd.setForeColor(audible ? GRAY_75 : GRAY_35);
-        lcd.drawText((st.bus == DUB_BUS_DIR) ? "DIR" : "FILT", (st.bus == DUB_BUS_DIR) ? 3 : 4, x + 1, kDeskBusY);
+        if (st.bus == DUB_BUS_DIR) {
+            char pan[8], busText[16];
+            panLabel(pan, sizeof pan, dubMix.pan[i]);
+            snprintf(busText, sizeof busText, "DIR %s", pan);
+            lcd.drawText(busText, static_cast<uint16_t>(strlen(busText)), x + 1, kDeskBusY);
+        } else {
+            lcd.drawText("FILT", 4, x + 1, kDeskBusY);
+        }
     }
 
     // 2. THE RETURNS: ECHO (Effect 1) and VERB (the reverb)
@@ -23772,6 +23819,31 @@ void Controller::layerInst_setFill(uint8_t layerNum_, bool fill_) {
     // 2. UI REFRESH
     // Redraw fill icon on layer tab.
     lcd_drawLayerTab_Fill(layerNum_);
+}
+
+void Controller::layerInst_setPan(uint8_t layerNum_, uint8_t pan_) {
+    /// @brief Sets a layer's PAN (Pan.h, 0 to 40, 20 = centre); the audio follows with a ramp.
+    if (pan_ > kPanMax) return;
+    dubMix.pan[layerNum_] = pan_;
+    if ((menu == LAYER_INST_2_MENU) && (selectedLayerNum == layerNum_)) lcd_drawLayerInst_PanData(layerNum_);
+    if (menu == DUB_MENU) viewDirty = true;
+}
+
+bool Controller::layerPanActive(uint8_t layerNum_) const {
+    /// @brief True when the layer's PAN is heard: it goes straight to the master (its OUT in CHAIN, a
+    /// DIR strip in DUB). Layers through the chain stay centred until the buses are stereo.
+    if (dubMix.on) return dubMix.strip[layerNum_].bus == DUB_BUS_DIR;
+    return (routeMaskFromEntry(layerLibrary[layerNum_].mixerInMode) & routeBit(NODE_MASTER)) != 0;
+}
+
+void Controller::lcd_drawLayerInst_PanData(uint8_t layerNum_) {
+    /// @brief Draws the PAN field (tab 6 of instrument page 3): C, L12, R 3; gray while the layer
+    /// goes through the chain, where it is not heard yet.
+    char label[8], text[kMenuDataTextSize + 1];
+    panLabel(label, sizeof label, dubMix.pan[layerNum_]);
+    snprintf(text, sizeof text, "%10s", label);
+    lcd_setMenuDataState(layerPanActive(layerNum_) ? WHITE : GRAY_50);
+    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
 }
 
 void Controller::layerInst_setStyle(uint8_t layerNum_, bool style_) {
@@ -25882,13 +25954,17 @@ void Controller::processAudioRouting() {
     sources[1] = {audioMetronome, routeMaskFromEntry(metroOut), &metroFade};
     // DUB mode: a layer goes to every node with its own send gain (following its knob), not to the
     // one destination latched at the note.
+    // Pan (Pan.h): what a layer sends straight to the master is panned; what goes through the chain
+    // stays centred until the buses are stereo (backlog 53).
     float dubGains[kDubStrips][kRouteNodeCount];
+    float panGain[kDubStrips][2];
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        panGains(dubMix.pan[i], panGain[i][0], panGain[i][1]);
         if (dubMix.on) {
             dubNodeGains(dubMix.strip[i], 0, dubGains[i]);
-            sources[2 + i] = {audioLayer[i], 0, nullptr, dubGains[i], dubGainState[i]};
+            sources[2 + i] = {audioLayer[i], 0, nullptr, dubGains[i], dubGainState[i], panGain[i], nullptr};
         } else {
-            sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr};
+            sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr, nullptr, nullptr, panGain[i], layerPanState[i]};
         }
     }
 

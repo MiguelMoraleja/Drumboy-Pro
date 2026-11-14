@@ -10,18 +10,21 @@
 //
 // File: song files get a block after the "BTX" block. Older firmware stops reading at "EOF" and
 // never sees it.
-//   "DUB" | 1 (block version) | flags (bit 0: DUB mode) | 10 x (bus, echo, verb, fx)
+//   "DUB" | 2 (block version) | flags (bit 0: DUB mode) | 10 x (bus, echo, verb, fx) | 10 x pan
+// Version 1 (no pan) is still read: every layer is centred.
 #ifndef __DUBMIX_H
 #define __DUBMIX_H
 
 #include <stdint.h>
 #include <string.h>
 
+#include "Pan.h"
 #include "Routing.h"
 
 const uint8_t kDubStrips = 10;
 const uint8_t kDubMaxSend = 100;
-const uint16_t kDubFileSize = 3 + 1 + 1 + 4 * kDubStrips;  // 45
+const uint16_t kDubFileSizeV1 = 3 + 1 + 1 + 4 * kDubStrips;  // 45: version 1, no pan
+const uint16_t kDubFileSize = kDubFileSizeV1 + kDubStrips;    // 55: version 2, with the pan of each layer
 
 enum DubBus : uint8_t { DUB_BUS_FILT = 0, DUB_BUS_DIR = 1 };
 
@@ -35,6 +38,7 @@ struct DubStrip {
 struct DubMix {
     bool on = false;
     DubStrip strip[kDubStrips];
+    uint8_t pan[kDubStrips] = {kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre};  // Pan.h, in CHAIN and in DUB
 };
 
 // A throw (EFFECT 1 + pad, REVERB + pad) opens that send fully while the keys are held.
@@ -57,7 +61,7 @@ inline void dubClear(DubMix& d_) { d_ = DubMix(); }
 
 inline void dubWrite(const DubMix& d_, uint8_t* out_) {
     memcpy(out_, "DUB", 3);
-    out_[3] = 1;
+    out_[3] = 2;
     out_[4] = d_.on ? 1 : 0;
     for (uint8_t i = 0; i < kDubStrips; i++) {
         out_[5 + 4 * i] = d_.strip[i].bus;
@@ -65,12 +69,14 @@ inline void dubWrite(const DubMix& d_, uint8_t* out_) {
         out_[7 + 4 * i] = d_.strip[i].verb;
         out_[8 + 4 * i] = d_.strip[i].fx;
     }
+    for (uint8_t i = 0; i < kDubStrips; i++) out_[kDubFileSizeV1 + i] = d_.pan[i];
 }
 
 // Returns false (and leaves the default mix, CHAIN) when the block is missing or not valid.
 inline bool dubRead(DubMix& d_, const uint8_t* in_, uint16_t size_) {
     dubClear(d_);
-    if ((size_ < kDubFileSize) || (memcmp(in_, "DUB", 3) != 0) || (in_[3] != 1)) return false;
+    if ((size_ < kDubFileSizeV1) || (memcmp(in_, "DUB", 3) != 0) || ((in_[3] != 1) && (in_[3] != 2))) return false;
+    if ((in_[3] == 2) && (size_ < kDubFileSize)) return false;
     DubMix d;
     d.on = (in_[4] & 1) != 0;
     for (uint8_t i = 0; i < kDubStrips; i++) {
@@ -80,6 +86,12 @@ inline bool dubRead(DubMix& d_, const uint8_t* in_, uint16_t size_) {
         d.strip[i].echo = echo;
         d.strip[i].verb = verb;
         d.strip[i].fx = fx;
+    }
+    if (in_[3] == 2) {
+        for (uint8_t i = 0; i < kDubStrips; i++) {
+            if (in_[kDubFileSizeV1 + i] > kPanMax) return false;
+            d.pan[i] = in_[kDubFileSizeV1 + i];
+        }
     }
     d_ = d;
     return true;

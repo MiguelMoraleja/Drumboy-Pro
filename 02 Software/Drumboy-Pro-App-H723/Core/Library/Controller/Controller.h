@@ -500,6 +500,20 @@ class Controller {
     void midi_clockOnPlayStart();
     void syncOutClockTick();
 
+    // MIDI CC input (MidiCcMap.h, dub mixer phase D0): a controller laid out like a nanoKONTROL
+    // Studio drives layer levels, mutes, solos, the delay, the reverb and Filter 1.
+    uint8_t ccBank = 0;                     // 0 = A (layers 1-8), 1 = B (layers 9-10 and the desk)
+    bool ccCycleHeld = false;               // CYCLE held: the jog rides the delay FEEDBACK
+    CcPickup ccPickup[16];                  // faders 0-7, knobs 8-15, for the current bank
+    int16_t ccPendingRaw[16] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+    void midi_processCc();
+    void cc_applyButton(const CcInput& input_, uint8_t value_);
+    void cc_selectBank(uint8_t bank_);
+    void cc_resetPickup();
+    bool cc_targetRange(const CcAction& action_, uint8_t& min_, uint8_t& max_, uint8_t& value_) const;
+    void cc_targetSet(const CcAction& action_, uint8_t raw_);
+    bool cc_targetBusy(const CcAction& action_) const;
+
     /* Song Functions -------------------------------------------- */
 
     void calculateSongInterval();
@@ -513,6 +527,8 @@ class Controller {
     void keyboard_read();
     void keyboard_action();
     void keyboard_test();
+    void transport_playStopKey();
+    void transport_recordKey();
 
     void keyboard_enable();
     void keyboard_disable();

@@ -603,6 +603,9 @@ void Controller::update() {
             }
         }
 
+        // 13a. INBOUND MIDI CONTROLLERS (MidiCcMap.h)
+        if (io.midi.rxCc) midi_processCc();
+
         // 14. INBOUND MIDI TRANSPORT AND CLOCK
         // Handle transport commands and tempo updates signaled by the MIDI RX ISR.
         // Executed here in main context so that LCD, timers, and state can be safely updated.
@@ -1191,6 +1194,22 @@ void Controller::receiveMidiCommand() {
             }
             break;
 
+        // 2a. CONTROLLERS (MidiCcMap.h): faders and knobs keep their latest value, buttons and the
+        // jog are queued; the main loop applies them (midi_processCc).
+        case MIDI_EVENT_CC:
+            if (io.midi.rxCc && (event.channel == io.midi.rxChannel)) {
+                const CcInput input = ccLookup(event.data1);
+                if (input.control == CCC_NONE) break;
+                if (ccIsAbsolute(input.control)) {
+                    const uint8_t slot = ccAbsoluteIndex(input);
+                    io.midi.rxCcAbs[slot] = event.data2;
+                    io.midi.rxCcAbsDirty = static_cast<uint16_t>(io.midi.rxCcAbsDirty | (1u << slot));
+                } else if (!io.midi.rxCcQueue.push(event)) {
+                    io.midi.rxErrors = io.midi.rxErrors + 1;
+                }
+            }
+            break;
+
         // 3. DRUMBOY SYSEX TRANSPORT COMMANDS
         case MIDI_EVENT_SYSEX_CMD:
             if (io.midi.rxTransport) {
@@ -1734,60 +1753,13 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_PLAYSTOP:
-                                if (!alertFlag) {
-                                    if ((playActive) && (!stopFlag)) {
-                                        triggerStop();
-                                    } else if (io.sync.slaveMode && (io.syncIn == 2)) {
-                                        playArmed = !playArmed;
-                                        playIcon.flag = true;
-                                        playIcon.mode = playArmed;
-                                        (playArmed || recordArmed) ? textArmedFlag = true : textClearFlag = true;
-                                    } else if (io.sync.slaveMode && io.syncIn) {
-                                        playArmed = !playArmed;
-                                        playIcon.flag = true;
-                                        playIcon.mode = playArmed;
-                                        (playArmed || recordArmed) ? textArmedFlag = true : textClearFlag = true;
-                                    } else if (io.sync.slaveMode && io.midi.rxTransport) {
-                                        playArmed = !playArmed;
-                                        playIcon.flag = true;
-                                        playIcon.mode = playArmed;
-                                        (playArmed || recordArmed) ? textArmedFlag = true : textClearFlag = true;
-                                    } else if (io.sync.slaveMode && io.midi.rxClock) {
-                                        play();
-                                    } else {
-                                        play();
-                                    }
-                                }
+                                transport_playStopKey();
                                 break;
-
 
                             case KEY_REC:
-                                if (!alertFlag) {
-                                    if (io.sync.slaveMode && io.syncIn) {
-                                        if (playActive) {
-                                            record();
-                                        } else {
-                                            recordArmed = !recordArmed;
-                                            recordIcon.flag = true;
-                                            recordIcon.mode = recordArmed;
-                                            (playArmed || recordArmed) ? textArmedFlag = true : textClearFlag = true;
-                                        }
-                                    } else if (io.sync.slaveMode && io.midi.rxTransport) {
-                                        if (playActive) {
-                                            record();
-                                        } else {
-                                            recordArmed = !recordArmed;
-                                            recordIcon.flag = true;
-                                            recordIcon.mode = recordArmed;
-                                            (playArmed || recordArmed) ? textArmedFlag = true : textClearFlag = true;
-                                        }
-                                    } else if (io.sync.slaveMode && io.midi.rxClock) {
-                                        record();
-                                    } else {
-                                        record();
-                                    }
-                                }
+                                transport_recordKey();
                                 break;
+
                             case KEY_UP:
                                 if (!alertFlag) {
                                     if (upDownKeyLongActive) {
@@ -2823,6 +2795,290 @@ void Controller::keyboard_action() {
             }
             keyboard.keyRight.read = false;
         }
+    }
+}
+
+void Controller::transport_playStopKey() {
+    /// @brief The PLAY/STOP key (also the PLAY and STOP buttons of a MIDI controller, MidiCcMap.h):
+    /// stops when playing, otherwise plays or arms play when an external clock leads.
+
+    if (!alertFlag) {
+        if ((playActive) && (!stopFlag)) {
+            triggerStop();
+        } else if (io.sync.slaveMode && (io.syncIn == 2)) {
+            playArmed = !playArmed;
+            playIcon.flag = true;
+            playIcon.mode = playArmed;
+            (playArmed || recordArmed) ? textArmedFlag = true : textClearFlag = true;
+        } else if (io.sync.slaveMode && io.syncIn) {
+            playArmed = !playArmed;
+            playIcon.flag = true;
+            playIcon.mode = playArmed;
+            (playArmed || recordArmed) ? textArmedFlag = true : textClearFlag = true;
+        } else if (io.sync.slaveMode && io.midi.rxTransport) {
+            playArmed = !playArmed;
+            playIcon.flag = true;
+            playIcon.mode = playArmed;
+            (playArmed || recordArmed) ? textArmedFlag = true : textClearFlag = true;
+        } else if (io.sync.slaveMode && io.midi.rxClock) {
+            play();
+        } else {
+            play();
+        }
+    }
+}
+
+void Controller::transport_recordKey() {
+    /// @brief The REC key (also the REC button of a MIDI controller): records, or arms recording
+    /// when an external clock leads and the Drumboy is stopped.
+
+    if (!alertFlag) {
+        if (io.sync.slaveMode && io.syncIn) {
+            if (playActive) {
+                record();
+            } else {
+                recordArmed = !recordArmed;
+                recordIcon.flag = true;
+                recordIcon.mode = recordArmed;
+                (playArmed || recordArmed) ? textArmedFlag = true : textClearFlag = true;
+            }
+        } else if (io.sync.slaveMode && io.midi.rxTransport) {
+            if (playActive) {
+                record();
+            } else {
+                recordArmed = !recordArmed;
+                recordIcon.flag = true;
+                recordIcon.mode = recordArmed;
+                (playArmed || recordArmed) ? textArmedFlag = true : textClearFlag = true;
+            }
+        } else if (io.sync.slaveMode && io.midi.rxClock) {
+            record();
+        } else {
+            record();
+        }
+    }
+}
+
+/* MIDI CC Functions (MidiCcMap.h) ------------------------------------------*/
+
+void Controller::midi_processCc() {
+    /// @brief Applies received controllers (main loop): buttons and the jog in the order they came,
+    /// then the latest value of each fader and knob that moved, through pickup. A value a busy
+    /// target refused (an effect mid-transition) is retried on the next pass.
+
+    // 1. BUTTONS AND JOG, IN ORDER
+    MidiEvent event;
+    while (io.midi.rxCcQueue.pop(event)) cc_applyButton(ccLookup(event.data1), event.data2);
+
+    // 2. FADERS AND KNOBS: take the moved slots and their values in one go
+    uint8_t values[16];
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    const uint16_t dirty = io.midi.rxCcAbsDirty;
+    io.midi.rxCcAbsDirty = 0;
+    for (uint8_t i = 0; i < 16; i++) values[i] = io.midi.rxCcAbs[i];
+    __set_PRIMASK(primask);
+
+    for (uint8_t i = 0; i < 16; i++) {
+        if (!(dirty & (1u << i))) continue;
+        const CcInput input = ccAbsoluteInput(i);
+        const CcAction action = ccResolve(ccBank, input.control, input.strip);
+        uint8_t min, max, value;
+        if (!cc_targetRange(action, min, max, value)) continue;
+        if (ccPickupStep(ccPickup[i], values[i], rangeToCc(value, min, max))) ccPendingRaw[i] = ccToRange(values[i], min, max);
+    }
+
+    // 3. APPLY (and retry what a busy target refused)
+    for (uint8_t i = 0; i < 16; i++) {
+        if (ccPendingRaw[i] < 0) continue;
+        const CcInput input = ccAbsoluteInput(i);
+        const CcAction action = ccResolve(ccBank, input.control, input.strip);
+        uint8_t min, max, value;
+        if (!cc_targetRange(action, min, max, value)) {
+            ccPendingRaw[i] = -1;
+            continue;
+        }
+        const uint8_t raw = static_cast<uint8_t>(ccPendingRaw[i]);
+        if (value != raw) cc_targetSet(action, raw);
+        cc_targetRange(action, min, max, value);
+        ccPickupObserved(ccPickup[i], rangeToCc(value, min, max));
+        if ((value == raw) || !cc_targetBusy(action)) ccPendingRaw[i] = -1;
+    }
+}
+
+void Controller::cc_applyButton(const CcInput& input_, uint8_t value_) {
+    /// @brief One button or jog message. Mute and Solo follow the button (127 on, 0 off); the
+    /// transport and bank buttons act when pressed.
+
+    const bool on = ccButtonOn(value_);
+    switch (input_.control) {
+        case CCC_MUTE:
+        case CCC_SOLO: {
+            const CcAction action = ccResolve(ccBank, input_.control, input_.strip);
+            if (action.index >= kLayerLibrarySize) break;
+            if (action.target == CCT_LAYER_MUTE) {
+                if (layerLibrary[action.index].mute != on) layerInst_setMute(action.index, on);
+            } else if (action.target == CCT_LAYER_SOLO) {
+                if (((soloMask >> action.index) & 1u) != (on ? 1u : 0u)) layerInst_setSolo(action.index, on);
+            }
+        } break;
+
+        case CCC_PLAY:
+            // Starts (or arms) only; a second PLAY while playing does nothing.
+            if (on && !(playActive && !stopFlag) && !playArmed) transport_playStopKey();
+            break;
+
+        case CCC_STOP:
+            // Stops, or takes back an armed play.
+            if (on && ((playActive && !stopFlag) || playArmed)) transport_playStopKey();
+            break;
+
+        case CCC_RECORD:
+            if (on) transport_recordKey();
+            break;
+
+        case CCC_CYCLE:
+            ccCycleHeld = on;
+            break;
+
+        case CCC_TRACK_PREV:
+            if (on) cc_selectBank(0);
+            break;
+
+        case CCC_TRACK_NEXT:
+            if (on) cc_selectBank(1);
+            break;
+
+        case CCC_JOG: {
+            const int8_t delta = ccRelative(value_);
+            if (delta == 0) break;
+            const CcAction action = ccCycleHeld ? kCcCycleJogAction : kCcJogAction;
+            uint8_t min, max, value;
+            if (!cc_targetRange(action, min, max, value)) break;
+            // The filter has 200 steps: two per detent.
+            const int16_t step = (action.target == CCT_FILTER_FREQ) ? 2 : 1;
+            cc_targetSet(action, ccStepRange(value, static_cast<int16_t>(delta * step), min, max));
+        } break;
+
+        default:
+            break;
+    }
+}
+
+void Controller::cc_selectBank(uint8_t bank_) {
+    /// @brief TRACK< / TRACK>: bank A or B. The faders and knobs now point at other targets, so
+    /// each one picks up again.
+    if ((bank_ >= kCcBankCount) || (bank_ == ccBank)) return;
+    ccBank = bank_;
+    cc_resetPickup();
+}
+
+void Controller::cc_resetPickup() {
+    /// @brief Every fader and knob must catch its target again; nothing pending.
+    for (uint8_t i = 0; i < 16; i++) {
+        ccPickup[i].reset();
+        ccPendingRaw[i] = -1;
+    }
+}
+
+bool Controller::cc_targetRange(const CcAction& action_, uint8_t& min_, uint8_t& max_, uint8_t& value_) const {
+    /// @brief The target's range and current value; false when there is no such target.
+    switch (action_.target) {
+        case CCT_LAYER_LEVEL:
+            if (action_.index >= kLayerLibrarySize) return false;
+            min_ = kMinLayerLevel;
+            max_ = kMaxLayerLevel;
+            value_ = layerLibrary[action_.index].level;
+            return true;
+
+        case CCT_LAYER_END:
+            if (action_.index >= kLayerLibrarySize) return false;
+            min_ = kMinLayerPosition;
+            max_ = kMaxLayerPosition;
+            value_ = layerLibrary[action_.index].end;
+            return true;
+
+        case CCT_EFFECT_PARAM: {
+            if (action_.index >= kEffectLibrarySize) return false;
+            const Effect& fx = effect[action_.index];
+            if (fx.type >= kSubEffectLibrarySize) return false;
+            const SubEffect& sub = fx.subEffect[fx.type];
+            switch (action_.param) {
+                case CCP_A: if (!sub.activeA) return false; min_ = sub.kMinAData; max_ = sub.kMaxAData; value_ = sub.aData; return true;
+                case CCP_B: if (!sub.activeB) return false; min_ = sub.kMinBData; max_ = sub.kMaxBData; value_ = sub.bData; return true;
+                case CCP_C: if (!sub.activeC) return false; min_ = sub.kMinCData; max_ = sub.kMaxCData; value_ = sub.cData; return true;
+                case CCP_D: if (!sub.activeD) return false; min_ = sub.kMinDData; max_ = sub.kMaxDData; value_ = sub.dData; return true;
+                case CCP_E: if (!sub.activeE) return false; min_ = sub.kMinEData; max_ = sub.kMaxEData; value_ = sub.eData; return true;
+                case CCP_F: if (!sub.activeF) return false; min_ = sub.kMinFData; max_ = sub.kMaxFData; value_ = sub.fData; return true;
+                default: return false;
+            }
+        }
+
+        case CCT_REVERB_WET:
+            min_ = kMinReverbWet;
+            max_ = kMaxReverbWet;
+            value_ = reverb.wet;
+            return true;
+
+        case CCT_REVERB_DECAY:
+            min_ = kMinReverbDecay;
+            max_ = kMaxReverbDecay;
+            value_ = reverb.decay;
+            return true;
+
+        case CCT_FILTER_FREQ:
+            if (action_.index >= kFilterLibrarySize) return false;
+            min_ = kMinFilterFrequency;
+            max_ = kMaxFilterFrequency;
+            value_ = filter[action_.index].frequency;
+            return true;
+
+        case CCT_FILTER_RES:
+            if (action_.index >= kFilterLibrarySize) return false;
+            min_ = kMinFilterResonance;
+            max_ = kMaxFilterResonance;
+            value_ = filter[action_.index].resonance;
+            return true;
+
+        default:
+            return false;
+    }
+}
+
+void Controller::cc_targetSet(const CcAction& action_, uint8_t raw_) {
+    /// @brief Sets a target through the same function its encoder uses.
+    switch (action_.target) {
+        case CCT_LAYER_LEVEL: layerInst_setLevel(action_.index, raw_); break;
+        case CCT_LAYER_END: layerInst_setEnd(action_.index, raw_); break;
+        case CCT_EFFECT_PARAM: {
+            const uint8_t type = effect[action_.index].type;
+            switch (action_.param) {
+                case CCP_A: effect_setAData(action_.index, type, raw_); break;
+                case CCP_B: effect_setBData(action_.index, type, raw_); break;
+                case CCP_C: effect_setCData(action_.index, type, raw_); break;
+                case CCP_D: effect_setDData(action_.index, type, raw_); break;
+                case CCP_E: effect_setEData(action_.index, type, raw_); break;
+                case CCP_F: effect_setFData(action_.index, type, raw_); break;
+                default: break;
+            }
+        } break;
+        case CCT_REVERB_WET: reverb_setWet(raw_); break;
+        case CCT_REVERB_DECAY: reverb_setDecay(raw_); break;
+        case CCT_FILTER_FREQ: filter_setFrequency(action_.index, raw_); break;
+        case CCT_FILTER_RES: filter_setResonance(action_.index, raw_); break;
+        default: break;
+    }
+}
+
+bool Controller::cc_targetBusy(const CcAction& action_) const {
+    /// @brief True while the target refuses changes for a moment (an effect or reverb crossfade).
+    switch (action_.target) {
+        case CCT_EFFECT_PARAM:
+            return (action_.index < kEffectLibrarySize) && (effect[action_.index].genTransition.active || effect[action_.index].mixTransition.active);
+        case CCT_REVERB_WET:
+            return reverb.mixTransition.active;
+        default:
+            return false;
     }
 }
 
@@ -10752,10 +11008,10 @@ void Controller::lcd_drawRhythm_TempoData() {
 
     // 3. SYNC INDICATOR DRAW
     // Priority: any input clock source -> SLAVE, otherwise any output clock source -> MASTER.
-    bool slaveModeActive = (io.syncIn != 0) || (io.midiIn != 0);
+    bool slaveModeActive = (io.syncIn != 0) || io.midi.rxClock || io.midi.rxTransport || io.midi.rxNotes;
     bool masterModeActive = !slaveModeActive && ((io.syncOut != 0) || (io.midiOut != 0));
 
-    if (slaveModeActive && (io.midi.rxErrors > 0)) {
+    if ((slaveModeActive || io.midi.rxCc) && (io.midi.rxErrors > 0)) {
         // MIDI IN diagnostics: bytes lost (UART overrun/framing) or notes dropped from a full queue.
         char errText[16];
         const uint32_t errors = (io.midi.rxErrors > 9999) ? 9999 : io.midi.rxErrors;
@@ -16301,13 +16557,17 @@ void Controller::io_setMidiIn(uint8_t mode_) {
         io.midi.rxClock = modeData.clockEnabled;
         io.midi.rxTransport = modeData.transportEnabled;
         io.midi.rxNotes = modeData.notesEnabled;
-        io.midi.rxActive = modeData.clockEnabled || modeData.transportEnabled || modeData.notesEnabled;
+        io.midi.rxCc = modeData.ccEnabled;
+        io.midi.rxActive = modeData.clockEnabled || modeData.transportEnabled || modeData.notesEnabled || modeData.ccEnabled;
 
         io.midi.rxClockTickPhase = 0;
         io.midi.rxClockBpm = 0;
         io.midi.rxClockBpmCount = 0;
         io.midi.rxParser = MidiParser();
         io.midi.rxNoteQueue.clear();
+        io.midi.rxCcQueue.clear();
+        io.midi.rxCcAbsDirty = 0;
+        cc_resetPickup();
         midi_clockRelease();
         clockLockForgetTiming(io.midi.clockLock);
         io.midi.rxClockFlag = false;

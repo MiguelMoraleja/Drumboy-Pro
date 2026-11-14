@@ -18,6 +18,7 @@
 #include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"
+#include "MidiCcMap.h"
 #include "MidiParser.h"
 #include "Pitch.h"
 #include "Preview.h"
@@ -2307,7 +2308,7 @@ struct Metronome {
 ////////////////////////////////////////////////////////////////////////////////
 
 const uint8_t kMinIoMidiIn                          = 0;
-const uint8_t kMaxIoMidiIn                          = 3;
+const uint8_t kMaxIoMidiIn                          = 7;   // 4-7: the same with CC input (MidiCcMap.h)
 
 const uint8_t kMinIoMidiOut                         = 0;
 const uint8_t kMaxIoMidiOut                         = 3;
@@ -2352,13 +2353,20 @@ struct IoMidiModeData {
     bool clockEnabled;
     bool transportEnabled;
     bool notesEnabled;
+    bool ccEnabled;  // MIDI IN only: controllers on the MIDI IN channel (MidiCcMap.h)
 };
 
+// MIDI OUT uses entries 0-3. MIDI IN also 4-7 (stored in the same 3 bits; older firmware refuses
+// 4-7 and keeps its default).
 const struct IoMidiModeData kIoMidiModeDataLibrary[] = {
-    {"       OFF", false, false, false},
-    {"      NOTE", false, false, true },
-    {"      SYNC", true,  true,  false},
-    {" NOTE+SYNC", true,  true,  true }};
+    {"       OFF", false, false, false, false},
+    {"      NOTE", false, false, true,  false},
+    {"      SYNC", true,  true,  false, false},
+    {" NOTE+SYNC", true,  true,  true,  false},
+    {"        CC", false, false, false, true },
+    {"   NOTE+CC", false, false, true,  true },
+    {"   SYNC+CC", true,  true,  false, true },
+    {" N+SYNC+CC", true,  true,  true,  true }};
 
 struct IoSyncInData {
     char nameLongR[11];
@@ -2427,6 +2435,13 @@ struct Midi {
     // main loop, receive errors (UART overrun/framing, full queue) for the diagnostics display.
     MidiParser rxParser;
     MidiQueue<16> rxNoteQueue;
+
+    // CC input (MidiCcMap.h): faders and knobs keep only their latest value (one slot each, a
+    // bit per slot in rxCcAbsDirty); buttons and the jog are queued in order.
+    bool rxCc                                       = false;
+    volatile uint8_t rxCcAbs[16]                    = {0};
+    volatile uint16_t rxCcAbsDirty                  = 0;
+    MidiQueue<32> rxCcQueue;
     volatile uint32_t rxErrors                      = 0;
 
     bool txTriggerNoteOn[10]                        = {false};

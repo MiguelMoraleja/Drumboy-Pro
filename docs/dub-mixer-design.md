@@ -1,6 +1,6 @@
 # Dub mixer: design
 
-Design for a mixer page in the fashion of a dub desk: a strip per layer with sends to the echo and the reverb, a filter per channel, and the big filter knob. Asked by the owner on 2026-11-13. Nothing here is built. A mockup at the device's real size is in the app's Screen ideas tab ("Dub mixer"). The cost and memory figures come from [`ux-and-signal-path-analysis.md`](ux-and-signal-path-analysis.md), section 3, and are estimates until measured (backlog 37).
+Design for a mixer page in the fashion of a dub desk: a strip per layer with sends to the echo and the reverb, a filter per channel, and the big filter knob. Asked by the owner on 2026-11-13. Phase D0 (controller input) is built in V1.15; the rest is not built yet. A mockup at the device's real size is in the app's Screen ideas tab ("Dub mixer"). The cost and memory figures come from [`ux-and-signal-path-analysis.md`](ux-and-signal-path-analysis.md), section 3, and are estimates until measured (backlog 37).
 
 ## 1. What makes a mixer a dub mixer
 
@@ -128,6 +128,7 @@ Second page (the next step in the MIXER cycle):
 
 | Phase | Content | You can then |
 |---|---|---|
+| D0 | MIDI CC input from a controller (nanoKONTROL Studio layout, `MidiCcMap.h`) on today's modules: levels, mutes, solos, delay, reverb, Filter 1. Built in V1.15; setup in [`nanokontrol-studio-setup.md`](nanokontrol-studio-setup.md) | Play the desk gestures that exist today from faders: drops, riding feedback and the dub filter |
 | D1 | DUB mode, send levels, returns, the page with strips and faders (no meters), file block | Give each layer its own amount of echo and reverb, and ride FEEDBACK and the dub filter |
 | D2 | Throws, feedback past 100 %, dotted echo times, ECHO > VERB, ping-pong echo (ECHO WIDTH) | Play the desk: drops, throws, runaway echo bouncing left and right |
 | D3 | Channel filter and drive per strip, pan on DIR strips, page 2 | Filter one layer without touching the others; place DIR strips left and right |

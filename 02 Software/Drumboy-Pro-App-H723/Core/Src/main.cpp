@@ -69,6 +69,12 @@ int main() {
 #endif
     HAL_Init();
 
+    // The stereo work memory in the DTCM RAM is not initialised by the start-up code.
+    {
+        extern uint32_t __dtcm_start, __dtcm_end;
+        for (uint32_t* w = &__dtcm_start; w < &__dtcm_end; w++) *w = 0;
+    }
+
     // Enable FPU (Floating Point Unit)
     SCB->CPACR |= ((3UL << 10 * 2) | (3UL << 11 * 2));
 

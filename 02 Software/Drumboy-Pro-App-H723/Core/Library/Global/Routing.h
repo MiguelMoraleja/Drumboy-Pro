@@ -242,41 +242,61 @@ inline uint8_t routeOverviewLine(char* out_, uint8_t size_, uint16_t sources_, u
     return routeOverviewLineSep(out_, size_, sources_, entry_, patch_, ">");
 }
 
-// Buffers for one block. node[m] is module m's input, processed in place to become its output.
-// The Reverb writes its left output in place and its right output to reverbRight.
+// Buffers for one block. Every module node is a stereo pair: nodeL[m] and nodeR[m] are module m's
+// input, processed in place to become its output (the Reverb makes its stereo field from them).
+// A source that is not panned goes into both channels equally, so a signal that is never panned
+// sounds exactly as it did when the nodes were mono.
 struct RouteBuffers {
-    float* node[kRouteModuleCount];
-    float* reverbRight;
+    float* nodeL[kRouteModuleCount];
+    float* nodeR[kRouteModuleCount];
     float* masterLeft;
     float* masterRight;
 };
 
-// Adds a mono buffer into every node in mask_ (the master gets it in both channels).
-// gain_ (optional) scales each sample, for crossfades.
+inline float* routeLeft(const RouteBuffers& buf_, uint8_t node_) { return (node_ == NODE_MASTER) ? buf_.masterLeft : buf_.nodeL[node_]; }
+inline float* routeRight(const RouteBuffers& buf_, uint8_t node_) { return (node_ == NODE_MASTER) ? buf_.masterRight : buf_.nodeR[node_]; }
+
+// Adds a mono buffer into both channels of every node in mask_. gain_ (optional) scales each
+// sample, for crossfades.
 template <uint16_t kBlock>
 inline void routeScatter(const RouteBuffers& buf_, const float* src_, uint8_t mask_, const float* gain_ = nullptr) {
     if (mask_ == 0) return;
     for (uint8_t n = 0; n < kRouteNodeCount; n++) {
         if (!(mask_ & routeBit(n))) continue;
-        if (n == NODE_MASTER) {
-            if (gain_) {
-                for (uint16_t i = 0; i < kBlock; i++) {
-                    const float v = src_[i] * gain_[i];
-                    buf_.masterLeft[i] += v;
-                    buf_.masterRight[i] += v;
-                }
-            } else {
-                for (uint16_t i = 0; i < kBlock; i++) {
-                    buf_.masterLeft[i] += src_[i];
-                    buf_.masterRight[i] += src_[i];
-                }
+        float* left = routeLeft(buf_, n);
+        float* right = routeRight(buf_, n);
+        if (gain_) {
+            for (uint16_t i = 0; i < kBlock; i++) {
+                const float v = src_[i] * gain_[i];
+                left[i] += v;
+                right[i] += v;
             }
         } else {
-            float* dst = buf_.node[n];
-            if (gain_) {
-                for (uint16_t i = 0; i < kBlock; i++) dst[i] += src_[i] * gain_[i];
-            } else {
-                for (uint16_t i = 0; i < kBlock; i++) dst[i] += src_[i];
+            for (uint16_t i = 0; i < kBlock; i++) {
+                left[i] += src_[i];
+                right[i] += src_[i];
+            }
+        }
+    }
+}
+
+// Adds a stereo pair into the same channels of every node in mask_ (a module's output).
+template <uint16_t kBlock>
+inline void routeScatterPair(const RouteBuffers& buf_, const float* srcL_, const float* srcR_, uint8_t mask_, const float* gain_ = nullptr) {
+    if (mask_ == 0) return;
+    for (uint8_t n = 0; n < kRouteNodeCount; n++) {
+        if (!(mask_ & routeBit(n))) continue;
+        float* left = routeLeft(buf_, n);
+        float* right = routeRight(buf_, n);
+        if (gain_) {
+            for (uint16_t i = 0; i < kBlock; i++) {
+                left[i] += srcL_[i] * gain_[i];
+                right[i] += srcR_[i] * gain_[i];
+            }
+        } else {
+            for (uint16_t i = 0; i < kBlock; i++) {
+                left[i] += srcL_[i];
+                right[i] += srcR_[i];
             }
         }
     }
@@ -310,7 +330,24 @@ inline void routeFadeTarget(RouteFade& fade_, uint8_t mask_) {
     }
 }
 
-// Adds src_ to its destination, crossfading if a fade is running, and advances the fade.
+// The gains of a running fade over one block.
+template <uint16_t kBlock>
+inline void routeFadeGains(const RouteFade& fade_, float* up_, float* down_) {
+    for (uint16_t i = 0; i < kBlock; i++) {
+        float t = (float)(fade_.position + i + 1) / (float)kRouteFadeLength;
+        if (t > 1.0f) t = 1.0f;
+        up_[i] = t;
+        down_[i] = 1.0f - t;
+    }
+}
+
+template <uint16_t kBlock>
+inline void routeAdvanceFade(RouteFade& fade_) {
+    const uint16_t next = fade_.position + kBlock;
+    fade_.position = (next < kRouteFadeLength) ? static_cast<uint8_t>(next) : kRouteFadeLength;
+}
+
+// Adds a mono src_ to its destination, crossfading if a fade is running, and advances the fade.
 template <uint16_t kBlock>
 inline void routeScatterFaded(const RouteBuffers& buf_, const float* src_, RouteFade& fade_) {
     if (!routeFading(fade_)) {
@@ -318,77 +355,68 @@ inline void routeScatterFaded(const RouteBuffers& buf_, const float* src_, Route
         return;
     }
     float up[kBlock], down[kBlock];
-    for (uint16_t i = 0; i < kBlock; i++) {
-        float t = (float)(fade_.position + i + 1) / (float)kRouteFadeLength;
-        if (t > 1.0f) t = 1.0f;
-        up[i] = t;
-        down[i] = 1.0f - t;
-    }
+    routeFadeGains<kBlock>(fade_, up, down);
     routeScatter<kBlock>(buf_, src_, fade_.mask & fade_.previous);                                      // unchanged nodes
     routeScatter<kBlock>(buf_, src_, static_cast<uint8_t>(fade_.mask & ~fade_.previous), up);          // new nodes
     routeScatter<kBlock>(buf_, src_, static_cast<uint8_t>(fade_.previous & ~fade_.mask), down);        // old nodes
-    const uint16_t next = fade_.position + kBlock;
-    fade_.position = (next < kRouteFadeLength) ? static_cast<uint8_t>(next) : kRouteFadeLength;
+    routeAdvanceFade<kBlock>(fade_);
 }
 
-// Send levels (DUB mode): a source goes to each node with its own gain. The gain moves linearly
-// from its value at the end of the last block to the target over the block, so a knob turned
-// while the signal plays makes no zipper noise. state_ keeps the gains between blocks.
-// pan_ (optional, left and right gain of Pan.h) splits the master gain: the master gets the
-// source panned, every other node gets it as it is. state_ has kRouteNodeCount + 1 entries: one
-// per node, the last one the master's right gain.
+// The same for a stereo pair (a module's output).
 template <uint16_t kBlock>
-inline void routeScatterGains(const RouteBuffers& buf_, const float* src_, const float* target_, float* state_, const float* pan_ = nullptr) {
+inline void routeScatterPairFaded(const RouteBuffers& buf_, const float* srcL_, const float* srcR_, RouteFade& fade_) {
+    if (!routeFading(fade_)) {
+        routeScatterPair<kBlock>(buf_, srcL_, srcR_, fade_.mask);
+        return;
+    }
+    float up[kBlock], down[kBlock];
+    routeFadeGains<kBlock>(fade_, up, down);
+    routeScatterPair<kBlock>(buf_, srcL_, srcR_, fade_.mask & fade_.previous);
+    routeScatterPair<kBlock>(buf_, srcL_, srcR_, static_cast<uint8_t>(fade_.mask & ~fade_.previous), up);
+    routeScatterPair<kBlock>(buf_, srcL_, srcR_, static_cast<uint8_t>(fade_.previous & ~fade_.mask), down);
+    routeAdvanceFade<kBlock>(fade_);
+}
+
+// A panned source (an instrument layer): it goes to every node with a left and a right gain, each
+// moving linearly from its value at the end of the last block to the target over the block, so a
+// knob turned while the signal plays makes no zipper noise. state_ keeps the gains between blocks:
+// kRouteNodeCount for the left, then kRouteNodeCount for the right. A gain that is 1.0 before and
+// after leaves the signal exactly as it is.
+const uint8_t kRouteGainStateSize = 2 * kRouteNodeCount;
+
+template <uint16_t kBlock>
+inline void routeScatterLR(const RouteBuffers& buf_, const float* src_, const float* targetL_, const float* targetR_, float* state_) {
     for (uint8_t n = 0; n < kRouteNodeCount; n++) {
-        const bool master = (n == NODE_MASTER);
-        const float toL = master && pan_ ? target_[n] * pan_[0] : target_[n];
-        const float toR = master && pan_ ? target_[n] * pan_[1] : target_[n];
-        const float fromL = state_[n], fromR = master ? state_[kRouteNodeCount] : state_[n];
+        const float fromL = state_[n], fromR = state_[kRouteNodeCount + n];
+        const float toL = targetL_[n], toR = targetR_[n];
         state_[n] = toL;
-        if (master) state_[kRouteNodeCount] = toR;
+        state_[kRouteNodeCount + n] = toR;
         if ((fromL == 0.0f) && (toL == 0.0f) && (fromR == 0.0f) && (toR == 0.0f)) continue;
-        float* left = master ? buf_.masterLeft : buf_.node[n];
-        float* right = master ? buf_.masterRight : nullptr;  // the master gets both channels
+        float* left = routeLeft(buf_, n);
+        float* right = routeRight(buf_, n);
         const float stepL = (toL - fromL) / static_cast<float>(kBlock), stepR = (toR - fromR) / static_cast<float>(kBlock);
         float gL = fromL, gR = fromR;
         for (uint16_t i = 0; i < kBlock; i++) {
             gL += stepL;
             gR += stepR;
             left[i] += src_[i] * gL;
-            if (right) right[i] += src_[i] * gR;
+            right[i] += src_[i] * gR;
         }
     }
 }
 
-// Adds a source to the master panned: left and right gain, each moving linearly from its value
-// at the end of the last block (state_[0], state_[1]) to the target over the block.
-template <uint16_t kBlock>
-inline void routeScatterMasterPan(const RouteBuffers& buf_, const float* src_, float gainLeft_, float gainRight_, float* state_) {
-    const float fromL = state_[0], fromR = state_[1];
-    state_[0] = gainLeft_;
-    state_[1] = gainRight_;
-    if ((fromL == 0.0f) && (fromR == 0.0f) && (gainLeft_ == 0.0f) && (gainRight_ == 0.0f)) return;
-    const float stepL = (gainLeft_ - fromL) / static_cast<float>(kBlock), stepR = (gainRight_ - fromR) / static_cast<float>(kBlock);
-    float gL = fromL, gR = fromR;
-    for (uint16_t i = 0; i < kBlock; i++) {
-        gL += stepL;
-        gR += stepR;
-        buf_.masterLeft[i] += src_[i] * gL;
-        buf_.masterRight[i] += src_[i] * gR;
-    }
-}
-
-// A source for one block: its buffer, where it goes, and its fade state. Sources that latch
-// their route per note (instrument layers) pass fade = nullptr and switch at the next hit.
-// A source with gains (DUB mode) goes to every node with its own level instead (routeScatterGains).
+// A source for one block: its buffer, where it goes, and how.
+//   Line-in and the metronome run continuously: a mask and a fade state (routeScatterFaded).
+//   An instrument layer (gainState set): its mask (CHAIN, latched at the note) or its per-node
+//   gains (DUB), times its pan, ramped (routeScatterLR).
 struct RouteSource {
     const float* buffer;
     uint8_t mask;
     RouteFade* fade;
-    const float* gains = nullptr;  // per node, kRouteNodeCount of them
-    float* gainState = nullptr;    // the gains reached in the last block (kRouteNodeCount + 1)
-    const float* pan = nullptr;    // left and right gain for what goes to the master (Pan.h)
-    float* panState = nullptr;     // the master gains reached in the last block (2), for a source with a mask
+    const float* gains = nullptr;  // per node, kRouteNodeCount of them (DUB); null = the mask, every node 1
+    float* gainState = nullptr;    // kRouteGainStateSize floats kept between blocks; null = not panned
+    float panLeft = 1.0f;          // Pan.h gains
+    float panRight = 1.0f;
 };
 
 // Fade state of the module outputs, kept between blocks.
@@ -398,26 +426,30 @@ struct RouteState {
 
 // Runs one block: clears the node inputs and the master, adds every source into its
 // destinations, then processes the modules in order, each one passing its output on.
-//   process_(m): processes node m in place; a module that is switched off must leave its buffer
-//                unchanged (pass-through). The Reverb also writes reverbRight (zeroed beforehand),
-//                which it sets equal to its input when switched off.
+//   process_(m): processes node m (both channels) in place; a module that is switched off must
+//                leave its buffers unchanged (pass-through). The Reverb makes its stereo field
+//                from the pair it gets and writes it back into the same pair.
 template <uint16_t kBlock, typename Process>
 inline void routeBlock(const RoutePatch& patch_, RouteState& state_, const RouteBuffers& buf_, RouteSource* sources_, uint8_t sourceCount_, Process process_) {
     // 1. CLEAR
-    for (uint8_t n = 0; n < kRouteModuleCount; n++) memset(buf_.node[n], 0, kBlock * sizeof(float));
-    memset(buf_.reverbRight, 0, kBlock * sizeof(float));
+    for (uint8_t n = 0; n < kRouteModuleCount; n++) {
+        memset(buf_.nodeL[n], 0, kBlock * sizeof(float));
+        memset(buf_.nodeR[n], 0, kBlock * sizeof(float));
+    }
     memset(buf_.masterLeft, 0, kBlock * sizeof(float));
     memset(buf_.masterRight, 0, kBlock * sizeof(float));
 
     // 2. SCATTER SOURCES
     for (uint8_t s = 0; s < sourceCount_; s++) {
         RouteSource& src = sources_[s];
-        if (src.gains && src.gainState) {
-            routeScatterGains<kBlock>(buf_, src.buffer, src.gains, src.gainState, src.pan);
-        } else if (src.pan && src.panState && !src.fade) {
-            // A mask: every node as it is, the master panned.
-            routeScatter<kBlock>(buf_, src.buffer, static_cast<uint8_t>(src.mask & ~routeBit(NODE_MASTER)));
-            routeScatterMasterPan<kBlock>(buf_, src.buffer, (src.mask & routeBit(NODE_MASTER)) ? src.pan[0] : 0.0f, (src.mask & routeBit(NODE_MASTER)) ? src.pan[1] : 0.0f, src.panState);
+        if (src.gainState) {
+            float gl[kRouteNodeCount], gr[kRouteNodeCount];
+            for (uint8_t n = 0; n < kRouteNodeCount; n++) {
+                const float base = src.gains ? src.gains[n] : (((src.mask >> n) & 1u) ? 1.0f : 0.0f);
+                gl[n] = base * src.panLeft;
+                gr[n] = base * src.panRight;
+            }
+            routeScatterLR<kBlock>(buf_, src.buffer, gl, gr, src.gainState);
         } else if (src.fade) {
             routeFadeTarget(*src.fade, src.mask);
             routeScatterFaded<kBlock>(buf_, src.buffer, *src.fade);
@@ -432,15 +464,15 @@ inline void routeBlock(const RoutePatch& patch_, RouteState& state_, const Route
         if (m == NODE_REV) {
             if (patch_.moduleDest[m] & routeBit(NODE_MASTER)) {
                 for (uint16_t i = 0; i < kBlock; i++) {
-                    buf_.masterLeft[i] += buf_.node[NODE_REV][i];
-                    buf_.masterRight[i] += buf_.reverbRight[i];
+                    buf_.masterLeft[i] += buf_.nodeL[NODE_REV][i];
+                    buf_.masterRight[i] += buf_.nodeR[NODE_REV][i];
                 }
             }
         } else {
             // Only later nodes are allowed, so an output never lands in an already processed node.
             const uint8_t dest = patch_.moduleDest[m] & static_cast<uint8_t>(~((routeBit(m) << 1) - 1));
             routeFadeTarget(state_.module[m], dest);
-            routeScatterFaded<kBlock>(buf_, buf_.node[m], state_.module[m]);
+            routeScatterPairFaded<kBlock>(buf_, buf_.nodeL[m], buf_.nodeR[m], state_.module[m]);
         }
     }
 }

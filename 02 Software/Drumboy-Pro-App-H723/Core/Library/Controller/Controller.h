@@ -381,7 +381,6 @@ class Controller {
 
     // DUB mode (DubMix.h)
     DubMix dubMix;                                          // the strips; on = DUB mode (a song setting)
-    float dubGainState[kDubStrips][kRouteNodeCount + 1] = {{0}};  // the gains each strip reached in the last block (audio interrupt)
     float fxDryScale = 1.0f;                                // 0 in DUB mode: effects and reverb run without their DRY
     uint8_t dubStripSel = 0;                                // the strip the DUB page edits (a pad press selects it)
     uint32_t dubStripDrawn[kDubStrips] = {0};               // the desk: what each strip shows (a fingerprint), 0 = nothing
@@ -400,7 +399,6 @@ class Controller {
     uint32_t noteViewState() const;
     void lcd_drawNoteViewData();
     void lcd_drawNoteViewBeat(uint8_t beatNum_, bool selected_);
-    float layerPanState[kDubStrips][2] = {{1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}};  // each layer's master gains in the last block (audio interrupt)
     void layerInst_setPan(uint8_t layerNum_, uint8_t pan_);
     bool layerPanActive(uint8_t layerNum_) const;
     void lcd_drawLayerInst_PanData(uint8_t layerNum_);
@@ -1311,7 +1309,8 @@ class Controller {
     void processAudioReverb();
     void processAudioSend(uint32_t* outputBuffer);
 
-    float processAudioFilterHelper(uint8_t filterNum_, float audio_);
+    float processAudioFilterHelper(uint8_t filterNum_, uint8_t channel_, float audio_);
+    float effectDryGain(uint8_t effectNum_) const;
     float processAudioEffectHelper(uint8_t effectNum_, float audio_);
     float processAudioLpfHelper(uint8_t lpfNum_, float audio_);
 

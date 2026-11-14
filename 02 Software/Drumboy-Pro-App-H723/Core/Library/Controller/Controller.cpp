@@ -23953,10 +23953,10 @@ void Controller::layerInst_setPan(uint8_t layerNum_, uint8_t pan_) {
 }
 
 bool Controller::layerPanActive(uint8_t layerNum_) const {
-    /// @brief True when the layer's PAN is heard: it goes straight to the master (its OUT in CHAIN, a
-    /// DIR strip in DUB). Layers through the chain stay centred until the buses are stereo.
-    if (dubMix.on) return dubMix.strip[layerNum_].bus == DUB_BUS_DIR;
-    return (routeMaskFromEntry(layerLibrary[layerNum_].mixerInMode) & routeBit(NODE_MASTER)) != 0;
+    /// @brief True when the layer's PAN is heard: since the stereo engine every layer is panned (the
+    /// effects and the reverb carry the pan of the dry signal; their own sound stays in the middle).
+    (void)layerNum_;
+    return true;
 }
 
 void Controller::lcd_drawLayerInst_PanData(uint8_t layerNum_) {
@@ -26105,6 +26105,9 @@ void Controller::processAudioLayer() {
     }
 }
 
+// Stereo work memory (right channels, route gains): DTCM RAM, zeroed in main().
+StereoDsp stereoDsp __attribute__((section(".dtcm")));
+
 void Controller::processAudioRouting() {
     /// @brief Routes every source to its destination node and runs the modules in order,
     ///        each passing its output to the nodes set in routePatch (see Routing.h).
@@ -26117,28 +26120,29 @@ void Controller::processAudioRouting() {
     // 2. SOURCES AND THEIR DESTINATIONS
     // Line-in and metronome run continuously and crossfade when re-routed. Layers use the
     // destination latched when their current note was triggered, so they switch at the next hit.
+    // Every layer is panned (Pan.h) and reaches every node as a left and a right signal.
     RouteSource sources[2 + kLayerLibrarySize];
     sources[0] = {audioReceive, routeMaskFromEntry(mixer.liMixerInMode), &lineInFade};
     sources[1] = {audioMetronome, routeMaskFromEntry(metroOut), &metroFade};
     // DUB mode: a layer goes to every node with its own send gain (following its knob), not to the
     // one destination latched at the note.
-    // Pan (Pan.h): what a layer sends straight to the master is panned; what goes through the chain
-    // stays centred until the buses are stereo (backlog 53).
     float dubGains[kDubStrips][kRouteNodeCount];
     float panGain[kDubStrips][2];
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
         panGains(dubMix.pan[i], panGain[i][0], panGain[i][1]);
         if (dubMix.on) {
             dubNodeGains(dubMix.strip[i], 0, dubGains[i]);
-            sources[2 + i] = {audioLayer[i], 0, nullptr, dubGains[i], dubGainState[i], panGain[i], nullptr};
+            sources[2 + i] = {audioLayer[i], 0, nullptr, dubGains[i], stereoDsp.srcGain[i], panGain[i][0], panGain[i][1]};
         } else {
-            sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr, nullptr, nullptr, panGain[i], layerPanState[i]};
+            sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr, nullptr, stereoDsp.srcGain[i], panGain[i][0], panGain[i][1]};
         }
     }
 
     // 3. NODE BUFFERS
-    // Each module processes its own input buffer in place; the reverb also fills the right channel.
-    const RouteBuffers buffers = {{audioEq, audioFilter[0], audioFilter[1], audioEffect[0], audioEffect[1], audioReverb_L}, audioReverb_R, audioSend_L, audioSend_R};
+    // Each module processes its own input buffers in place (left here, right in the DTCM RAM).
+    const RouteBuffers buffers = {{audioEq, audioFilter[0], audioFilter[1], audioEffect[0], audioEffect[1], audioReverb_L},
+                                  {stereoDsp.nodeR[0], stereoDsp.nodeR[1], stereoDsp.nodeR[2], stereoDsp.nodeR[3], stereoDsp.nodeR[4], audioReverb_R},
+                                  audioSend_L, audioSend_R};
 
     // 4. RUN
     routeBlock<I2S_BLOCK_SIZE>(patch, routeState, buffers, sources, 2 + kLayerLibrarySize, [this](uint8_t module_) {
@@ -26174,6 +26178,7 @@ void Controller::processAudioRouting() {
         if (dubMix.on) {
             if (((module_ == NODE_FX1) && !effect[0].active && !effect[0].genTransition.active) || ((module_ == NODE_FX2) && !effect[1].active && !effect[1].genTransition.active)) {
                 memset((module_ == NODE_FX1) ? audioEffect[0] : audioEffect[1], 0, I2S_BLOCK_SIZE * sizeof(float));
+                memset((module_ == NODE_FX1) ? stereoDsp.nodeR[3] : stereoDsp.nodeR[4], 0, I2S_BLOCK_SIZE * sizeof(float));
             } else if ((module_ == NODE_REV) && !reverb.active && !reverb.genTransition.active) {
                 memset(audioReverb_L, 0, I2S_BLOCK_SIZE * sizeof(float));
                 memset(audioReverb_R, 0, I2S_BLOCK_SIZE * sizeof(float));
@@ -26218,6 +26223,17 @@ void Controller::processAudioEq() {
         } else {
             audioEq[i] = processed;
         }
+
+        // Right channel: the same bands, its own history
+        const float inputR = stereoDsp.nodeR[0][i];
+        float processedR = inputR;
+        processedR = processEqBiquadRight(eq.filterLowShelf, eq.right[0], processedR, activeLS);
+        processedR = processEqBiquadRight(eq.filterHighShelf, eq.right[1], processedR, activeHS);
+        processedR = processEqBiquadRight(eq.filterPeak[0], eq.right[2], processedR, activeP0);
+        processedR = processEqBiquadRight(eq.filterPeak[1], eq.right[3], processedR, activeP1);
+        processedR = processEqBiquadRight(eq.filterPeak[2], eq.right[4], processedR, activeP2);
+        processedR = processEqBiquadRight(eq.filterPeak[3], eq.right[5], processedR, activeP3);
+        stereoDsp.nodeR[0][i] = eq.genTransition.active ? ((processedR * eq.genTransition.activeWet) + (inputR * eq.genTransition.activeDry)) : processedR;
     }
 }
 
@@ -26227,10 +26243,31 @@ void Controller::processAudioFilter(uint8_t filterNum_) {
     Filter& filter_ = filter[filterNum_];
     if ((filter_.active) || (filter_.genTransition.active)) {
         float* buffer = audioFilter[filterNum_];
+        float* bufferR = stereoDsp.nodeR[1 + filterNum_];
         for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            buffer[i] = processAudioFilterHelper(filterNum_, buffer[i]);
+            buffer[i] = processAudioFilterHelper(filterNum_, 0, buffer[i]);
+            bufferR[i] = processAudioFilterHelper(filterNum_, 1, bufferR[i]);
         }
     }
+}
+
+float Controller::effectDryGain(uint8_t effectNum_) const {
+    /// @brief The share of the dry signal the effect puts in its output (DRY of the page, 0 in DUB mode).
+    const Effect& e = effect[effectNum_];
+    const uint8_t type = e.genTransition.active ? e.genTransition.activeType : e.type;
+    float dry;
+    switch (type) {
+        case EF_DELAY: dry = e.delay.eDry * 0.01f; break;
+        case EF_CHORUS: dry = e.chorus.eDry * 0.01f; break;
+        case EF_FLANGER: dry = e.flanger.eDry * 0.01f; break;
+        case EF_PHASER: dry = e.phaser.eDry * 0.01f; break;
+        case EF_OVERDRIVE: dry = e.overdrive.eDry * 0.01f; break;
+        case EF_DISTORTION: dry = e.distortion.eDry * 0.01f; break;
+        default: dry = e.dryFloat; break;
+    }
+    if (e.genTransition.active) dry *= e.genTransition.activeWet;
+    if (e.genTransition.active) dry += e.genTransition.activeDry;
+    return dry * fxDryScale;
 }
 
 void Controller::processAudioEffect(uint8_t effectNum_) {
@@ -26238,9 +26275,18 @@ void Controller::processAudioEffect(uint8_t effectNum_) {
     ///        An effect that is off leaves the buffer untouched, so it passes the signal through.
     Effect& effect_ = effect[effectNum_];
     if ((effect_.active) || (effect_.genTransition.active)) {
+        // The effect runs once on the mid signal (L+R)/2. What differs between the channels (the pan of
+        // the dry signal) is carried around it with the effect's dry level, so a centred signal (L = R)
+        // gives exactly the same output as the mono engine.
         float* buffer = audioEffect[effectNum_];
+        float* bufferR = stereoDsp.nodeR[3 + effectNum_];
+        const float dryGain = effectDryGain(effectNum_);
         for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            buffer[i] = processAudioEffectHelper(effectNum_, buffer[i]);
+            const float l = buffer[i], r = bufferR[i];
+            const float mid = 0.5f * (l + r), side = (l - r) * 0.5f * dryGain;
+            const float out = processAudioEffectHelper(effectNum_, mid);
+            buffer[i] = out + side;
+            bufferR[i] = out - side;
         }
     }
 }
@@ -26261,8 +26307,13 @@ void Controller::processAudioReverb() {
         // Pre-calculate scaler for comb filter inputs to prevent clipping
         const float kCombInputScale = 0.015f;
 
+        // The reverb runs once on the mid signal (L+R)/2; the difference between the channels (the pan
+        // of the dry signal) goes around it with the reverb's dry level (centred: no difference).
+        const float revDry = (reverb.genTransition.active ? ((reverb.dryFloat * reverb.genTransition.activeWet) + reverb.genTransition.activeDry) : reverb.dryFloat) * fxDryScale;
         for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            float inputSample = audioReverb_L[i];
+            const float inL = audioReverb_L[i], inR = audioReverb_R[i];
+            float inputSample = 0.5f * (inL + inR);
+            const float side = 0.5f * (inL - inR) * revDry;
 
             // Apply anti-denormal noise to prevent CPU spikes on low signals
             inputSample += REVERB_ANTI_DENORMAL;
@@ -26327,8 +26378,8 @@ void Controller::processAudioReverb() {
             if (++reverb.surround_recordInterval >= reverb.kSurroundBufferSize) reverb.surround_recordInterval = 0;
 
             // Final block output write
-            audioReverb_L[i] = outL;
-            audioReverb_R[i] = outR;
+            audioReverb_L[i] = outL + side;
+            audioReverb_R[i] = outR - side;
         }
     } else {
         // Bypass mode: Effect is inactive, copy mono accumulation to stereo output
@@ -26396,13 +26447,14 @@ void Controller::processAudioSend(uint32_t* outputBuffer) {
     }
 }
 
-float Controller::processAudioFilterHelper(uint8_t filterNum_, float audio_) {
+float Controller::processAudioFilterHelper(uint8_t filterNum_, uint8_t channel_, float audio_) {
     /// @brief Computes a biquad filter sample with input drive saturation, slope selection, and smooth parameter transitions.
 
     // 1. FILTER STATE RESOLUTION
     // Resolve filter reference and initialize local input/output values.
 
     Filter& filter_ = filter[filterNum_];
+    FilterState& st = filter_.state[channel_];
     float input = audio_;
     float output;
 
@@ -26421,25 +26473,25 @@ float Controller::processAudioFilterHelper(uint8_t filterNum_, float audio_) {
         // 3. BIQUAD CALCULATION
         // Compute filtered sample with anti-denormal protection.
 
-        float filteredSample = (filter_.b0 * input) + (filter_.b1 * filter_.x1) + (filter_.b2 * filter_.x2) - (filter_.a1 * filter_.y1) - (filter_.a2 * filter_.y2) + FILTER_ANTI_DENORMAL;
+        float filteredSample = (filter_.b0 * input) + (filter_.b1 * st.x1) + (filter_.b2 * st.x2) - (filter_.a1 * st.y1) - (filter_.a2 * st.y2) + FILTER_ANTI_DENORMAL;
 
         // 4. FILTER HISTORY UPDATE
         // Shift input/output delay-line history buffers.
 
-        filter_.x2 = filter_.x1;
-        filter_.x1 = input;
-        filter_.y2 = filter_.y1;
-        filter_.y1 = filteredSample;
+        st.x2 = st.x1;
+        st.x1 = input;
+        st.y2 = st.y1;
+        st.y1 = filteredSample;
 
         // 5. SECOND SECTION (24 dB slope)
         float finalFilterOut = filteredSample;
         if (filter_.stages == 2) {
             const BiquadCoef& c = filter_.stage2;
-            finalFilterOut = (c.b0 * filteredSample) + (c.b1 * filter_.u1) + (c.b2 * filter_.u2) - (c.a1 * filter_.v1) - (c.a2 * filter_.v2);
-            filter_.u2 = filter_.u1;
-            filter_.u1 = filteredSample;
-            filter_.v2 = filter_.v1;
-            filter_.v1 = finalFilterOut;
+            finalFilterOut = (c.b0 * filteredSample) + (c.b1 * st.u1) + (c.b2 * st.u2) - (c.a1 * st.v1) - (c.a2 * st.v2);
+            st.u2 = st.u1;
+            st.u1 = filteredSample;
+            st.v2 = st.v1;
+            st.v1 = finalFilterOut;
         }
 
         // Apply transition mix or standard wet/dry levels
@@ -27040,7 +27092,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 4. OUTPUT MIXING
                 // Maps menu values (0-100) to linear dry/wet levels.
-                float dryLevel = (float)dist_.eDry * kInv100;
+                float dryLevel = (float)dist_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)dist_.fWet * kInv100;
 
                 // Combine the processed (Wet) signal with the original (Dry) input.
@@ -27125,7 +27177,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 4. FINAL OUTPUT MIXING
                 // Mix the processed (Wet) signal with the original (Dry) input.
-                float mixData = (filteredSample * effect_.wetFloat) + (input * effect_.dryFloat);
+                float mixData = (filteredSample * effect_.wetFloat) + (input * effect_.dryFloat * fxDryScale);
 
                 // Apply global transition blend if a preset/effect change is active.
                 if (effect_.genTransition.active) {

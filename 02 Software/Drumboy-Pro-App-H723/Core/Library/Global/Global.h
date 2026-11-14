@@ -413,6 +413,15 @@ static_assert(0xC0EA6000u + kPreviewRingSize * 4u <= 0xC0FB9640u, "preview ring 
 // Scratch for the full-area views, in that free tail: the two filter curves as drawn (their y per
 // point), so a changed curve is erased by redrawing it instead of clearing the whole plot. +2048:
 // the sample view's 840 peak columns.
+// Stereo audio work memory in the DTCM RAM (zero wait states, only the CPU uses it): the right
+// channel of the EQ, Filter 1, Filter 2, Effect 1 and Effect 2 nodes (the reverb has its own pair),
+// and what each layer's route and pan gains reached in the last block. Zeroed at start-up (main.cpp).
+struct StereoDsp {
+    float nodeR[5][I2S_BLOCK_SIZE];
+    float srcGain[10][kRouteGainStateSize];
+};
+extern StereoDsp stereoDsp;
+
 #define RAM_VIEW_SCRATCH_ADDRESS                    0xC0FF3000u
 static_assert((RAM_VIEW_SCRATCH_ADDRESS >= 0xC0FF2EA4u) && (RAM_VIEW_SCRATCH_ADDRESS + 4096u <= 0xC0FFFFF0u), "view scratch must fit the free tail of the SDRAM");
 
@@ -2830,6 +2839,12 @@ struct FilterMixTransition {
     FilterTransitionAction actionWet;
 };
 
+// The history of one channel of a filter: the first section (x, y) and the second one (u, v: the 24 dB slope).
+struct FilterState {
+    float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
+    float u1 = 0.0f, u2 = 0.0f, v1 = 0.0f, v2 = 0.0f;
+};
+
 struct Filter {
     uint8_t num;
     bool active;
@@ -2857,11 +2872,8 @@ struct Filter {
     float a1                                        = 0.0f;
     float a2                                        = 0.0f;
 
-    // history (States)
-    float x1                                        = 0.0f;
-    float x2                                        = 0.0f;
-    float y1                                        = 0.0f;
-    float y2                                        = 0.0f;
+    // history (states): one set per channel, left then right (the filter is stereo since V1.15)
+    FilterState state[2];
 
     void initialize() {
         active = kInitialFilterActive;
@@ -2880,13 +2892,9 @@ struct Filter {
         cleanMemory();
     }
 
-    // Second section (the 24 dB slope) and its history.
+    // Second section (the 24 dB slope).
     BiquadCoef stage2;
     uint8_t stages                                  = 1;
-    float u1                                        = 0.0f;
-    float u2                                        = 0.0f;
-    float v1                                        = 0.0f;
-    float v2                                        = 0.0f;
 
     void calculateCoef() {
         // The design is in FilterCurve.h, shared with the curve on the filter page.
@@ -2903,14 +2911,8 @@ struct Filter {
     }
 
     void cleanMemory() {
-        x1 = 0.0f;
-        x2 = 0.0f;
-        y1 = 0.0f;
-        y2 = 0.0f;
-        u1 = 0.0f;
-        u2 = 0.0f;
-        v1 = 0.0f;
-        v2 = 0.0f;
+        state[0] = FilterState();
+        state[1] = FilterState();
     }
 
     Filter(uint8_t num_) : num(num_) {}
@@ -3117,6 +3119,11 @@ struct EqGenTransition {
     EqTransitionAction actionWet;
 };
 
+// The history of one biquad of the EQ's right channel (the left channel keeps its history in its EqFilter).
+struct EqState {
+    float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
+};
+
 struct Eq {
     bool active                                     = kInitialEqActive;
 
@@ -3136,6 +3143,7 @@ struct Eq {
     uint8_t gainPeak[4]                             = {kInitialEqGainPeak[0], kInitialEqGainPeak[1], kInitialEqGainPeak[2], kInitialEqGainPeak[3]};
 
     EqFilter filterPeak[4];
+    EqState right[6];                               // right channel: low shelf, high shelf, peaks 1-4 (same coefficients as the left)
 
     void initialize() {
         active = kInitialEqActive;
@@ -3261,9 +3269,21 @@ struct Eq {
             filterPeak[i].x2 = 0;
             filterPeak[i].y1 = 0;
             filterPeak[i].y2 = 0;
-        }
+            for (uint8_t k = 0; k < 6; k++) right[k] = EqState();
+    }
     }
 };
+
+// The same biquad for the right channel: the left channel's coefficients, the right channel's own history.
+static inline float processEqBiquadRight(const EqFilter& f, EqState& s, float input, bool active) {
+    if (!active) return input;
+    const float output = (f.b0 * input) + (f.b1 * s.x1) + (f.b2 * s.x2) - (f.a1 * s.y1) - (f.a2 * s.y2) + EQ_ANTI_DENORMAL;
+    s.x2 = s.x1;
+    s.x1 = input;
+    s.y2 = s.y1;
+    s.y1 = output;
+    return output;
+}
 
 static inline float processEqBiquad(EqFilter& f, float input, bool active) {
     if (!active) return input;

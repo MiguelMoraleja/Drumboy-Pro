@@ -24,15 +24,20 @@ const uint16_t N = 32;
 static const float kGain[6] = {0.9f, 0.8f, 0.7f, 0.6f, 0.5f, 0.4f};  // EQ, F1, F2, FX1, FX2, REV
 
 struct Rig {
-    float eq[N], f1[N], f2[N], fx1[N], fx2[N], rev[N], revR[N], outL[N], outR[N];
-    RouteBuffers bufs() { return {{eq, f1, f2, fx1, fx2, rev}, revR, outL, outR}; }
+    float eqL[N], f1L[N], f2L[N], fx1L[N], fx2L[N], revL[N];
+    float eqR[N], f1R[N], f2R[N], fx1R[N], fx2R[N], revR[N];
+    float outL[N], outR[N];
+    RouteBuffers bufs() { return {{eqL, f1L, f2L, fx1L, fx2L, revL}, {eqR, f1R, f2R, fx1R, fx2R, revR}, outL, outR}; }
 };
 
 static void run(Rig& r, RouteSource* sources, uint8_t count, const RoutePatch& patch, RouteState& st) {
     routeBlock<N>(patch, st, r.bufs(), sources, count, [&](uint8_t m) {
-        float* buf = (m == NODE_EQ) ? r.eq : (m == NODE_F1) ? r.f1 : (m == NODE_F2) ? r.f2 : (m == NODE_FX1) ? r.fx1 : (m == NODE_FX2) ? r.fx2 : r.rev;
-        for (uint16_t i = 0; i < N; i++) buf[i] *= kGain[m];
-        if (m == NODE_REV) for (uint16_t i = 0; i < N; i++) r.revR[i] = buf[i];
+        float* l = (m == NODE_EQ) ? r.eqL : (m == NODE_F1) ? r.f1L : (m == NODE_F2) ? r.f2L : (m == NODE_FX1) ? r.fx1L : (m == NODE_FX2) ? r.fx2L : r.revL;
+        float* rr = (m == NODE_EQ) ? r.eqR : (m == NODE_F1) ? r.f1R : (m == NODE_F2) ? r.f2R : (m == NODE_FX1) ? r.fx1R : (m == NODE_FX2) ? r.fx2R : r.revR;
+        for (uint16_t i = 0; i < N; i++) {
+            l[i] *= kGain[m];
+            rr[i] *= kGain[m];
+        }
     });
 }
 
@@ -66,10 +71,10 @@ int main() {
     CHECK(dubDryScale(true) == 0.0f && dubDryScale(false) == 1.0f, "dry scale");
 
     // --- Routing with gains: the master gets the product of the modules on each path ---
-    float src[N], zeros[N] = {0};
+    float src[N];
     for (uint16_t i = 0; i < N; i++) src[i] = 0.5f + 0.01f * i;
     RouteState st;
-    float state[kRouteNodeCount + 1] = {0};
+    float state[kRouteGainStateSize] = {0};
     DubStrip strip;
     strip.bus = DUB_BUS_FILT;
     strip.echo = 50;
@@ -78,7 +83,7 @@ int main() {
     float target[kRouteNodeCount];
     dubNodeGains(strip, 0, target);
     Rig r;
-    RouteSource sources[1] = {{src, 0, nullptr, target, state}};
+    RouteSource sources[1] = {{src, 0, nullptr, target, state, 1.0f, 1.0f}};
     for (int block = 0; block < 3; block++) run(r, sources, 1, kDubRoutePatch, st);  // settle the ramp
     bool ok = true;
     for (uint16_t i = 0; i < N; i++) {
@@ -93,33 +98,96 @@ int main() {
     float peak = 0;
     for (uint16_t i = 0; i < N; i++) peak = std::fmax(peak, std::fabs(r.outL[i]));
     CHECK(peak == 0.0f, "all gains 0: silence");
-    (void)zeros;
 
     // --- The ramp: from the old gain to the new one over the block, linear, then steady ---
-    float one[N];
-    for (uint16_t i = 0; i < N; i++) one[i] = 1.0f;
-    float st2[kRouteNodeCount + 1] = {0};
-    float tg[kRouteNodeCount] = {0};
-    tg[NODE_MASTER] = 1.0f;
-    float eqB[N] = {0}, f1B[N] = {0}, f2B[N] = {0}, x1B[N] = {0}, x2B[N] = {0}, rvB[N] = {0}, rrB[N] = {0}, mL[N] = {0}, mR[N] = {0};
-    RouteBuffers b = {{eqB, f1B, f2B, x1B, x2B, rvB}, rrB, mL, mR};
-    routeScatterGains<N>(b, one, tg, st2);
-    CHECK(std::fabs(mL[0] - 1.0f / N) < 1e-6f && std::fabs(mL[N - 1] - 1.0f) < 1e-6f && std::fabs(mL[15] - 16.0f / N) < 1e-6f && st2[NODE_MASTER] == 1.0f, "ramp up: %f %f", mL[0], mL[N - 1]);
-    memset(mL, 0, sizeof mL);
-    memset(mR, 0, sizeof mR);
-    routeScatterGains<N>(b, one, tg, st2);
-    CHECK(mL[0] == 1.0f && mL[N - 1] == 1.0f && mR[7] == 1.0f, "steady");
-    tg[NODE_MASTER] = 0.0f;
-    memset(mL, 0, sizeof mL);
-    routeScatterGains<N>(b, one, tg, st2);
-    CHECK(std::fabs(mL[0] - (1.0f - 1.0f / N)) < 1e-6f && std::fabs(mL[N - 1]) < 1e-6f, "ramp down");
-    // Other nodes receive their own gain only.
-    tg[NODE_F2] = 0.25f;
-    routeScatterGains<N>(b, one, tg, st2);  // the ramp
-    memset(f2B, 0, sizeof f2B);
-    memset(eqB, 0, sizeof eqB);
-    routeScatterGains<N>(b, one, tg, st2);  // steady
-    CHECK(std::fabs(f2B[N - 1] - 0.25f) < 1e-6f && eqB[5] == 0.0f, "echo node");
+    {
+        float one[N];
+        for (uint16_t i = 0; i < N; i++) one[i] = 1.0f;
+        float eqL2[N], f1L2[N], f2L2[N], x1L2[N], x2L2[N], rvL2[N], eqR2[N], f1R2[N], f2R2[N], x1R2[N], x2R2[N], rvR2[N], mL[N], mR[N];
+        RouteBuffers b2 = {{eqL2, f1L2, f2L2, x1L2, x2L2, rvL2}, {eqR2, f1R2, f2R2, x1R2, x2R2, rvR2}, mL, mR};
+        auto clear = [&]() {
+            memset(mL, 0, sizeof mL);
+            memset(mR, 0, sizeof mR);
+            memset(f2L2, 0, sizeof f2L2);
+            memset(f2R2, 0, sizeof f2R2);
+            memset(eqL2, 0, sizeof eqL2);
+            memset(eqR2, 0, sizeof eqR2);
+        };
+        float st2[kRouteGainStateSize] = {0};
+        float tl[kRouteNodeCount] = {0}, tr[kRouteNodeCount] = {0};
+        tl[NODE_MASTER] = tr[NODE_MASTER] = 1.0f;
+        clear();
+        routeScatterLR<N>(b2, one, tl, tr, st2);
+        CHECK(std::fabs(mL[0] - 1.0f / N) < 1e-6f && std::fabs(mL[N - 1] - 1.0f) < 1e-6f && std::fabs(mL[15] - 16.0f / N) < 1e-6f && std::fabs(mR[15] - 16.0f / N) < 1e-6f && st2[NODE_MASTER] == 1.0f,
+              "ramp up: %f %f", mL[0], mL[N - 1]);
+        clear();
+        routeScatterLR<N>(b2, one, tl, tr, st2);
+        CHECK(mL[0] == 1.0f && mL[N - 1] == 1.0f && mR[7] == 1.0f, "steady");
+        tl[NODE_MASTER] = tr[NODE_MASTER] = 0.0f;
+        clear();
+        routeScatterLR<N>(b2, one, tl, tr, st2);
+        CHECK(std::fabs(mL[0] - (1.0f - 1.0f / N)) < 1e-6f && std::fabs(mL[N - 1]) < 1e-6f, "ramp down");
+        // Another node receives its own gain in both channels.
+        tl[NODE_F2] = tr[NODE_F2] = 0.25f;
+        clear();
+        routeScatterLR<N>(b2, one, tl, tr, st2);  // the ramp
+        clear();
+        routeScatterLR<N>(b2, one, tl, tr, st2);  // steady
+        CHECK(std::fabs(f2L2[N - 1] - 0.25f) < 1e-6f && std::fabs(f2R2[N - 1] - 0.25f) < 1e-6f && eqL2[5] == 0.0f, "echo node");
+
+        // --- Pan: the left and right gains of a source split every node it goes to ---
+        float pl, pr;
+        panGains(8, pl, pr);
+        float st4[kRouteGainStateSize] = {0};
+        float gains[kRouteNodeCount] = {0};
+        gains[NODE_MASTER] = 1.0f;
+        gains[NODE_F2] = 0.5f;
+        RouteState rs;
+        Rig r3;
+        RouteSource panned[1] = {{one, 0, nullptr, gains, st4, pl, pr}};
+        run(r3, panned, 1, kDubRoutePatch, rs);
+        run(r3, panned, 1, kDubRoutePatch, rs);
+        // The master gets the dry path panned; the echo path goes F2 -> FX1 -> master, panned the same way.
+        const float echoPath = 0.5f * kGain[2] * kGain[3];
+        CHECK(std::fabs(r3.outL[N - 1] - (pl + echoPath * pl)) < 1e-5f && std::fabs(r3.outR[N - 1] - (pr + echoPath * pr)) < 1e-5f, "panned DIR strip with an echo send: %f %f", r3.outL[N - 1], r3.outR[N - 1]);
+        // A centred pan is exactly the unpanned signal, in both channels.
+        float st5[kRouteGainStateSize] = {0};
+        RouteSource centred[1] = {{one, 0, nullptr, gains, st5, 1.0f, 1.0f}};
+        RouteState rs2;
+        run(r3, centred, 1, kDubRoutePatch, rs2);
+        run(r3, centred, 1, kDubRoutePatch, rs2);
+        CHECK(r3.outL[7] == r3.outR[7], "a centred source is the same on both sides: %f %f", r3.outL[7], r3.outR[7]);
+        // The pan moves with a ramp: the first block goes from centre to the new gains.
+        float st6[kRouteGainStateSize] = {0};
+        RouteSource moving[1] = {{one, 0, nullptr, gains, st6, 1.0f, 1.0f}};
+        RouteState rs3;
+        run(r3, moving, 1, kDubRoutePatch, rs3);
+        run(r3, moving, 1, kDubRoutePatch, rs3);
+        const float centreL = r3.outL[0];
+        moving[0].panLeft = pl;
+        moving[0].panRight = pr;
+        run(r3, moving, 1, kDubRoutePatch, rs3);
+        CHECK(std::fabs(r3.outL[N - 1] - (pl + echoPath * pl)) < 1e-4f && r3.outL[0] != centreL, "pan ramp: %f then %f", r3.outL[0], r3.outL[N - 1]);
+
+        // The mask path (CHAIN): a source to the master and the reverb, panned: both are panned, the stereo pair stays a pair.
+        float st7[kRouteGainStateSize] = {0};
+        const uint8_t mask = routeBit(NODE_MASTER) | routeBit(NODE_REV);
+        RouteSource maskSrc[1] = {{one, mask, nullptr, nullptr, st7, pl, pr}};
+        RouteState rs4;
+        run(r3, maskSrc, 1, kDefaultRoutePatch, rs4);
+        run(r3, maskSrc, 1, kDefaultRoutePatch, rs4);
+        const float rev = kGain[NODE_REV];
+        CHECK(std::fabs(r3.outL[N - 1] - (pl + pl * rev)) < 1e-5f && std::fabs(r3.outR[N - 1] - (pr + pr * rev)) < 1e-5f, "mask path panned: %f %f", r3.outL[N - 1], r3.outR[N - 1]);
+        // Through the chain: a panned source entering at the EQ comes out of the master panned (all stand-in modules are linear and identical on both sides).
+        float st8[kRouteGainStateSize] = {0};
+        RouteSource eqSrc[1] = {{one, routeBit(NODE_EQ), nullptr, nullptr, st8, pl, pr}};
+        RouteState rs5;
+        run(r3, eqSrc, 1, kDefaultRoutePatch, rs5);
+        run(r3, eqSrc, 1, kDefaultRoutePatch, rs5);
+        float chain = 1.0f;
+        for (uint8_t m = 0; m < 6; m++) chain *= kGain[m];
+        CHECK(std::fabs(r3.outL[N - 1] - chain * pl) < 1e-5f && std::fabs(r3.outR[N - 1] - chain * pr) < 1e-5f, "panned through the whole chain: %f %f want %f %f", r3.outL[N - 1], r3.outR[N - 1], chain * pl, chain * pr);
+    }
 
     // --- File block ---
     DubMix d;
@@ -165,72 +233,6 @@ int main() {
     bad[0] = 'X';
     CHECK(!dubRead(back, bad, kDubFileSize), "wrong marker");
     CHECK(kDubFileSize == 55 && kDubFileSizeV1 == 45, "block sizes %u %u", kDubFileSize, kDubFileSizeV1);
-
-    // --- Pan on the master ---
-    {
-        float one2[N];
-        for (uint16_t i = 0; i < N; i++) one2[i] = 1.0f;
-        float eq2[N], f12[N], f22[N], x12[N], x22[N], rv2[N], rr2[N], mL2[N], mR2[N];
-        RouteBuffers b2 = {{eq2, f12, f22, x12, x22, rv2}, rr2, mL2, mR2};
-        auto clear = [&]() {
-            memset(mL2, 0, sizeof mL2);
-            memset(mR2, 0, sizeof mR2);
-            memset(f22, 0, sizeof f22);
-        };
-        // The gains path: the master pan splits the master gain, other nodes are untouched.
-        float tg2[kRouteNodeCount] = {0}, state3[kRouteNodeCount + 1] = {0};
-        tg2[NODE_MASTER] = 1.0f;
-        tg2[NODE_F2] = 0.5f;
-        float pl, pr;
-        panGains(8, pl, pr);
-        const float pan3[2] = {pl, pr};
-        for (int k = 0; k < 2; k++) {
-            clear();
-            routeScatterGains<N>(b2, one2, tg2, state3, pan3);
-        }
-        CHECK(std::fabs(mL2[N - 1] - pl) < 1e-5f && std::fabs(mR2[N - 1] - pr) < 1e-5f && std::fabs(f22[N - 1] - 0.5f) < 1e-6f, "panned master, echo send untouched: %f %f %f", mL2[N - 1], mR2[N - 1], f22[N - 1]);
-        // Without pan both sides are as before.
-        float state4[kRouteNodeCount + 1] = {0};
-        for (int k = 0; k < 2; k++) {
-            clear();
-            routeScatterGains<N>(b2, one2, tg2, state4);
-        }
-        CHECK(mL2[N - 1] == 1.0f && mR2[N - 1] == 1.0f, "no pan: centred");
-        // A centred pan is exactly the unpanned signal.
-        float state5[kRouteNodeCount + 1] = {0};
-        const float centre[2] = {1.0f, 1.0f};
-        for (int k = 0; k < 2; k++) {
-            clear();
-            routeScatterGains<N>(b2, one2, tg2, state5, centre);
-        }
-        CHECK(mL2[7] == 1.0f && mR2[7] == 1.0f, "centre pan is exact");
-        // The pan moves with a ramp: the first block goes from centre to the new gains.
-        float state6[kRouteNodeCount + 1] = {0};
-        for (int k = 0; k < 2; k++) {
-            clear();
-            routeScatterGains<N>(b2, one2, tg2, state6, centre);
-        }
-        clear();
-        routeScatterGains<N>(b2, one2, tg2, state6, pan3);
-        CHECK(std::fabs(mL2[0] - (1.0f + (pl - 1.0f) / N)) < 1e-5f && std::fabs(mL2[N - 1] - pl) < 1e-5f && std::fabs(mR2[N - 1] - pr) < 1e-5f, "pan ramp: %f %f", mL2[0], mL2[N - 1]);
-        // The mask path: a source to the master and the reverb: the reverb node as it is, the master panned.
-        float ms[2] = {1.0f, 1.0f};
-        const uint8_t mask = routeBit(NODE_MASTER) | routeBit(NODE_REV);
-        RouteState rs;
-        RouteSource sources2[1] = {{one2, mask, nullptr, nullptr, nullptr, pan3, ms}};
-        Rig r2;
-        run(r2, sources2, 1, kDefaultRoutePatch, rs);
-        run(r2, sources2, 1, kDefaultRoutePatch, rs);
-        // The reverb stand-in multiplies by its gain; what reaches the master from it is 0.4, equal on both sides.
-        const float rev = kGain[NODE_REV];
-        CHECK(std::fabs(r2.outL[N - 1] - (pl + rev)) < 1e-5f && std::fabs(r2.outR[N - 1] - (pr + rev)) < 1e-5f, "mask path: %f %f", r2.outL[N - 1], r2.outR[N - 1]);
-        // A source with a mask that does not include the master adds nothing to it (the pan is not applied to the nodes).
-        float ms2[2] = {1.0f, 1.0f};
-        RouteSource sources3[1] = {{one2, routeBit(NODE_REV), nullptr, nullptr, nullptr, pan3, ms2}};
-        run(r2, sources3, 1, kDefaultRoutePatch, rs);
-        run(r2, sources3, 1, kDefaultRoutePatch, rs);
-        CHECK(std::fabs(r2.outL[N - 1] - rev) < 1e-5f && std::fabs(r2.outR[N - 1] - rev) < 1e-5f, "a mask without the master: %f %f", r2.outL[N - 1], r2.outR[N - 1]);
-    }
 
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

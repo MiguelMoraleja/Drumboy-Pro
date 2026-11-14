@@ -25,7 +25,7 @@ import zlib
 MAGIC = b"RW_DRUMBOY_PRO_FIRMWARE "
 HEADER = struct.Struct("<HHII")
 MAX_SIZE = 917504          # bootloader limit (sectors 1-7)
-MAX_NAME = 31              # bootloader FatFs (_MAX_LFN 32) ignores long names of 32+ characters
+MAX_NAME = 28              # the bootloader (FatFs _MAX_LFN 32) should accept 31, but a 31-character name was ignored on the owner's device (2026-11-14): stay at 28
 NAME_PREFIX = "Drumboy_Pro_Fw"   # bootloader looks for Drumboy_Pro_Fw?*.bin in the card's root
 APP_BASE = 0x08020000      # application flash start
 

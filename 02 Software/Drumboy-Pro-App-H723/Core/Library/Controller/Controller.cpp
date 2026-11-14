@@ -22887,145 +22887,265 @@ uint32_t Controller::dubViewState() const {
     return h;
 }
 
-void Controller::lcd_drawDeskFader(uint16_t x_, uint8_t level_, RGB16Color color_) {
-    /// @brief A fader of the desk at the strip x_: the rail with its ticks and the thumb at the level.
-    lcd.setForeColor(GRAY_35);
-    lcd.drawVLine(x_ + kDeskFaderLineX, kDeskFaderY, kDeskFaderHeight);
-    for (uint8_t k = 0; k <= 4; k++) lcd.drawHLine(x_ + kDeskFaderLineX - 7, kDeskFaderY + (k * (kDeskFaderHeight - 1)) / 4, 5);
-    lcd.setForeColor(color_);
-    lcd.fillRect(x_ + kDeskThumbX, deskThumbY(level_), kDeskThumbWidth, kDeskThumbHeight);
+static const RGB16Color kDeskAmber = 0xFD20;  // the console's accent colour: knob pointers, the selected scribble strip
+
+void Controller::lcd_drawDeskKnob(uint16_t cx_, uint16_t cy_, uint8_t percent_, RGB16Color color_) {
+    /// @brief A console knob: a ring, a dark cap, scale dots around it and an amber pointer.
+    lcd.setForeColor(GRAY_50);
+    for (uint8_t k = 0; k <= 4; k++) {
+        int16_t x, y;
+        deskKnobPoint(cx_, cy_, kDeskKnobRadius + 4, static_cast<uint8_t>(k * 25), x, y);
+        lcd.drawPixel(static_cast<uint16_t>(x), static_cast<uint16_t>(y));
+        if ((k == 0) || (k == 2) || (k == 4)) {
+            deskKnobPoint(cx_, cy_, kDeskKnobRadius + 5, static_cast<uint8_t>(k * 25), x, y);
+            lcd.drawPixel(static_cast<uint16_t>(x), static_cast<uint16_t>(y));
+        }
+    }
     lcd.setForeColor(GRAY_25);
-    lcd.drawRect(x_ + kDeskMeterX, kDeskFaderY, kDeskMeterWidth, kDeskFaderHeight);
+    lcd.fillCircle(cx_, cy_, kDeskKnobRadius - 1);
+    lcd.setForeColor(color_);
+    lcd.drawCircle(cx_, cy_, kDeskKnobRadius);
+    int16_t px, py;
+    deskKnobPoint(cx_, cy_, kDeskKnobRadius - 2, percent_, px, py);
+    lcd.setForeColor(kDeskAmber);
+    lcd.drawLine(cx_, cy_, static_cast<uint16_t>(px), static_cast<uint16_t>(py));
+    lcd.drawLine(static_cast<uint16_t>(cx_ + 1), cy_, static_cast<uint16_t>(px + 1), static_cast<uint16_t>(py));
+}
+
+void Controller::lcd_drawDeskSegments(uint8_t column_, uint8_t lit_, bool audible_) {
+    /// @brief The LED ladder beside a fader: 13 segments from the bottom, green, yellow, then red.
+    const uint16_t x = deskX(column_) + kDeskMeterX;
+    for (uint8_t k = 0; k < kDeskMeterSegments; k++) {
+        RGB16Color c = GRAY_25;
+        if (audible_ && (k < lit_)) c = (k < kDeskMeterGreen) ? GREEN : ((k < kDeskMeterYellow) ? YELLOW : RED);
+        lcd.setForeColor(c);
+        lcd.fillRect(x, deskSegmentY(k), kDeskMeterWidth, deskSegmentHeight());
+    }
+}
+
+void Controller::lcd_drawDeskColumn(uint8_t column_) {
+    /// @brief One column of the desk, drawn from nothing: a layer strip (0-9) or a return (10 ECHO,
+    /// 11 VERB). A scribble plate, the bus switch, two knobs with their values, the pan bar, the
+    /// fader with its scale and LED ladder, and the foot plate.
+    const uint16_t x = deskX(column_);
+    const bool isReturn = (column_ >= kDubStrips);
+    const uint8_t layer = column_;
+    const Effect& echo = effect[0];
+    const bool echoIsDelay = (echo.type == EF_DELAY);
+
+    // What this column shows
+    bool audible = true, selected = false, on = true, muted = false, panHeard = false;
+    uint8_t level, knob[2], bus = DUB_BUS_FILT, pan = kPanCentre;
+    const char* knobName[2];
+    char line1[12], line2[12];
+    if (!isReturn) {
+        const DubStrip& st = dubMix.strip[layer];
+        audible = layerAudible(layer);
+        selected = (layer == dubStripSel);
+        muted = layerLibrary[layer].mute;
+        level = layerLibrary[layer].level;
+        knob[0] = st.echo;
+        knob[1] = st.verb;
+        knobName[0] = "ECHO";
+        knobName[1] = "VERB";
+        bus = st.bus;
+        pan = dubMix.pan[layer];
+        panHeard = layerPanActive(layer);
+        snprintf(line1, sizeof line1, "%.2s", kDataLayerNum[layer]);
+        snprintf(line2, sizeof line2, "%.9s", layerLibrary[layer].instLoadedData.nameShortL);
+    } else if (column_ == kDubStrips) {
+        on = echo.active;
+        level = echo.subEffect[echo.type].fData;
+        knob[0] = echoIsDelay ? static_cast<uint8_t>((static_cast<uint16_t>(echo.subEffect[EF_DELAY].cData) * 100u) / kMaxDelayFeedback) : 0;
+        knob[1] = echoIsDelay ? echo.subEffect[EF_DELAY].dData : 0;
+        knobName[0] = "FDBK";
+        knobName[1] = "DAMP";
+        snprintf(line1, sizeof line1, "ECHO");
+        snprintf(line2, sizeof line2, "%.6s", kEffectTypeDataLibrary[echo.type].nameLongR + 4);
+    } else {
+        on = reverb.active;
+        level = reverb.wet;
+        knob[0] = reverb.decay;
+        knob[1] = reverb.size;
+        knobName[0] = "DECAY";
+        knobName[1] = "SIZE";
+        snprintf(line1, sizeof line1, "VERB");
+        snprintf(line2, sizeof line2, "REVERB");
+    }
+    const RGB16Color c = !audible || !on ? GRAY_35 : (selected ? kDeskAmber : ((column_ % 2) ? GRAY_75 : WHITE));
+
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(x, kImageLayerY[0] + 2, kDeskStep, 306);
+    lcd.setForeColor(GRAY_25);
+    lcd.drawVLine(x + kDeskWidth + 1, kImageLayerY[0] + 3, 304);
+    char text[16];
+
+    // 1. THE SCRIBBLE PLATE: filled amber for the selected strip, an outline for the others
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(LEFT);
+    if (selected) {
+        lcd.fillRect(x + 1, kDeskPlateY, kDeskWidth - 2, kDeskPlateHeight);
+        lcd.setBackColor(kDeskAmber);
+        lcd.setForeColor(BLACK);
+    } else {
+        lcd.setForeColor(GRAY_50);
+        lcd.drawRect(x + 1, kDeskPlateY, kDeskWidth - 2, kDeskPlateHeight);
+        lcd.setForeColor(c);
+    }
+    lcd.drawText(line1, static_cast<uint16_t>(strlen(line1)), x + 5, kDeskPlateY + 3);
+    lcd.drawText(line2, static_cast<uint16_t>(strlen(line2)), x + 5, kDeskPlateY + 11);
+    lcd.setBackColor(BLACK);
+
+    // 2. THE BUS SWITCH (layers) or the ON lamp (returns)
+    if (!isReturn) {
+        for (uint8_t k = 0; k < 2; k++) {
+            const bool lit = (bus == (k == 0 ? DUB_BUS_FILT : DUB_BUS_DIR));
+            const uint16_t cx = x + 1 + k * (kDeskBusCell + 1);
+            if (lit) {
+                lcd.setForeColor(audible ? GRAY_75 : GRAY_35);
+                lcd.fillRect(cx, kDeskBusY, kDeskBusCell, kDeskBusHeight);
+                lcd.setBackColor(audible ? GRAY_75 : GRAY_35);
+                lcd.setForeColor(BLACK);
+            } else {
+                lcd.setForeColor(GRAY_35);
+                lcd.drawRect(cx, kDeskBusY, kDeskBusCell, kDeskBusHeight);
+                lcd.setForeColor(GRAY_50);
+            }
+            const char* name = (k == 0) ? "FILT" : "DIR";
+            const uint16_t len = static_cast<uint16_t>(strlen(name));
+            lcd.drawText(name, len, cx + (kDeskBusCell - len * 7) / 2 + 1, kDeskBusY + 2);
+            lcd.setBackColor(BLACK);
+        }
+    } else {
+        lcd.setForeColor(on ? GRAY_75 : GRAY_35);
+        if (on) {
+            lcd.fillRect(x + 1, kDeskBusY, kDeskWidth - 2, kDeskBusHeight);
+            lcd.setBackColor(GRAY_75);
+            lcd.setForeColor(BLACK);
+        } else {
+            lcd.drawRect(x + 1, kDeskBusY, kDeskWidth - 2, kDeskBusHeight);
+        }
+        lcd.drawText(on ? "ON" : "OFF", on ? 2 : 3, x + (kDeskWidth - (on ? 14 : 21)) / 2 + 1, kDeskBusY + 2);
+        lcd.setBackColor(BLACK);
+    }
+
+    // 3. TWO KNOBS with their names and values
+    for (uint8_t k = 0; k < 2; k++) {
+        const uint16_t cx = x + kDeskKnobX[k];
+        lcd_drawDeskKnob(cx, kDeskKnobY, knob[k], (audible && on) ? GRAY_75 : GRAY_35);
+        const uint16_t len = static_cast<uint16_t>(strlen(knobName[k]));
+        lcd.setForeColor(GRAY_75);
+        lcd.drawText(knobName[k], len, cx - (len * 7) / 2 + 1, kDeskKnobLabelY);
+        snprintf(text, sizeof text, "%u%%", static_cast<unsigned>(knob[k]));
+        lcd.setForeColor((audible && on) ? WHITE : GRAY_50);
+        lcd.drawText(text, static_cast<uint16_t>(strlen(text)), cx - (static_cast<uint16_t>(strlen(text)) * 7) / 2 + 1, kDeskKnobValueY);
+    }
+
+    // 4. THE PAN BAR (layers): a slot with a centre notch and a marker, and its value
+    if (!isReturn) {
+        const uint16_t barX = x + 1, barW = 41;
+        lcd.setForeColor(panHeard ? GRAY_50 : GRAY_35);
+        lcd.drawRect(barX, kDeskPanY, barW, kDeskPanHeight);
+        lcd.drawVLine(barX + barW / 2, kDeskPanY - 2, kDeskPanHeight + 4);
+        lcd.setForeColor(panHeard ? c : GRAY_35);
+        lcd.fillRect(barX + 1 + deskPanX(pan, barW - 4), kDeskPanY + 1, 3, kDeskPanHeight - 2);
+        char label[8];
+        panLabel(label, sizeof label, pan);
+        lcd.setForeColor(panHeard ? WHITE : GRAY_50);
+        lcd.drawText(label, static_cast<uint16_t>(strlen(label)), barX + barW + 4, kDeskPanY);
+    }
+
+    // 5. THE FADER: scale, ticks, rail, cap, LED ladder and the level
+    lcd.setForeColor(GRAY_50);
+    lcd.drawText("10", 2, x + kDeskScaleX, kDeskFaderY - 3);
+    lcd.drawText("5", 1, x + kDeskScaleX + 7, kDeskFaderY + kDeskFaderHeight / 2 - 3);
+    lcd.drawText("0", 1, x + kDeskScaleX + 7, kDeskFaderY + kDeskFaderHeight - 5);
+    for (uint8_t k = 0; k <= 10; k++) {
+        const uint16_t ty = kDeskFaderY + kDeskCapHeight / 2 + (k * (kDeskFaderHeight - kDeskCapHeight)) / 10;
+        lcd.drawHLine(x + kDeskTickX + ((k % 5 == 0) ? 0 : 3), ty, (k % 5 == 0) ? 7 : 4);
+    }
+    lcd.setForeColor(GRAY_35);
+    lcd.drawVLine(x + kDeskRailX, kDeskFaderY, kDeskFaderHeight);
+    lcd.drawVLine(x + kDeskRailX + 1, kDeskFaderY, kDeskFaderHeight);
+    const uint16_t capY = deskCapY(level);
+    lcd.setForeColor(c);
+    lcd.fillRect(x + kDeskCapX, capY, kDeskCapWidth, kDeskCapHeight);
+    lcd.setForeColor(BLACK);
+    lcd.drawHLine(x + kDeskCapX, capY + kDeskCapHeight / 2, kDeskCapWidth);  // the groove across the cap
+    lcd_drawDeskSegments(column_, 0, true);
+    snprintf(text, sizeof text, "%u", static_cast<unsigned>(level));
+    lcd.setForeColor((audible && on) ? WHITE : GRAY_50);
+    lcd.drawText(text, static_cast<uint16_t>(strlen(text)), x + kDeskCapX + 10 - (static_cast<uint16_t>(strlen(text)) * 7) / 2, kDeskLevelY);
+
+    // 6. THE FOOT PLATE: the channel number and a lamp
+    lcd.setForeColor(GRAY_50);
+    lcd.drawRect(x + 1, kDeskFootY, kDeskWidth - 2, kDeskFootHeight);
+    lcd.setFont(FONT_10x14);
+    lcd.setForeColor(c);
+    if (!isReturn) {
+        lcd.drawText(kDataLayerNum[layer], 2, x + 8, kDeskFootY + 6);
+    } else {
+        lcd.drawText(column_ == kDubStrips ? "E" : "V", 1, x + 14, kDeskFootY + 6);
+    }
+    lcd.setFont(FONT_05x07);
+    const bool lamp = isReturn ? on : muted;
+    lcd.setForeColor(lamp ? (isReturn ? GREEN : RED) : GRAY_25);
+    lcd.fillRect(x + 46, kDeskFootY + 6, 18, 14);
+    lcd.setForeColor(GRAY_50);
+    lcd.drawText(isReturn ? "ON" : "MUTE", isReturn ? 2 : 4, x + 46 + (isReturn ? 2 : -3) + 1, kDeskFootY + 24);
+    lcd.setBackColor(BLACK);
 }
 
 void Controller::lcd_drawDubViewData() {
-    /// @brief Redraws the dub desk: a strip per layer (number, name, ECHO and VERB sends, fader for
-    /// LEVEL, bus) and the ECHO and VERB returns. A strip or return is drawn again only when what it
-    /// shows changed; the meters are drawn by lcd_drawDubMeters.
+    /// @brief Redraws the dub desk: twelve columns (the ten layers, ECHO, VERB) across the whole
+    /// lane area, like an old mixing console. A column is drawn again only when what it shows
+    /// changed; the LED ladders are drawn by lcd_drawDubMeters.
     dubViewStateDrawn = dubViewState();
-    lcd.setBackColor(BLACK);
-    char text[16];
-
-    // 1. THE TEN STRIPS
-    for (uint8_t i = 0; i < kDubStrips; i++) {
-        const DubStrip& st = dubMix.strip[i];
-        const bool audible = layerAudible(i), sel = (i == dubStripSel);
-        uint32_t fp = 2166136261u;
-        const uint32_t parts[8] = {st.bus, st.echo, st.verb, layerLibrary[i].level, audible ? 1u : 0u, layerLibrary[i].mute ? 1u : 0u, sel ? 1u : 0u, dubMix.pan[i]};
-        for (uint8_t k = 0; k < 8; k++) fp = (fp ^ parts[k]) * 16777619u;
-        for (const char* c = layerLibrary[i].instLoadedData.nameShortL; *c; c++) fp = (fp ^ static_cast<uint8_t>(*c)) * 16777619u;
-        if (fp == 0) fp = 1;
-        if (fp == dubStripDrawn[i]) continue;
-        dubStripDrawn[i] = fp;
-        dubMeterDrawn[i] = 0xFFFF;  // the strip is cleared, its meter too
-        const uint16_t x = deskStripX(i);
-        const RGB16Color c = layerColor(i);
-        lcd.clearRect(x, kImageLayerY[0] + 2, kDeskStripStep, 306);
-        lcd.setForeColor(GRAY_25);
-        lcd.drawVLine(x + kDeskStripWidth + 1, kImageLayerY[0] + 3, 304);
-        if (sel) {
-            lcd.setForeColor(CYAN);
-            lcd.drawHLine(x, kImageLayerY[0] + 2, kDeskStripWidth);
-        }
-        lcd.setFont(FONT_07x09);
-        lcd.setAlignment(LEFT);
-        lcd.setForeColor(c);
-        lcd.drawText(kDataLayerNum[i], 2, x + 1, kDeskNumY);
-        lcd.setFont(FONT_05x07);
-        if (layerLibrary[i].mute) {
-            lcd.setForeColor(GRAY_75);
-            lcd.drawText("MUTE", 4, x + 28, kDeskNumY + 1);
-        }
-        lcd.setForeColor(c);
-        lcd.drawText(layerLibrary[i].instLoadedData.nameShortL, 8, x + 1, kDeskNameY);
-        const uint8_t sends[2] = {st.echo, st.verb};
-        for (uint8_t r = 0; r < 2; r++) {
-            const uint16_t y = (r == 0) ? kDeskEchoY : kDeskVerbY;
-            lcd.setForeColor(audible ? GRAY_75 : GRAY_35);
-            lcd.drawText((r == 0) ? "EC" : "RV", 2, x + 1, y);
-            lcd.setForeColor(GRAY_35);
-            lcd.drawRect(x + kDeskBarOffset, y, kDeskBarWidth, kDeskBarHeight);
-            if (sends[r] > 0) {
-                lcd.setForeColor(c);
-                lcd.fillRect(x + kDeskBarOffset + 1, y + 1, deskBarFill(sends[r]), kDeskBarHeight - 2);
-            }
-        }
-        lcd_drawDeskFader(x, layerLibrary[i].level, c);
-        lcd.setFont(FONT_05x07);
-        lcd.setForeColor(audible ? GRAY_75 : GRAY_35);
-        if (st.bus == DUB_BUS_DIR) {
-            char pan[8], busText[16];
-            panLabel(pan, sizeof pan, dubMix.pan[i]);
-            snprintf(busText, sizeof busText, "DIR %s", pan);
-            lcd.drawText(busText, static_cast<uint16_t>(strlen(busText)), x + 1, kDeskBusY);
-        } else {
-            lcd.drawText("FILT", 4, x + 1, kDeskBusY);
-        }
-    }
-
-    // 2. THE RETURNS: ECHO (Effect 1) and VERB (the reverb)
     const Effect& echo = effect[0];
-    for (uint8_t r = 0; r < 2; r++) {
-        const bool isEcho = (r == 0);
-        const uint8_t wet = isEcho ? echo.subEffect[echo.type].fData : reverb.wet;
-        const bool on = isEcho ? echo.active : reverb.active;
-        const uint8_t aux = isEcho ? ((echo.type == EF_DELAY) ? echo.subEffect[EF_DELAY].cData : 0) : reverb.decay;
+    for (uint8_t col = 0; col < kDeskColumns; col++) {
         uint32_t fp = 2166136261u;
-        const uint32_t parts[5] = {wet, on ? 1u : 0u, aux, isEcho ? echo.type : 0u, 9u};
-        for (uint8_t k = 0; k < 5; k++) fp = (fp ^ parts[k]) * 16777619u;
-        if (fp == 0) fp = 1;
-        if (fp == dubReturnDrawn[r]) continue;
-        dubReturnDrawn[r] = fp;
-        const uint16_t x = kDeskReturnX[r];
-        lcd.clearRect(x, kImageLayerY[0] + 2, kDeskStripStep + 16, 306);
-        lcd.setForeColor(GRAY_25);
-        lcd.drawVLine(x - 2, kImageLayerY[0] + 3, 304);
-        const RGB16Color c = on ? (isEcho ? YELLOW : WHITE) : GRAY_35;
-        lcd.setFont(FONT_07x09);
-        lcd.setAlignment(LEFT);
-        lcd.setForeColor(c);
-        lcd.drawText(isEcho ? "ECHO" : "VERB", 4, x + 1, kDeskTitleY);
-        lcd.setFont(FONT_05x07);
-        lcd.setForeColor(GRAY_75);
-        if (isEcho) {
-            lcd.drawText(kEffectTypeDataLibrary[echo.type].nameLongR + 4, 6, x + 1, kDeskSubY);
+        auto mix = [&fp](uint32_t v) { fp = (fp ^ v) * 16777619u; };
+        if (col < kDubStrips) {
+            const DubStrip& st = dubMix.strip[col];
+            mix(st.bus);
+            mix(st.echo);
+            mix(st.verb);
+            mix(dubMix.pan[col]);
+            mix(layerPanActive(col) ? 1u : 0u);
+            mix(layerLibrary[col].level);
+            mix(layerAudible(col) ? 1u : 0u);
+            mix(layerLibrary[col].mute ? 1u : 0u);
+            mix((col == dubStripSel) ? 1u : 0u);
+            for (const char* c = layerLibrary[col].instLoadedData.nameShortL; *c; c++) mix(static_cast<uint8_t>(*c));
+        } else if (col == kDubStrips) {
+            mix(echo.active);
+            mix(echo.type);
+            mix(echo.subEffect[echo.type].fData);
+            mix(echo.subEffect[EF_DELAY].cData);
+            mix(echo.subEffect[EF_DELAY].dData);
         } else {
-            snprintf(text, sizeof text, "DECAY %u", static_cast<unsigned>(reverb.decay));
-            lcd.drawText(text, static_cast<uint16_t>(strlen(text)), x + 1, kDeskSubY);
+            mix(reverb.active);
+            mix(reverb.wet);
+            mix(reverb.decay);
+            mix(reverb.size);
         }
-        if (isEcho && (echo.type == EF_DELAY)) {
-            lcd.setForeColor(GRAY_75);
-            lcd.drawText("FB", 2, x + 1, kDeskFeedbackY);
-            lcd.setForeColor(GRAY_35);
-            lcd.drawRect(x + kDeskBarOffset, kDeskFeedbackY, kDeskBarWidth, kDeskBarHeight);
-            lcd.setForeColor(c);
-            lcd.fillRect(x + kDeskBarOffset + 1, kDeskFeedbackY + 1, deskBarFill(static_cast<uint8_t>((static_cast<uint16_t>(aux) * 100u) / kMaxDelayFeedback)), kDeskBarHeight - 2);
-        }
-        lcd_drawDeskFader(x, wet, c);
-        lcd.setFont(FONT_05x07);
-        lcd.setForeColor(on ? GRAY_75 : GRAY_35);
-        lcd.drawText(on ? "RETURN" : "OFF", on ? 6 : 3, x + 1, kDeskBusY);
+        if (fp == 0) fp = 1;
+        uint32_t& drawn = (col < kDubStrips) ? dubStripDrawn[col] : dubReturnDrawn[col - kDubStrips];
+        if (fp == drawn) continue;
+        drawn = fp;
+        if (col < kDubStrips) dubMeterDrawn[col] = 0xFFFF;  // the column is cleared, its ladder too
+        lcd_drawDeskColumn(col);
     }
 }
 
 void Controller::lcd_drawDubMeters() {
-    /// @brief The level meter beside each strip's fader, from the lane meters' peaks (25 times a second).
-    lcd.setBackColor(BLACK);
+    /// @brief The LED ladder beside each strip's fader, from the lane meters' peaks (25 times a second).
     for (uint8_t i = 0; i < kDubStrips; i++) {
-        const uint16_t h = layerAudible(i) ? deskMeterHeight(meterShown[i], kMeterBarWidth) : 0;
-        if (h == dubMeterDrawn[i]) continue;
-        dubMeterDrawn[i] = h;
-        const uint16_t x = deskStripX(i) + kDeskMeterX + 1, bottom = kDeskFaderY + kDeskFaderHeight - 2;
-        lcd.clearRect(x, kDeskFaderY + 1, kDeskMeterWidth - 2, kDeskFaderHeight - 2);
-        if (h > 0) {
-            lcd.setForeColor(GREEN);
-            lcd.fillRect(x, bottom - h + 1, kDeskMeterWidth - 2, h);
-            const uint16_t hot = static_cast<uint16_t>((kDeskFaderHeight - 2) * 85u / 100u);
-            if (h > hot) {
-                lcd.setForeColor(YELLOW);
-                lcd.fillRect(x, bottom - h + 1, kDeskMeterWidth - 2, h - hot);
-            }
-        }
+        const bool audible = layerAudible(i);
+        const uint8_t lit = audible ? deskMeterLit(meterShown[i], kMeterBarWidth) : 0;
+        if (lit == dubMeterDrawn[i]) continue;
+        dubMeterDrawn[i] = lit;
+        lcd_drawDeskSegments(i, lit, audible);
     }
 }
 

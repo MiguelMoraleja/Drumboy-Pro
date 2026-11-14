@@ -378,7 +378,9 @@ class Controller {
     uint32_t dubViewState() const;
     void lcd_drawDubViewData();
     void lcd_drawDubMeters();
-    void lcd_drawDeskFader(uint16_t x_, uint8_t level_, RGB16Color color_);
+    void lcd_drawDeskKnob(uint16_t cx_, uint16_t cy_, uint8_t percent_, RGB16Color color_);
+    void lcd_drawDeskColumn(uint8_t column_);
+    void lcd_drawDeskSegments(uint8_t column_, uint8_t lit_, bool audible_);
     uint32_t noteViewKey = 0;               // the step edit screen: which layer, bank and layout it was drawn for
     int16_t noteViewDrawnLast = -1;         // lastActiveBeatNum when it was drawn
     uint32_t noteViewStateDrawn = 0;

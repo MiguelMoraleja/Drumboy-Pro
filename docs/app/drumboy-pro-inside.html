@@ -972,73 +972,64 @@ const IDEAS = [
       });
       P.text("MUTE HELD", 305, 103, 5, LC.YE);
     } },
-  { id: "mix", group: 0, name: "Dub mixer", item: "45, 46, 47, 49", size: "L, in phases", today: false,
+  { id: "mix", group: 0, name: "Dub mixer", item: "45, 46, 47, 49", size: "L, in phases", today: false, built: "V1.15",
     note: ["",
-           "First version built in V1.15 (waiting for the hardware test): ten strips and the ECHO and VERB returns, each strip with its number, name, the ECHO and VERB send bars, a LEVEL fader with a live meter and its bus (FILT or DIR). Not built yet: the filter row (FL), the line-in strip, the DUB FILTER dial, the master meters, the throws and the ping-pong echo. The picture below is the whole design. The lane area becomes a desk: one strip per layer and one for line-in, each with its channel filter (FL), echo send (EC), reverb send (RV), fader and meter; then the ECHO and VERB returns, and the big DUB FILTER knob over the master meters. The top row edits the selected strip (2, cyan); the bottom row is always the desk: FEEDBACK, the two returns and the dub filter. Layer 5 is being thrown into the echo (yellow, hold EFFECT 1 + its pad), layer 7 is muted but its echo tail still rings, and FEEDBACK is past 100 %, so the echo is building up. The echo is ping-pong (its repeats alternate left and right), and strips that go straight to the master (DIR: 1 and 4) can be panned. Design: docs/dub-mixer-design.md."],
+           "Built in V1.15 (waiting for the hardware test), in the style of an old mixing console: twelve columns fill the whole lane area, the ten layers and the ECHO and VERB returns. Each column has a scribble plate (amber and filled for the selected strip), the bus switch (FILT or DIR), two knobs with their values (the ECHO and VERB sends; FDBK and DAMP on the echo, DECAY and SIZE on the reverb), a pan bar, a shorter fader with its scale and an LED ladder meter, and a foot plate with the channel number and a lamp (MUTE red, the returns ON green). Not built yet: the filter knob per strip, the line-in strip, the DUB FILTER dial, master meters, throws. Design: docs/dub-mixer-design.md."],
     draw() {
       mMenu("DB", 2);
-      mField(0, "LEVEL", "74"); mField(1, "FILTER", "HP 35"); mField(2, "ECHO", "35", "  %"); mField(3, "VERB", "62", "  %");
-      mField(4, "FEEDBACK", "104", "  %", LC.MA); mField(5, "ECHO RTN", "80", "  %"); mField(6, "VERB RTN", "70", "  %"); mField(7, "DUB FILTER", "HP 500", " HZ");
+      mField(0, "LEVEL", "74"); mField(1, "BUS", "FILT"); mField(2, "ECHO", "35", "  %"); mField(3, "VERB", "62", "  %");
+      mField(4, "MODE", "DUB"); mField(5, "FEEDBACK", "55", "  %"); mField(6, "ECHO RTN", "80", "  %"); mField(7, "VERB RTN", "70", "  %");
       mBig();
-      const names = ["KICK 808", "SNARE TI", "HAT CLOS", "HAT OPEN", "CLAP", "RIM", "TOM LOW", "SHAKER", "COWBELL", "PERC FX", "LINE IN"];
-      //            level flt  ec  rv  bus meter
-      const ch = [[82,   0,   0,  5, 0, 70], [74,  35,  35, 62, 1, 58], [60,  60,   0,  8, 1, 40], [55,  45,  20, 20, 0, 12], [70,   0, 100, 55, 1, 50],
-                  [45,   0,  45, 10, 1, 20], [66, -40,  30, 30, 1,  0], [40,  70,  10,  0, 1, 30], [50,   0,  60, 15, 1,  8], [58, -20,  20, 70, 1, 66], [64,  25,  40, 35, 1, 44]];
-      const sel = 1, muted = 6, thrown = 4, FY0 = 204, FH = 208;
-      const bar = (x, y, w, v, c, lbl, lc) => { P.text(lbl, x, y, 5, lc); P.frame(x + 17, y, w, 7, LC.G35); if (v > 0) P.rect(x + 18, y + 1, Math.round(v * (w - 2) / 100), 5, c); };
-      const fader = (x, v, c, m) => {
-        P.rect(x + 20, FY0, 1, FH, LC.G35);
-        for (let t = 0; t <= 4; t++) P.rect(x + 13, FY0 + Math.round(t * (FH - 1) / 4), 5, 1, LC.G35);
-        P.rect(x + 12, FY0 + Math.round((100 - v) * (FH - 7) / 100), 17, 7, c);
-        P.frame(x + 38, FY0, 7, FH, LC.G25);
-        const mh = Math.round(m * (FH - 2) / 100);
-        if (mh > 0) { P.rect(x + 39, FY0 + FH - 1 - mh, 5, mh, LC.GN); if (m > 62) P.rect(x + 39, FY0 + FH - 1 - mh, 5, Math.round((m - 62) * (FH - 2) / 100), LC.YE); }
+      // Same numbers as the firmware (DubView.h, lcd_drawDeskColumn).
+      const AMB = "#ffa600", X0 = 24, STEP = 76, W = 73;
+      const lev = [82, 74, 60, 55, 70, 45, 66, 40, 50, 58], ech = [0, 35, 0, 20, 100, 45, 30, 10, 60, 20], vrb = [5, 62, 8, 20, 55, 10, 30, 0, 15, 70];
+      const bus = [1, 0, 0, 1, 0, 0, 0, 0, 0, 0], pan = [20, 20, 6, 31, 20, 20, 20, 12, 20, 20], met = [70, 58, 40, 12, 50, 20, 0, 30, 8, 66];
+      const sel = 1, muted = 6, FY = 246, FH = 128, CAP = 11;
+      const knob = (cx, cy, pc, c) => {
+        const pt = (r, q) => { const th = (-135 + 270 * q / 100) * Math.PI / 180; return [Math.round(cx + r * Math.sin(th)), Math.round(cy - r * Math.cos(th))]; };
+        for (let k = 0; k <= 4; k++) { const [x, y] = pt(15, k * 25); P.rect(x, y, 1, 1, LC.G50); if (k % 2 === 0) { const [x2, y2] = pt(16, k * 25); P.rect(x2, y2, 1, 1, LC.G50); } }
+        P.disc(cx, cy, 10, LC.G25); P.ring(cx, cy, 11, c);
+        const [px, py] = pt(9, pc); P.line(cx, cy, px, py, AMB); P.line(cx + 1, cy, px + 1, py, AMB);
       };
-      ch.forEach(([lv, fl, ec, rv, bus, m], i) => {
-        const x = 24 + i * 60, dim = i === muted, c = dim ? LC.G35 : i === sel ? LC.CY : (i % 2 ? LC.G75 : LC.W), lc = dim ? LC.G35 : LC.G75;
-        P.rect(x + 58, 134, 1, 304, LC.G25);
-        if (i === sel) P.rect(x, 133, 57, 1, LC.CY);
-        P.text(i < 10 ? String(i + 1).padStart(2, "0") : "LI", x + 1, 137, 7, c);
-        if (dim) P.text("MUTE", x + 28, 138, 5, LC.G75);
-        if (i === thrown) P.text("THRW", x + 28, 138, 5, LC.YE);
-        P.text(names[i], x + 1, 150, 5, c);
-        // channel filter: one knob, low-pass to the left, off in the centre, high-pass to the right
-        P.text("FL", x + 1, 162, 5, lc); P.frame(x + 18, 162, 38, 7, LC.G35); P.rect(x + 37, 161, 1, 9, LC.G50);
-        if (fl !== 0) { const cx = x + 37, w = Math.round(Math.abs(fl) * 17 / 100); P.rect(fl > 0 ? cx + 1 : cx - w, 163, w, 5, c); }
-        bar(x + 1, 174, 38, ec, i === thrown ? LC.YE : c, "EC", i === thrown ? LC.YE : lc);
-        bar(x + 1, 186, 38, rv, c, "RV", lc);
-        fader(x, lv, c, dim ? 0 : m);
-        P.text(bus ? "FILT" : (i === 3 ? "DIR  R30" : "DIR    C"), x + 1, 428, 5, lc);
-      });
-      // returns
-      const rx = [690, 766];
-      P.rect(686, 134, 1, 304, LC.G50);
-      P.text("ECHO", rx[0] + 1, 137, 7, LC.YE); P.text(" 3/4", rx[0] + 42, 138, 5, LC.G75);
-      P.text("PING-PONG", rx[0] + 1, 150, 5, LC.G75);
-      bar(rx[0] + 1, 162, 50, 100, LC.MA, "FB", LC.MA);
-      bar(rx[0] + 1, 174, 50, 55, LC.W, "TN", LC.G75);
-      bar(rx[0] + 1, 186, 50, 30, LC.W, ">R", LC.G75);
-      fader(rx[0] + 8, 80, LC.YE, 74); P.frame(rx[0] + 56, FY0, 7, FH, LC.G25); P.rect(rx[0] + 57, FY0 + FH - 1 - 96, 5, 96, LC.GN); P.text("RETURN L R", rx[0] + 1, 428, 5, LC.G75);
-      P.rect(rx[1] - 4, 134, 1, 304, LC.G25);
-      P.text("VERB", rx[1] + 1, 137, 7, LC.W);
-      P.text("SPRING", rx[1] + 1, 150, 5, LC.G75);
-      bar(rx[1] + 1, 162, 50, 60, LC.W, "DC", LC.G75);
-      bar(rx[1] + 1, 174, 50, 40, LC.W, "SZ", LC.G75);
-      fader(rx[1] + 8, 70, LC.W, 48); P.text("RETURN", rx[1] + 1, 428, 5, LC.G75);
-      // the big knob and the master
-      P.rect(842, 134, 1, 304, LC.G50);
-      P.text("DUB FILTER", 891, 138, 5, LC.G75, "C");
-      const kx = 891, ky = 196, steps = 11, pos = 5;
-      P.ring(kx, ky, 30, LC.G50); P.ring(kx, ky, 29, LC.G50);
-      for (let k = 0; k < steps; k++) { const a = (-225 + k * 27) * Math.PI / 180; P.line(kx + 34 * Math.cos(a), ky + 34 * Math.sin(a), kx + 38 * Math.cos(a), ky + 38 * Math.sin(a), k === pos ? LC.CY : LC.G75); }
-      { const a = (-225 + pos * 27) * Math.PI / 180; for (const d of [-1, 0, 1]) P.line(kx + d, ky, kx + d + 27 * Math.cos(a), ky + 27 * Math.sin(a), LC.CY); P.disc(kx, ky, 4, LC.CY); }
-      P.text("OFF", 850, 232, 5, LC.G75); P.text("7.5K", 908, 232, 5, LC.G75);
-      P.text("HP 500", 891, 246, 7, LC.CY, "C");
-      P.text("MASTER", 891, 270, 5, LC.G75, "C");
-      [[866, 72], [880, 66]].forEach(([x, m]) => { P.frame(x, 282, 9, 130, LC.G25); const mh = Math.round(m * 128 / 100); P.rect(x + 1, 411 - mh, 7, mh, LC.GN); P.rect(x + 1, 411 - mh, 7, Math.round((m - 55) * 128 / 100), LC.YE); });
-      P.text("L", 868, 416, 5, LC.G75); P.text("R", 882, 416, 5, LC.G75);
-      P.frame(906, 282, 7, 130, LC.G25); P.rect(907, 283, 5, 22, LC.MA); P.text("GR", 903, 416, 5, LC.G75);
-      P.text("LIMIT -3 DB", 891, 428, 5, LC.G75, "C");
+      const ladder = (x, lit, on) => { for (let k = 0; k < 13; k++) { const y = FY + FH - (k + 1) * 9, c = on && k < lit ? (k < 9 ? LC.GN : k < 12 ? LC.YE : LC.RE) : LC.G25; P.rect(x + 50, y, 7, 7, c); } };
+      const column = (col) => {
+        const x = X0 + col * STEP, ret = col >= 10, isSel = col === sel;
+        let l1, l2, level, k, kn, on = true, aud = true, bs = 0, pn = 20, lamp, pn_heard = false;
+        if (!ret) { l1 = String(col + 1).padStart(2, "0"); l2 = LAYER_NAMES[col].slice(0, 9); level = lev[col]; k = [ech[col], vrb[col]]; kn = ["ECHO", "VERB"]; bs = bus[col]; pn = pan[col]; aud = col !== muted; lamp = col === muted; pn_heard = bs === 1; }
+        else if (col === 10) { l1 = "ECHO"; l2 = "DELAY"; level = 80; k = [69, 30]; kn = ["FDBK", "DAMP"]; lamp = true; }
+        else { l1 = "VERB"; l2 = "REVERB"; level = 70; k = [60, 40]; kn = ["DECAY", "SIZE"]; lamp = true; }
+        const c = !aud || !on ? LC.G35 : (isSel ? AMB : (col % 2 ? LC.G75 : LC.W));
+        P.rect(x + W + 1, 134, 1, 303, LC.G25);
+        // 1. scribble plate
+        if (isSel) { P.rect(x + 1, 134, W - 2, 20, AMB); P.text(l1, x + 5, 137, 5, LC.K, "L", AMB); P.text(l2, x + 5, 145, 5, LC.K, "L", AMB); }
+        else { P.frame(x + 1, 134, W - 2, 20, LC.G50); P.text(l1, x + 5, 137, 5, c); P.text(l2, x + 5, 145, 5, c); }
+        // 2. bus switch / ON
+        if (!ret) { [["FILT", 0], ["DIR", 1]].forEach(([n, v], i) => { const cx = x + 1 + i * 36, lit = bs === v; if (lit) { P.rect(cx, 158, 35, 11, aud ? LC.G75 : LC.G35); P.text(n, cx + Math.floor((35 - n.length * 7) / 2) + 1, 160, 5, LC.K, "L", aud ? LC.G75 : LC.G35); } else { P.frame(cx, 158, 35, 11, LC.G35); P.text(n, cx + Math.floor((35 - n.length * 7) / 2) + 1, 160, 5, LC.G50); } }); }
+        else { P.rect(x + 1, 158, W - 2, 11, LC.G75); P.text("ON", x + Math.floor((W - 14) / 2) + 1, 160, 5, LC.K, "L", LC.G75); }
+        // 3. knobs
+        [18, 55].forEach((ox, i) => { const cx = x + ox; knob(cx, 189, k[i], aud ? LC.G75 : LC.G35); P.text(kn[i], cx - Math.floor(kn[i].length * 7 / 2) + 1, 203, 5, LC.G75); const v = k[i] + "%"; P.text(v, cx - Math.floor(v.length * 7 / 2) + 1, 213, 5, aud ? LC.W : LC.G50); });
+        // 4. pan bar
+        if (!ret) {
+          P.frame(x + 1, 228, 41, 7, pn_heard ? LC.G50 : LC.G35); P.rect(x + 1 + 20, 226, 1, 11, pn_heard ? LC.G50 : LC.G35);
+          P.rect(x + 2 + Math.floor(pn * 36 / 40), 229, 3, 5, pn_heard ? c : LC.G35);
+          const lbl = pn === 20 ? "C" : pn < 20 ? "L" + String(20 - pn).padStart(2) : "R" + String(pn - 20).padStart(2);
+          P.text(lbl, x + 46, 228, 5, pn_heard ? LC.W : LC.G50);
+        }
+        // 5. fader
+        P.text("10", x + 2, FY - 3, 5, LC.G50); P.text("5", x + 9, FY + 61, 5, LC.G50); P.text("0", x + 9, FY + FH - 5, 5, LC.G50);
+        for (let t = 0; t <= 10; t++) { const ty = FY + 5 + Math.floor(t * (FH - CAP) / 10); P.rect(x + 19 + (t % 5 ? 3 : 0), ty, t % 5 ? 4 : 7, 1, LC.G50); }
+        P.rect(x + 30, FY, 2, FH, LC.G35);
+        const cy = FY + Math.floor((100 - level) * (FH - CAP) / 100);
+        P.rect(x + 20, cy, 21, CAP, c); P.rect(x + 20, cy + 5, 21, 1, LC.K);
+        ladder(x, !ret && aud ? Math.ceil(met[col] * 13 / 100) : 0, true);
+        const lv = String(level); P.text(lv, x + 30 - Math.floor(lv.length * 7 / 2), 379, 5, aud && on ? LC.W : LC.G50);
+        // 6. foot plate
+        P.frame(x + 1, 394, W - 2, 38, LC.G50);
+        P.text(ret ? (col === 10 ? "E" : "V") : String(col + 1).padStart(2, "0"), x + (ret ? 14 : 8), 400, 10, c);
+        P.rect(x + 46, 400, 18, 14, lamp ? (ret ? LC.GN : LC.RE) : LC.G25);
+        P.text(ret ? "ON" : "MUTE", x + 46 + (ret ? 3 : -2), 418, 5, LC.G50);
+      };
+      for (let col = 0; col < 12; col++) column(col);
     } },
   { id: "editor", group: 0, name: "Step edit", item: "45", size: "L", today: false, built: "V1.15",
     note: ["",
@@ -2231,6 +2222,7 @@ const RELEASES = [
          "Instrument page 2 (START, END): the lane area shows the sample at full width (peaks of 840 stretches), cyan between START and END, gray outside, with both handles and their values; turning START or END redraws only the columns the handle crossed",
          "PAN per layer (instrument page 3, the field next to STYLE; ADD + turn moves every layer): C in the centre, L1 to L20 to the left, R1 to R20 to the right, constant power with 0 dB in the centre, so a centred layer sounds exactly as before and a hard-panned one is as loud as a centred one. In this first step it is heard for a layer that goes straight to the master (its OUT is MASTER, or a DIR strip in DUB); a layer that goes through the EQ, the filters or the effects stays centred, and its PAN field is gray. Stereo through the chain follows. Saved in the song file",
          "Step edit screen: while the NOTE page is open, the lane area shows the layer's beats across the full width, with a velocity lane and a chance lane under them, a dot under beats with a condition, a bar ruler, and the selected beat in magenta with its details at the top right",
+         "DUB desk redesigned like an old mixing console: twelve wide columns fill the whole lane area (ten layers, ECHO, VERB); scribble plates (amber for the selected strip), the FILT | DIR switch, two knobs with values per column, the pan bar, shorter faders with a scale and LED ladder meters, foot plates with the channel number and a mute lamp",
          "DUB desk: while the DUB page is open, the lane area shows a strip per layer (number, name, ECHO and VERB send bars, a LEVEL fader with a live level meter, the bus) and the ECHO and VERB returns (fader for the WET, FEEDBACK bar on the echo); a pad press selects the strip, and a strip is drawn again only when something on it changes",
          "DUB mixer, first step: MIXER, then DUB, then ROUTING. DUB mode per song (MODE field, CHAIN or DUB): every layer is a strip with a BUS (FILT through EQ and Filter 1, or DIR straight to the master) and ECHO and VERB sends (0 to 100 %) into Effect 1 (through Filter 2) and the reverb; the effects and the reverb then run without their DRY, and their WET is the return level (ECHO RTN, VERB RTN). Turning MODE to DUB makes Effect 1 a delay and switches it and the reverb on. A pad press selects the strip; FEEDBACK is the delay's. Saved in the song file (older firmware ignores it)",
          "Status line in the strip under the top menu: while M, F, the left S, I, the right S or SONG is held, it says what the other keys do with it; otherwise it shows the MIDI clock (tempo, LOCKED) and when the last autosave was written"],

@@ -25528,13 +25528,29 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
     if (menu != INIT_MENU) {
         // 2. SIGNAL GENERATION & INPUT ACQUISITION
         // Acquire line-in, metronome, and layer source buffers.
+#ifdef DSP_PROFILE
+        uint32_t profT = DWT_CYCCNT;
+#define PROF_LAP(stage_)                \
+    do {                                \
+        const uint32_t n_ = DWT_CYCCNT; \
+        profSum[stage_] += n_ - profT;  \
+        profT = n_;                     \
+    } while (0)
+#else
+#define PROF_LAP(stage_) \
+    do {                 \
+    } while (0)
+#endif
         processAudioReceive(inputBuffer_);
+        PROF_LAP(0);
 
         // Generate internal metronome click signal.
         processAudioMetronome();
+        PROF_LAP(1);
 
         // Process active layer sample playback.
         processAudioLayer();
+        PROF_LAP(2);
 
         // Layer meters: the peak of each layer's block (read and reset by the main loop).
         for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
@@ -25546,15 +25562,26 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
             }
             layerPeak[i] = peak;
         }
+        PROF_LAP(2);
 
         // 3. ROUTED DSP
         // Every source goes to its destination node, then the modules run in order
         // (EQ, Filter 1, Filter 2, FX 1, FX 2, Reverb), each passing its output on as set in routePatch.
+#ifdef DSP_PROFILE
+        const uint32_t routeStart = DWT_CYCCNT;
+        const uint32_t modulesBefore = profSum[3] + profSum[4] + profSum[5] + profSum[6] + profSum[7] + profSum[8];
+#endif
         processAudioRouting();
+#ifdef DSP_PROFILE
+        // The routing stage is what the modules did not take.
+        profSum[9] += (DWT_CYCCNT - routeStart) - ((profSum[3] + profSum[4] + profSum[5] + profSum[6] + profSum[7] + profSum[8]) - modulesBefore);
+        profT = DWT_CYCCNT;
+#endif
 
         // 4. FINAL OUTPUT PROCESSING
         // Apply final mix and write to I2S output buffer.
         processAudioSend(outputBuffer_);
+        PROF_LAP(10);
     }
 
     // 5. LOAD MEASUREMENT
@@ -25620,6 +25647,24 @@ void Controller::lcd_drawMonitor() {
     lcd.setAlignment(CENTER);
     lcd.setFont(FONT_05x07);
     lcd.drawText(text, strlen(text), 480, 524);
+
+    // The cost of each stage as a share of the block time (average over the interval).
+    uint32_t stage[11];
+    __disable_irq();
+    for (uint8_t k = 0; k < 11; k++) {
+        stage[k] = profSum[k];
+        profSum[k] = 0;
+    }
+    __enable_irq();
+    static const char* const kName[11] = {"IN", "MET", "LAY", "EQ", "F1", "F2", "X1", "X2", "REV", "RTE", "OUT"};
+    char stages[120];
+    size_t used = 0;
+    for (uint8_t k = 0; k < 11 && used + 12 < sizeof stages; k++) {
+        const unsigned long v = loadPermille(stage[k] / load.blocks, budget);
+        const int n = snprintf(stages + used, sizeof stages - used, "%s %lu.%lu  ", kName[k], v / 10, v % 10);
+        if (n > 0) used += static_cast<size_t>(n);
+    }
+    lcd.drawText(stages, strlen(stages), 480, 532);
 #endif
 }
 
@@ -26097,6 +26142,9 @@ void Controller::processAudioRouting() {
 
     // 4. RUN
     routeBlock<I2S_BLOCK_SIZE>(patch, routeState, buffers, sources, 2 + kLayerLibrarySize, [this](uint8_t module_) {
+#ifdef DSP_PROFILE
+        const uint32_t moduleStart = DWT_CYCCNT;
+#endif
         switch (module_) {
             case NODE_EQ:
                 processAudioEq();
@@ -26119,6 +26167,9 @@ void Controller::processAudioRouting() {
             default:
                 break;
         }
+#ifdef DSP_PROFILE
+        profSum[3 + module_] += DWT_CYCCNT - moduleStart;
+#endif
         // DUB mode: a send into an effect that is switched off is a send into nothing, not a dry copy.
         if (dubMix.on) {
             if (((module_ == NODE_FX1) && !effect[0].active && !effect[0].genTransition.active) || ((module_ == NODE_FX2) && !effect[1].active && !effect[1].genTransition.active)) {

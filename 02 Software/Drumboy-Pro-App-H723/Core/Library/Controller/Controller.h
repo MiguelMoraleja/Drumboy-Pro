@@ -120,6 +120,12 @@ class Controller {
     bool autosaveWritten = false;
     void lcd_drawLayerMeters();
     void lcd_drawStatusLine();
+#ifdef DSP_PROFILE
+    // Per-stage audio cost (make PROFILE=1): cycles summed since the last readout. Stages: 0 line-in,
+    // 1 metronome, 2 layers, 3 EQ, 4 Filter 1, 5 Filter 2, 6 Effect 1, 7 Effect 2, 8 reverb,
+    // 9 routing (sources scattered into the nodes), 10 output stage.
+    volatile uint32_t profSum[11] = {0};
+#endif
     LoadMeter dspLoad;                                                  // filled by processAudioBlock
     bool monitorFull = true;                                            // draw the labels (first time)
     uint32_t monitorTick = 0;

@@ -13,6 +13,8 @@ Fork: MiguelMoraleja/Drumboy-Pro. Firmware: `02 Software/Drumboy-Pro-App-H723`. 
 
 The owner's standing rule (2026-11-13): never trade sound quality for speed, memory or simplicity. If the audio engine runs out of processor time, find the room elsewhere (data cache, faster code, the unused DTCM RAM, a leaner screen, a specialized firmware build for heavy use) and do not thin out filters, effects, bit depth or sample rate. A cheaper algorithm is only acceptable if it sounds the same. Say so in the backlog when a choice touches this.
 
+The Makefile does not see a change of `DCACHE` or `PROFILE` (the data cache is on by default since V1.15; `DCACHE=0` turns it off): use a clean or another `BUILD` directory after changing them, and build the update package with a clean `build/`. Update file names stay within 28 characters (the bootloader ignored a 31-character name).
+
 ## Crash reports
 
 A crash restarts the firmware and shows `CRASH k AT pppppppp` (also a line in `System/Crash.log` on the SD card; `CrashRecord.h`). To find the code: check out the commit of that firmware, `make`, then `arm-none-eabi-addr2line -f -C -e build/app.elf 0xpppppppp` (also the `lr` value from the log). Builds are reproducible, so the addresses match the released file. kind: 1 HardFault, 2 MemManage, 3 BusFault, 4 UsageFault, 5 NMI, 6 Error_Handler.

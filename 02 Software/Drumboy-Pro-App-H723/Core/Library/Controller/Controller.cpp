@@ -1154,7 +1154,7 @@ void Controller::startMidiTx() {
 
     // 2. IN-FLIGHT BUFFER LOAD
     // Copy next message into a static buffer that persists across the async DMA transfer.
-    static uint8_t txDmaBuf[8];
+    static uint8_t txDmaBuf[32] __attribute__((aligned(32)));  // a whole cache line: the data cache build cleans it before the DMA reads it
     MidiTxMsg& msg = io.midi.txRing[io.midi.txRingTail];
     uint8_t len = msg.len;
     for (uint8_t i = 0; i < len; i++) txDmaBuf[i] = msg.data[i];
@@ -1162,6 +1162,9 @@ void Controller::startMidiTx() {
 
     // 3. TRANSMITTER LOCK AND DMA START
     io.midi.txBusy = true;
+#ifdef ENABLE_DCACHE
+    SCB_CleanDCache_by_Addr(reinterpret_cast<uint32_t*>(txDmaBuf), sizeof txDmaBuf);
+#endif
     if (HAL_UART_Transmit_DMA(&huart6, txDmaBuf, len) != HAL_OK) {
         io.midi.txBusy = false;
     }

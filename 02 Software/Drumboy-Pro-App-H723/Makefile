@@ -8,6 +8,8 @@
 #   make package VERSION=0.00    -> same, overriding the version (test builds)
 #   make WERROR=1                -> treat warnings in our own code (Core/) as errors, as CI does
 #   make PROFILE=1               -> measurement build: shows DSP load and I2S errors on screen
+#   make DCACHE=1                -> experimental build with the data cache on (SDRAM and RAM cacheable, DMA buffers
+#                                   maintained; Drumboy_Pro_Fw_MM_mm_dcache.bin). Use a separate BUILD dir.
 #                                   (use a separate BUILD dir, e.g. BUILD=build-profile)
 #   make version                 -> print the version from Version.h
 #
@@ -23,7 +25,7 @@ BUILD  ?= build
 TARGET  = $(BUILD)/app
 
 ARCH = -mcpu=cortex-m7 -mthumb -mfpu=fpv5-d16 -mfloat-abi=hard
-DEFS = -DDEBUG -DUSE_PWR_LDO_SUPPLY -DUSE_HAL_DRIVER -DSTM32H723xx $(if $(PROFILE),-DDSP_PROFILE)
+DEFS = -DDEBUG -DUSE_PWR_LDO_SUPPLY -DUSE_HAL_DRIVER -DSTM32H723xx $(if $(PROFILE),-DDSP_PROFILE) $(if $(DCACHE),-DENABLE_DCACHE)
 INCS = \
 	-ICore/Inc \
 	-IFATFS/Target \
@@ -58,7 +60,7 @@ VERSION_FILE = Core/Library/Global/Version.h
 VERSION ?= $(shell awk '/define FW_VERSION_MAJOR/{a=$$3} /define FW_VERSION_MINOR/{b=$$3} END{printf "%d.%02d", a, b}' $(VERSION_FILE))
 VERSION_MAJOR = $(word 1,$(subst ., ,$(VERSION)))
 VERSION_MINOR = $(word 2,$(subst ., ,$(VERSION)))
-PACKAGE = $(BUILD)/Drumboy_Pro_Fw_$(shell echo $(VERSION) | awk -F. '{printf "%02d_%02d", $$1, $$2}')$(if $(PROFILE),_dsp).bin
+PACKAGE = $(BUILD)/Drumboy_Pro_Fw_$(shell echo $(VERSION) | awk -F. '{printf "%02d_%02d", $$1, $$2}')$(if $(PROFILE),_dsp)$(if $(DCACHE),_dcache).bin
 
 .PHONY: all package version clean
 

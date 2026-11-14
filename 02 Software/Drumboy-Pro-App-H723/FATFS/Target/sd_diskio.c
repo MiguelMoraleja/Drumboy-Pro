@@ -59,6 +59,9 @@
  * Notice: This is applicable only for cortex M7 based platform.
  */
 /* USER CODE BEGIN enableSDDmaCacheMaintenance */
+#if defined(ENABLE_DCACHE)
+#define ENABLE_SD_DMA_CACHE_MAINTENANCE  1
+#endif
 /* #define ENABLE_SD_DMA_CACHE_MAINTENANCE  1 */
 /* USER CODE END enableSDDmaCacheMaintenance */
 
@@ -68,6 +71,9 @@
 * transfer data
 */
 /* USER CODE BEGIN enableScratchBuffer */
+#if defined(ENABLE_DCACHE)
+#define ENABLE_SCRATCH_BUFFER
+#endif
 /* #define ENABLE_SCRATCH_BUFFER */
 /* USER CODE END enableScratchBuffer */
 

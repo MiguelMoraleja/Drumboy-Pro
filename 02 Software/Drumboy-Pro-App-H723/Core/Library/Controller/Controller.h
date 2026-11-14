@@ -30,7 +30,14 @@ extern __attribute__((section(".RAM_D3"))) uint8_t i2c4_txData[2];
 
 /* Sync And Midi Buffers ----------------------------------------- */
 
-extern "C" uint8_t midiRxData;
+// The byte the MIDI-in DMA writes: alone in its own 32-byte cache line (the data cache build
+// invalidates that line before the byte is read).
+struct MidiRxBox {
+    uint8_t value;
+    uint8_t pad[31];
+} __attribute__((aligned(32)));
+extern "C" MidiRxBox midiRxBox;
+#define midiRxData midiRxBox.value
 
 /* Peripheral Handles -------------------------------------------- */
 

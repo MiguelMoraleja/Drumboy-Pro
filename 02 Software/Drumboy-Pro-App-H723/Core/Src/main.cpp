@@ -21,8 +21,9 @@ extern "C" void System_Initialize();
 
 /* Memory Allocation In D1 Ram ----------------------------------- */
 
-uint32_t i2s_rxBuffer[I2S_TOTAL_BUFFER_SIZE] = {0x00};
-uint32_t i2s_txBuffer[I2S_TOTAL_BUFFER_SIZE] = {0x00};
+// 32-byte aligned, a multiple of 32 bytes: the data cache build maintains them around the DMA.
+uint32_t i2s_rxBuffer[I2S_TOTAL_BUFFER_SIZE] __attribute__((aligned(32))) = {0x00};
+uint32_t i2s_txBuffer[I2S_TOTAL_BUFFER_SIZE] __attribute__((aligned(32))) = {0x00};
 
 /* Memory Allocation In D3 Ram ----------------------------------- */
 
@@ -33,11 +34,27 @@ __attribute__((section(".RAM_D3"))) uint8_t i2c4_txData[2] = {0x00};
 
 /* Sync And Midi Buffers ----------------------------------------- */
 
-uint8_t midiRxData;
+MidiRxBox midiRxBox;
 
 /* Global Controller Instance ------------------------------------ */
 
 Controller controller;
+
+#ifdef ENABLE_DCACHE
+// Memory attributes for the data cache build (make DCACHE=1, backlog 53 headroom work).
+//   SDRAM (0xC0000000, 16 MB): normal, write-back and write-allocate. Only the CPU uses it (the
+//   screen is bit-banged, samples reach it through the CPU), so it needs no maintenance.
+//   RAM_D3 (0x38000000, 16 KB): not cacheable: the I2C DMA buffers live there.
+// The DMA buffers in the AXI RAM (I2S, MIDI, SD) are cleaned and invalidated by address instead.
+static void mpu_configureForDataCache() {
+    ARM_MPU_Disable();
+    ARM_MPU_SetRegion(ARM_MPU_RBAR(0, 0xC0000000u), ARM_MPU_RASR(0, ARM_MPU_AP_FULL, 1, 0, 1, 1, 0, ARM_MPU_REGION_SIZE_16MB));
+    ARM_MPU_SetRegion(ARM_MPU_RBAR(1, 0x38000000u), ARM_MPU_RASR(0, ARM_MPU_AP_FULL, 1, 1, 0, 0, 0, ARM_MPU_REGION_SIZE_16KB));
+    ARM_MPU_Enable(MPU_CTRL_PRIVDEFENA_Msk);
+    __DSB();
+    __ISB();
+}
+#endif
 
 int main() {
     // System Startup
@@ -46,6 +63,10 @@ int main() {
     SCB_InvalidateICache();
     SCB_InvalidateDCache();
     SCB_EnableICache();
+#ifdef ENABLE_DCACHE
+    mpu_configureForDataCache();
+    SCB_EnableDCache();
+#endif
     HAL_Init();
 
     // Enable FPU (Floating Point Unit)
@@ -300,14 +321,26 @@ void HAL_TIM_ErrorCallback(TIM_HandleTypeDef* htim) {}
 // 1. Half Transfer (Process First 32 Samples)
 void HAL_I2SEx_TxRxHalfCpltCallback(I2S_HandleTypeDef* hi2s) {
     if (hi2s->Instance == SPI3) {
+#ifdef ENABLE_DCACHE
+        SCB_InvalidateDCache_by_Addr(reinterpret_cast<uint32_t*>(&i2s_rxBuffer[0]), I2S_BLOCK_SIZE * 2 * sizeof(uint32_t));
+#endif
         controller.processAudioBlock(&i2s_rxBuffer[0], &i2s_txBuffer[0]);
+#ifdef ENABLE_DCACHE
+        SCB_CleanDCache_by_Addr(reinterpret_cast<uint32_t*>(&i2s_txBuffer[0]), I2S_BLOCK_SIZE * 2 * sizeof(uint32_t));
+#endif
     }
 }
 
 // 2. Complete Transfer (Process Second 32 Samples)
 void HAL_I2SEx_TxRxCpltCallback(I2S_HandleTypeDef* hi2s) {
     if (hi2s->Instance == SPI3) {
+#ifdef ENABLE_DCACHE
+        SCB_InvalidateDCache_by_Addr(reinterpret_cast<uint32_t*>(&i2s_rxBuffer[I2S_BLOCK_SIZE * 2]), I2S_BLOCK_SIZE * 2 * sizeof(uint32_t));
+#endif
         controller.processAudioBlock(&i2s_rxBuffer[I2S_BLOCK_SIZE * 2], &i2s_txBuffer[I2S_BLOCK_SIZE * 2]);
+#ifdef ENABLE_DCACHE
+        SCB_CleanDCache_by_Addr(reinterpret_cast<uint32_t*>(&i2s_txBuffer[I2S_BLOCK_SIZE * 2]), I2S_BLOCK_SIZE * 2 * sizeof(uint32_t));
+#endif
     }
 }
 
@@ -344,6 +377,9 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef* huart) {
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart) {
     if (huart == &huart1) {
+#ifdef ENABLE_DCACHE
+        SCB_InvalidateDCache_by_Addr(reinterpret_cast<uint32_t*>(&midiRxBox), sizeof midiRxBox);
+#endif
         controller.receiveMidiCommand();
         HAL_UART_Receive_DMA(&huart1, &midiRxData, 1);
     }

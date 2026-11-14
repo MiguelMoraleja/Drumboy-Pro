@@ -106,6 +106,8 @@ make -C "../tests"  # fill engine tests, run on the PC
 
 For performance work, `make BUILD=build-profile PROFILE=1 package` makes a measurement build (`Drumboy_Pro_Fw_01_04_dsp.bin`) that shows the DSP load (average, peak, maximum) and I2S error counts as text at the bottom of the screen. Normal builds show the load as the CPU bar in the top-right corner (since V1.14), not the text.
 
+An experimental build with the data cache on (`make BUILD=build-dcache DCACHE=1 package`, `Drumboy_Pro_Fw_XX_YY_dcache.bin`) puts the SDRAM, where the samples and the effect buffers live, in the cache to give the audio engine more room; see [BACKLOG item 53](BACKLOG.md). It is opt-in until it has been tested on the device.
+
 This needs `arm-none-eabi-gcc` (on Ubuntu: `apt install gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib`). `02 Software/tools/package_firmware.py --check <file>` validates a package the same way the bootloader does.
 
 Every push runs the tests and a warning-free build in GitHub Actions. Our own code (`Core/`) builds with zero warnings; keep it that way, since a new warning is often a real bug.

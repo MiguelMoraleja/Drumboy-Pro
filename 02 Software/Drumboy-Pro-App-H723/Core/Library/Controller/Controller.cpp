@@ -8629,7 +8629,7 @@ void Controller::lcd_drawAlert() {
     lcd.drawText(alertText, strlen(alertText), 480, 265);
 
     // 5. WHICH SAMPLE (missing sample alerts): a second line under the box
-    if (((alertType == ALERT_MISSINGSAMPLE) || (alertType == ALERT_MISSINGSAMPLES)) && missingDetail[0]) {
+    if (((alertType == ALERT_MISSINGSAMPLE) || (alertType == ALERT_MISSINGSAMPLES) || (alertType == ALERT_SAMPLEMEMORY)) && missingDetail[0]) {
         lcd.clearRect(355, 282, 250, 14);
         lcd.drawText(missingDetail, strlen(missingDetail), 480, 285);
     }
@@ -20954,37 +20954,41 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
             if ((at >= 0) && freeSector()) {
                 sectorAvailable = true;
                 poolAddress = RAM_SAMPLE_ADDRESS + static_cast<uint32_t>(at);
-            } else {
-                // Option 2: room only if this layer's own sample goes: release its sectors (and stop its
-                // notes) and use the space.
-                at = findPool(true);
-                if (at >= 0) {
-                    uint32_t primaskFree = __get_PRIMASK();
-                    __disable_irq();
-                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-                        if (layerLibrary[i].number != layer.number) continue;
-                        layerPlayData[i].activeBeatPlayData.active = false;
-                        layerPlayData[i].activeBeatPlayData.counter = 0;
-                        layerPlayData[i].tempBeatPlayData.active = false;
-                        layerPlayData[i].tempBeatPlayData.counter = 0;
-                    }
-                    for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
-                        if (sampleSectorLibrary[i].active && (sampleSectorLibrary[i].layer == layer.number)) layerInst_clearSampleSector(i);
-                    }
-                    layer.samplePlay = false;
-                    layer.playSampleSector = -1;
-                    __set_PRIMASK(primaskFree);
-                    if (freeSector()) {
-                        sectorAvailable = true;
-                        poolAddress = RAM_SAMPLE_ADDRESS + static_cast<uint32_t>(at);
-                    }
+            } else if (samplePool_freeBytes(layer.number) >= neededBytes) {
+                // Option 2: there is room once this layer's own sample goes. Release its sectors (and stop its
+                // notes); if the free space is then scattered, pack the other samples down to make one gap.
+                uint32_t primaskFree = __get_PRIMASK();
+                __disable_irq();
+                for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+                    if (layerLibrary[i].number != layer.number) continue;
+                    layerPlayData[i].activeBeatPlayData.active = false;
+                    layerPlayData[i].activeBeatPlayData.counter = 0;
+                    layerPlayData[i].tempBeatPlayData.active = false;
+                    layerPlayData[i].tempBeatPlayData.counter = 0;
+                }
+                for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
+                    if (sampleSectorLibrary[i].active && (sampleSectorLibrary[i].layer == layer.number)) layerInst_clearSampleSector(i);
+                }
+                layer.samplePlay = false;
+                layer.playSampleSector = -1;
+                __set_PRIMASK(primaskFree);
+                at = findPool(false);
+                if (at < 0) {
+                    samplePool_compact();
+                    at = findPool(false);
+                }
+                if ((at >= 0) && freeSector()) {
+                    sectorAvailable = true;
+                    poolAddress = RAM_SAMPLE_ADDRESS + static_cast<uint32_t>(at);
                 } else {
                     memoryFull = true;
                 }
+            } else {
+                memoryFull = true;
             }
 
             if (memoryFull) {
-                // Not even without its own sample: the layer stays empty and the user is told.
+                // Not even without its own sample: the layer stays empty and the user is told how much it needs.
                 uint32_t primaskFull = __get_PRIMASK();
                 __disable_irq();
                 for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
@@ -20994,10 +20998,13 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
                 layer.playSampleSector = -1;
                 layer.writeSampleSector = -1;
                 __set_PRIMASK(primaskFull);
+                const uint32_t freeNow = samplePool_freeBytes(layer.number);
+                snprintf(missingDetail, 36, "NEEDS %u.%u MB  FREE %u.%u MB", static_cast<unsigned>(neededBytes / 1000000u), static_cast<unsigned>((neededBytes / 100000u) % 10u), static_cast<unsigned>(freeNow / 1000000u), static_cast<unsigned>((freeNow / 100000u) % 10u));
                 alertType = ALERT_SAMPLEMEMORY;
                 lcd_drawAlert();
-                HAL_Delay(2000);
+                HAL_Delay(2500);
                 lcd_clearAlert();
+                missingDetail[0] = 0;
             }
 
             // Step 3: Open File and Sequential Polling Read
@@ -21219,6 +21226,54 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
             lcd.drawNumber(sampleSectorLibrary[t].writeMode, 1, 80, 10 * t);
         }
         */
+    }
+}
+
+uint32_t Controller::samplePool_freeBytes(uint8_t exceptLayer_) const {
+    /// @brief The bytes of the sample pool not taken by other layers' samples (all of it may be one gap or several).
+    uint32_t usedBytes = 0;
+    for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
+        if (sampleSectorLibrary[i].active && (sampleSectorLibrary[i].layer != exceptLayer_)) usedBytes += samplePoolRound(sampleSectorLibrary[i].bytes);
+    }
+    return (usedBytes < kSamplePoolBytes) ? (kSamplePoolBytes - usedBytes) : 0;
+}
+
+void Controller::samplePool_compact() {
+    /// @brief Packs the samples in the pool down so the free space becomes one gap at the end (SamplePool.h).
+    /// A sample that moves is blocked for new notes while it is copied and its notes in flight are stopped.
+    PoolBlock used[kSamplePoolMaxBlocks];
+    uint8_t owner[kSamplePoolMaxBlocks];
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
+        if (!sampleSectorLibrary[i].active) continue;
+        used[n] = {sampleSectorLibrary[i].address - RAM_SAMPLE_ADDRESS, sampleSectorLibrary[i].bytes};
+        owner[n++] = i;
+    }
+    PoolMove moves[kSamplePoolMaxBlocks];
+    const uint8_t count = samplePoolPlanCompact(used, n, moves);
+    for (uint8_t k = 0; k < count; k++) {
+        SampleSector& sector = sampleSectorLibrary[owner[moves[k].block]];
+        const bool wasWriting = sector.writeMode;
+        uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+        sector.writeMode = true;  // no new note starts on it while it moves
+        const uint32_t oldAddress = sector.address, oldEnd = sector.address + sector.bytes;
+        for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+            BeatPlayData& abd = layerPlayData[i].activeBeatPlayData;
+            BeatPlayData& tbd = layerPlayData[i].tempBeatPlayData;
+            if (abd.active && (abd.ramAddress >= oldAddress) && (abd.ramAddress < oldEnd)) {
+                abd.active = false;
+                abd.counter = 0;
+            }
+            if (tbd.active && (tbd.ramAddress >= oldAddress) && (tbd.ramAddress < oldEnd)) {
+                tbd.active = false;
+                tbd.counter = 0;
+            }
+        }
+        __set_PRIMASK(primask);
+        memmove(reinterpret_cast<void*>(RAM_SAMPLE_ADDRESS + moves[k].to), reinterpret_cast<const void*>(oldAddress), sector.bytes);
+        sector.address = RAM_SAMPLE_ADDRESS + moves[k].to;
+        sector.writeMode = wasWriting;
     }
 }
 
@@ -23004,7 +23059,7 @@ void Controller::lcd_drawSampleViewData() {
 
     // 3. TITLE AND LENGTH (fixed width, so the old text is overwritten)
     char line[48];
-    int len = snprintf(line, sizeof line, "LAYER %.2s  %.12s  %.10s", kDataLayerNum[selectedLayerNum], layer.instLoadedData.nameShortL, ready ? layer.sampleLoadedData.nameShortR : "LOADING");
+    int len = snprintf(line, sizeof line, "LAYER %.2s  %.12s  %.10s", kDataLayerNum[selectedLayerNum], layer.instLoadedData.nameShortL, ready ? layer.sampleLoadedData.nameShortR : (layer.sampleLoading ? "LOADING" : "NOT LOADED"));
     for (int i = (len > 0 ? len : 0); i < 34; i++) line[i] = ' ';
     lcd.setFont(FONT_10x14);
     lcd.setAlignment(LEFT);

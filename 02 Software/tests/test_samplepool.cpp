@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "SamplePool.h"
 
@@ -91,6 +92,58 @@ int main() {
             }
             if (failures > 5) break;
         }
+    }
+
+    // Packing: the data moves with its block, the order stays, and the free space becomes one gap at the end.
+    {
+        std::srand(11);
+        static unsigned char mem[400000];
+        for (int round = 0; round < 300; round++) {
+            for (unsigned i = 0; i < sizeof mem; i++) mem[i] = 0;
+            PoolBlock used[kSamplePoolMaxBlocks];
+            uint8_t n = 0;
+            for (int tries = 0; tries < 12; tries++) {
+                const uint32_t bytes = 64u * static_cast<uint32_t>(1 + std::rand() % 400);
+                const int64_t at = samplePoolFind(used, n, sizeof mem, bytes);
+                if (at >= 0) {
+                    used[n] = {static_cast<uint32_t>(at), bytes};
+                    for (uint32_t k = 0; k < bytes; k++) mem[at + k] = static_cast<unsigned char>(n + 1);
+                    n++;
+                }
+                if ((n > 2) && (std::rand() % 3 == 0)) {  // free a random block: a hole
+                    const uint8_t f = static_cast<uint8_t>(std::rand() % n);
+                    for (uint32_t k = 0; k < used[f].bytes; k++) mem[used[f].offset + k] = 0;
+                    used[f] = used[--n];
+                    for (uint8_t j = 0; j < n; j++)  // the pattern follows the index: rewrite it
+                        for (uint32_t k = 0; k < used[j].bytes; k++) mem[used[j].offset + k] = static_cast<unsigned char>(j + 1);
+                }
+            }
+            const uint32_t usedBefore = samplePoolUsed(used, n);
+            PoolMove moves[kSamplePoolMaxBlocks];
+            const uint8_t m = samplePoolPlanCompact(used, n, moves);
+            for (uint8_t k = 0; k < m; k++) {
+                std::memmove(mem + moves[k].to, mem + moves[k].from, used[moves[k].block].bytes);
+                used[moves[k].block].offset = moves[k].to;
+            }
+            // The blocks now follow each other from 0, with their own data.
+            uint32_t end = 0;
+            bool packed = true;
+            for (uint8_t j = 0; j < n; j++) end = (used[j].offset + samplePoolRound(used[j].bytes) > end) ? used[j].offset + samplePoolRound(used[j].bytes) : end;
+            packed = (end == usedBefore);
+            CHECK(packed, "packed: end %u used %u", end, usedBefore);
+            bool intact = true;
+            for (uint8_t j = 0; j < n; j++)
+                for (uint32_t k = 0; k < used[j].bytes; k++) intact = intact && (mem[used[j].offset + k] == j + 1);
+            CHECK(intact, "data intact after packing");
+            CHECK(samplePoolFind(used, n, sizeof mem, sizeof mem - usedBefore) == static_cast<int64_t>(usedBefore) || (sizeof mem - usedBefore) == 0, "all the free space is one gap");
+            if (failures > 5) break;
+        }
+        // A packed pool has no moves.
+        PoolBlock tight[2] = {{0, 128}, {128, 64}};
+        PoolMove mv[2];
+        CHECK(samplePoolPlanCompact(tight, 2, mv) == 0, "nothing to move when packed");
+        PoolBlock gap[2] = {{256, 128}, {1024, 64}};
+        CHECK(samplePoolPlanCompact(gap, 2, mv) == 2 && mv[0].from == 256 && mv[0].to == 0 && mv[1].from == 1024 && mv[1].to == 128, "two blocks move down");
     }
 
     std::printf("%d checks, %d failures\n", checks, failures);

@@ -53,6 +53,39 @@ inline int64_t samplePoolFind(const PoolBlock* used_, uint8_t count_, uint32_t t
     return (cursor + need <= total_) ? static_cast<int64_t>(cursor) : -1;
 }
 
+// Packing: when the free space is scattered, the blocks can be moved down so it becomes one gap at the
+// end. The plan lists the blocks that change place, lowest first, each moved to the end of the one before
+// it, so a move never lands on a block that has not moved yet (the copy may overlap its own source, which
+// memmove handles). block is the index in the used_ array.
+struct PoolMove {
+    uint8_t block;
+    uint32_t from;
+    uint32_t to;
+};
+
+inline uint8_t samplePoolPlanCompact(const PoolBlock* used_, uint8_t count_, PoolMove* moves_) {
+    if (count_ > kSamplePoolMaxBlocks) return 0;
+    uint8_t order[kSamplePoolMaxBlocks];
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < count_; i++) {
+        if (used_[i].bytes == 0) continue;
+        uint8_t k = n++;
+        while ((k > 0) && (used_[order[k - 1]].offset > used_[i].offset)) {
+            order[k] = order[k - 1];
+            k--;
+        }
+        order[k] = i;
+    }
+    uint32_t cursor = 0;
+    uint8_t moves = 0;
+    for (uint8_t i = 0; i < n; i++) {
+        const PoolBlock& b = used_[order[i]];
+        if (b.offset != cursor) moves_[moves++] = {order[i], b.offset, cursor};
+        cursor += samplePoolRound(b.bytes);
+    }
+    return moves;
+}
+
 // The bytes in use, and the largest block that would fit.
 inline uint32_t samplePoolUsed(const PoolBlock* used_, uint8_t count_) {
     uint32_t sum = 0;

@@ -877,3 +877,15 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 **Checked and found fine for the SD card:** the write path (aligned: clean before the DMA; unaligned: copy into the scratch buffer, then clean, which was the bug of item 56); the read path for unaligned buffers (DMA into the scratch buffer, invalidate, copy); every other DMA in the firmware (I2S halves cleaned and invalidated by address, the MIDI receive byte alone in its own cache line, the MIDI transmit buffer aligned and cleaned, the I2C buffers in the uncached RAM_D3, the SDRAM only touched by the CPU).
 
 **Still open:** a restart (the watchdog or a power cut) during a write can leave the file system inconsistent (FatFs is not power-fail safe); the watchdog is now fed in the long loads, but a card should still be ejected properly and backed up. Not yet tested on hardware: this build.
+
+### 59. Quantization modes (planned for the week of 2026-11-16)
+
+**Asked by the owner (2026-11-15):** more quantization modes; the owner likes the concept of **patterning with 3-regular quantization** (to be confirmed next week: the idea as I read it is a regular grid and a triplet grid that can be combined or switched, so a pattern can mix straight and triplet hits). Today the quantize setting (`rhythm.quantize`, the RHYTHM page) is one grid for recording. To settle before building: which grids (straight 1/4 to 1/32, triplets, dotted, swing?), whether a pattern can mix grids per beat or per layer, how recorded hits are placed (snap, or snap with a strength), and how the NOTE page and the EUCLID grid show it.
+
+### 60. Load and save screen (planned for the week of 2026-11-16)
+
+**Asked by the owner (2026-11-15):** a screen for loading and saving songs and kits, in the manner of the other full-area views (item 45): a list or grid of the 100 song slots and the 100 kit slots with their state (empty or used, name or number), the current slot marked, and a clear confirm for overwrite. Today a slot is picked by number and confirmed with an alert. To settle: what a slot shows (name? date? the first bars as a thumbnail?), naming of slots, and copy, rename and delete.
+
+### 61. More drumkits (planned for the week of 2026-11-16)
+
+**Asked by the owner (2026-11-15):** more drumkits. Today there are 100 kit slots (`kDrumkitLibrarySize`, files `Drumkit_001.rwd` to `_100`), each 1500 bytes, picked by number. The limit is the slot count and the picker, not memory. Options: more slots (the file names have three digits, so up to 999), banks or folders of kits, and names for kits (needs a field in the kit file; the layout is in `docs/drumkit-specs.md`). The kits themselves are prepared in another thread from sample packs: the specifications for them are in `docs/drumkit-specs.md` and the checker is `02 Software/tools/check_drumkit.py`. Goes together with item 60 (the load and save screen).

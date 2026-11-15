@@ -502,7 +502,7 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 
 **Workarounds until then.** Turn the Drumboy's MIDI OUT clock off while it is slaved (or turn MIDI thru off in Loopy Pro) to avoid the loop. Set Loopy Pro to a whole-number tempo, preferably one that divides evenly into the timer (120, 125, 100, 150…); this reduces the drift but does not remove it. STOP/START from Loopy realigns it.
 
-**Update V1.16, built, waiting for the hardware test:** MIDI thru of the real-time bytes (`midiThruForwards` in `MidiParser.h`, `midi_thru`, host test in `test_midi`). With SYNC on MIDI IN and on MIDI OUT, an accepted incoming clock tick and the transport bytes (start, continue, stop, reset) are passed on to MIDI OUT from the receive interrupt; the Drumboy sends no clock or transport of its own while it follows (already so since V1.13). A tick the clock lock rejects as too fast is not passed, so a loop through an interface dies out. Notes and controllers are not passed on: the Drumboy plays incoming notes and sends its own, so forwarding them could double.
+**Update V1.16, built and released (hardware test of the thru pending):** MIDI thru of the real-time bytes (`midiThruForwards` in `MidiParser.h`, `midi_thru`, host test in `test_midi`). With SYNC on MIDI IN and on MIDI OUT, an accepted incoming clock tick and the transport bytes (start, continue, stop, reset) are passed on to MIDI OUT from the receive interrupt; the Drumboy sends no clock or transport of its own while it follows (already so since V1.13). A tick the clock lock rejects as too fast is not passed, so a loop through an interface dies out. Notes and controllers are not passed on: the Drumboy plays incoming notes and sends its own, so forwarding them could double.
 
 ### 35. LFO destinations for the per-note settings
 
@@ -807,7 +807,7 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Done when (1).** A hat panned left and a shaker panned right, both on DIR, are heard on their sides; a centred layer and a song from V1.14 sound identical. **(2)** The same through the EQ and filters.
 
-**Step 3a, ping-pong echo, built in V1.16, waiting for the hardware test** (`PingPong.h`, `test_pingpong`; the delay in `processAudioEffectHelper`). ECHO WIDTH (0-100 %, steps of 5) is on the second DUB page (press MIXER again while on DUB; MIXER, DUB 1, DUB 2, ROUTING): the delay reads its buffer at two points, one echo time back for the left channel and two for the right, and feeds back from the right one, scaled by FEEDBACK so every repeat is FEEDBACK times the one before it (left at 1, right at 2, left at 3 echo times and so on). No second delay line, so no memory and no change to the sound at width 0, where the output is bit-identical to V1.15 (tested against a plain delay). It needs two echo times inside the 2.18 s buffer; past that the echo stays centred. Stored in the song's DUB block as a 56th byte (older firmware reads 55 bytes and ignores it; older songs read as 0). The same page has the selected strip's PAN and FX SEND. Sound rule: nothing was thinned; the cost is one more buffer read per sample for Effect 1 while the width is above 0.
+**Step 3a, ping-pong echo, built in V1.16, tested on hardware, released in V1.16** (`PingPong.h`, `test_pingpong`; the delay in `processAudioEffectHelper`). ECHO WIDTH (0-100 %, steps of 5) is on the second DUB page (press MIXER again while on DUB; MIXER, DUB 1, DUB 2, ROUTING): the delay reads its buffer at two points, one echo time back for the left channel and two for the right, and feeds back from the right one, scaled by FEEDBACK so every repeat is FEEDBACK times the one before it (left at 1, right at 2, left at 3 echo times and so on). No second delay line, so no memory and no change to the sound at width 0, where the output is bit-identical to V1.15 (tested against a plain delay). It needs two echo times inside the 2.18 s buffer; past that the echo stays centred. Stored in the song's DUB block as a 56th byte (older firmware reads 55 bytes and ignores it; older songs read as 0). The same page has the selected strip's PAN and FX SEND. Sound rule: nothing was thinned; the cost is one more buffer read per sample for Effect 1 while the width is above 0.
 
 ### 54. Stereo samples
 
@@ -827,7 +827,7 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Asked by the owner (2026-11-15).** After an SD card recovery, presets reported MISSING SAMPLE with no hint which sample, so the cause (a card copy that dropped files) was guesswork. The alert now has a second line under its box with the first missing layer, instrument and sample (`L3 Kick/Name`, cut to 35 characters), and stays on screen 3 s instead of 1 s. It covers song and kit loads and the in-use check (`missing_note`, `missingDetail`). The count (MISSING SAMPLES) still tells how many; only the first is named.
 
-**Status: built in V1.16, waiting for the hardware test.** Done when a preset that names a sample that is not on the card shows its layer, instrument and sample.
+**Status: built in V1.16, released in V1.16 (not yet seen on a real missing sample).** Done when a preset that names a sample that is not on the card shows its layer, instrument and sample.
 
 ### 56. SD card corruption with the data cache (V1.15), fixed in V1.16
 
@@ -837,4 +837,4 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Who is affected:** V1.15 (released, tag `v1.15`) with the data cache on. Anything that writes the card can damage it: saving files, the autosave, the system preset, the crash log. Test builds from V1.15 on until this fix have the same bug. Reads are safe.
 
-**Status: fixed in V1.16, waiting for the hardware test.** Done when a card survives a long session of saving songs and presets and a check of its file system afterwards shows no errors. Until the release, use V1.14, or V1.15 with the card backed up.
+**Status: fixed in V1.16, tested on hardware and released in V1.16 (the owner's card recovered and works).** Done when a card survives a long session of saving songs and presets and a check of its file system afterwards shows no errors. Until the release, use V1.14, or V1.15 with the card backed up.

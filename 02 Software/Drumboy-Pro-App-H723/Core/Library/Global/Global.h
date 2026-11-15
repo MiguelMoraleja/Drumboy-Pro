@@ -355,7 +355,13 @@ const uint32_t kSampleByteSize                      = kSampleSize * 4;
 
 const uint8_t kSampleSectorLibrarySize              = 15;
 
+// A stereo sample keeps its two channels in one slot as two planes: the left channel at the start of
+// the slot, the right one half a slot later. Half the length (2.7 s), the same memory, 32-bit float.
+const uint32_t kStereoSampleSize                    = kSampleSize / 2;
+const uint32_t kStereoPlaneBytes                    = kStereoSampleSize * 4;
+
 struct SampleSector {
+    bool stereo = false;                            // two planes (kStereoPlaneBytes apart)
     bool active = false;
     uint8_t layer = 0;
     uint32_t size = 0;
@@ -420,6 +426,8 @@ static_assert(0xC0EA6000u + kPreviewRingSize * 4u <= 0xC0FB9640u, "preview ring 
 struct StereoDsp {
     float nodeR[5][I2S_BLOCK_SIZE];
     float srcGain[10][kRouteGainStateSize];
+    float layerR[10][I2S_BLOCK_SIZE];               // the right channel of a layer playing a stereo sample
+    bool layerStereo[10];                           // which layers did this block
 };
 extern StereoDsp stereoDsp;
 
@@ -6732,6 +6740,7 @@ struct LfoPlayData {
 struct BeatPlayData {
     bool active;
     uint32_t ramAddress;
+    uint32_t stereoOffset;                          // bytes from the left plane to the right one; 0 = a mono sample
 
     float volumeMultiplier;
     uint32_t resolutionCoef;

@@ -244,6 +244,40 @@ int main() {
     wb[kDubFileSizeV2] = 101;
     CHECK(!dubRead(wr, wb, kDubFileSize), "a width over 100 rejects the block");
 
+    // --- A stereo source (a layer playing a stereo sample) ---
+    {
+        Rig r;
+        RouteState st;
+        float left[N], right[N];
+        for (uint16_t i = 0; i < N; i++) {
+            left[i] = 0.5f;
+            right[i] = -0.25f;
+        }
+        float state[kRouteGainStateSize] = {0};
+        RouteSource src[1];
+        src[0] = {left, routeBit(NODE_MASTER), nullptr, nullptr, state, 1.0f, 1.0f, right};
+        RoutePatch patch = kDefaultRoutePatch;
+        run(r, src, 1, patch, st);  // the ramp
+        run(r, src, 1, patch, st);  // steady
+        CHECK(r.outL[0] == 0.5f && r.outR[0] == -0.25f && r.outL[N - 1] == 0.5f && r.outR[N - 1] == -0.25f, "centred stereo source: left stays left, right stays right (%f %f)", r.outL[0], r.outR[0]);
+        // Panned hard left: the right channel is silent, the left one is at its gain.
+        float pl, pr;
+        panGains(0, pl, pr);
+        src[0].panLeft = pl;
+        src[0].panRight = pr;
+        run(r, src, 1, patch, st);
+        run(r, src, 1, patch, st);
+        CHECK(std::fabs(r.outL[5] - 0.5f * pl) < 1e-6f && r.outR[5] == 0.0f, "stereo source panned left is a balance: %f %f", r.outL[5], r.outR[5]);
+        // A mono source next to it is unchanged: both channels from one buffer.
+        float mono[N];
+        for (uint16_t i = 0; i < N; i++) mono[i] = 0.5f;
+        float state2[kRouteGainStateSize] = {0};
+        RouteSource s2[1] = {{mono, routeBit(NODE_MASTER), nullptr, nullptr, state2, 1.0f, 1.0f}};
+        run(r, s2, 1, patch, st);
+        run(r, s2, 1, patch, st);
+        CHECK(r.outL[3] == 0.5f && r.outR[3] == 0.5f, "mono source: the same on both sides");
+    }
+
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

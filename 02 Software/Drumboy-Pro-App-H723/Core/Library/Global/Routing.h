@@ -405,6 +405,30 @@ inline void routeScatterLR(const RouteBuffers& buf_, const float* src_, const fl
     }
 }
 
+// The same for a stereo source (a layer playing a stereo sample): the left signal goes to the left
+// of every node with the left gain, the right signal to the right with the right gain. With the pan
+// gains of Pan.h this makes the pan a balance: the centre passes both channels untouched.
+template <uint16_t kBlock>
+inline void routeScatterStereoLR(const RouteBuffers& buf_, const float* srcL_, const float* srcR_, const float* targetL_, const float* targetR_, float* state_) {
+    for (uint8_t n = 0; n < kRouteNodeCount; n++) {
+        const float fromL = state_[n], fromR = state_[kRouteNodeCount + n];
+        const float toL = targetL_[n], toR = targetR_[n];
+        state_[n] = toL;
+        state_[kRouteNodeCount + n] = toR;
+        if ((fromL == 0.0f) && (toL == 0.0f) && (fromR == 0.0f) && (toR == 0.0f)) continue;
+        float* left = routeLeft(buf_, n);
+        float* right = routeRight(buf_, n);
+        const float stepL = (toL - fromL) / static_cast<float>(kBlock), stepR = (toR - fromR) / static_cast<float>(kBlock);
+        float gL = fromL, gR = fromR;
+        for (uint16_t i = 0; i < kBlock; i++) {
+            gL += stepL;
+            gR += stepR;
+            left[i] += srcL_[i] * gL;
+            right[i] += srcR_[i] * gR;
+        }
+    }
+}
+
 // A source for one block: its buffer, where it goes, and how.
 //   Line-in and the metronome run continuously: a mask and a fade state (routeScatterFaded).
 //   An instrument layer (gainState set): its mask (CHAIN, latched at the note) or its per-node
@@ -417,6 +441,7 @@ struct RouteSource {
     float* gainState = nullptr;    // kRouteGainStateSize floats kept between blocks; null = not panned
     float panLeft = 1.0f;          // Pan.h gains
     float panRight = 1.0f;
+    const float* bufferR = nullptr;  // the right channel of a stereo source (needs gainState); null = mono
 };
 
 // Fade state of the module outputs, kept between blocks.
@@ -449,7 +474,10 @@ inline void routeBlock(const RoutePatch& patch_, RouteState& state_, const Route
                 gl[n] = base * src.panLeft;
                 gr[n] = base * src.panRight;
             }
-            routeScatterLR<kBlock>(buf_, src.buffer, gl, gr, src.gainState);
+            if (src.bufferR)
+                routeScatterStereoLR<kBlock>(buf_, src.buffer, src.bufferR, gl, gr, src.gainState);
+            else
+                routeScatterLR<kBlock>(buf_, src.buffer, gl, gr, src.gainState);
         } else if (src.fade) {
             routeFadeTarget(*src.fade, src.mask);
             routeScatterFaded<kBlock>(buf_, src.buffer, *src.fade);

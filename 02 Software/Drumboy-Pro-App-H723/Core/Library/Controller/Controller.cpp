@@ -8617,6 +8617,10 @@ void Controller::lcd_drawAlert() {
         case ALERT_MISSINGSAMPLES:
             alertText = kAlertTextMissingSamples;
             break;
+
+        case ALERT_SAMPLEMEMORY:
+            alertText = kAlertTextSampleMemory;
+            break;
         default:
             break;
     }
@@ -19887,8 +19891,8 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
 
                 // initialize temp beat data
                 tBD.active = true;
-                tBD.ramAddress = RAM_SAMPLE_ADDRESS + (targetSector * kSampleByteSize);
-                tBD.stereoOffset = sampleSectorLibrary[targetSector].stereo ? kStereoPlaneBytes : 0;
+                tBD.ramAddress = sampleSectorLibrary[targetSector].address;
+                tBD.stereoOffset = sampleSectorLibrary[targetSector].planeBytes;
                 tBD.counterMax = sampleSectorLibrary[targetSector].size;
                 tBD.mixerInMode = layer.mixerInMode;
                 lD.beatStartFlag = true;
@@ -20773,10 +20777,9 @@ void Controller::layerInst_setSampleSelected(uint8_t layerNum_, int16_t sample_)
                                     layer.sampleSelectedData.sampleSize = layer.sampleSelectedData.sampleByteSize * layer.sampleSelectedData.coefSampleSize;
 
                                     // Cap sample size
-                                    const uint32_t sampleLimit = (layer.sampleSelectedData.channel == CH_STEREO) ? kStereoSampleSize : kSampleSize;  // a stereo sample holds half the length
-                                    if (layer.sampleSelectedData.sampleSize > sampleLimit) {
-                                        layer.sampleSelectedData.sampleSize = sampleLimit;
-                                        layer.sampleSelectedData.sampleByteSize = layer.sampleSelectedData.sampleSize / layer.sampleSelectedData.coefSampleSize;
+                                    // A sample over 20 s (kSampleMaxFrames) is ignored, not cut.
+                                    if (layer.sampleSelectedData.sampleSize > kSampleMaxFrames) {
+                                        sampleTypeError = true;
                                     }
                                 } else {
                                     sampleReadError = true;
@@ -20910,52 +20913,109 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
             // Normalization & Tracking Vars
             uint32_t sdramDataCounter = 0;
             const bool stereoLoad = (layer.wavLoadedData.fmt_chunk.nbrChannels == 2);
-            const uint32_t loadLimit = stereoLoad ? kStereoSampleSize : kSampleSize;
+            const uint32_t loadLimit = layer.sampleLoadedData.sampleSize;  // the frames the pool block holds
             float minFloat = 0.0f, maxFloat = 0.0f;
 
             // Calculate samples per pixel based on final playback size.
             // Guard against division by zero when sampleSize < 60 (very short samples).
             const uint32_t samplesPerPixel = (layer.sampleLoadedData.sampleSize >= 60) ? (layer.sampleLoadedData.sampleSize / 60) : 1;
 
-            // Step 2: SDRAM Sector Selection Algorithm (Referenced from your code)
+            // Step 2: a sector (descriptor) and a block of the sample pool (SamplePool.h)
             bool sectorAvailable = false;
+            bool memoryFull = false;
             uint8_t targetSector = 0;
+            uint32_t poolAddress = 0;
+            const uint32_t neededBytes = sampleBytes((layer.sampleLoadedData.sampleSize > 0) ? layer.sampleLoadedData.sampleSize : 1, stereoLoad);
 
-            // Option 1: Find an inactive (passive) sector
-            for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
-                if (!sampleSectorLibrary[i].active) {
-                    sectorAvailable = true;
-                    targetSector = i;
-                    break;
+            // The blocks in use, without this layer's own when asked (its sample is replaced).
+            auto findPool = [&](bool excludeOwn_) -> int64_t {
+                PoolBlock used[kSamplePoolMaxBlocks];
+                uint8_t n = 0;
+                for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
+                    if (!sampleSectorLibrary[i].active) continue;
+                    if (excludeOwn_ && (sampleSectorLibrary[i].layer == layer.number)) continue;
+                    used[n++] = {sampleSectorLibrary[i].address - RAM_SAMPLE_ADDRESS, sampleSectorLibrary[i].bytes};
+                }
+                return samplePoolFind(used, n, kSamplePoolBytes, neededBytes);
+            };
+            auto freeSector = [&]() -> bool {
+                for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
+                    if (!sampleSectorLibrary[i].active) {
+                        targetSector = i;
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            // Option 1: a free descriptor and room next to the other samples (the old sample keeps playing
+            // while the new one loads).
+            int64_t at = findPool(false);
+            if ((at >= 0) && freeSector()) {
+                sectorAvailable = true;
+                poolAddress = RAM_SAMPLE_ADDRESS + static_cast<uint32_t>(at);
+            } else {
+                // Option 2: room only if this layer's own sample goes: release its sectors (and stop its
+                // notes) and use the space.
+                at = findPool(true);
+                if (at >= 0) {
+                    uint32_t primaskFree = __get_PRIMASK();
+                    __disable_irq();
+                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+                        if (layerLibrary[i].number != layer.number) continue;
+                        layerPlayData[i].activeBeatPlayData.active = false;
+                        layerPlayData[i].activeBeatPlayData.counter = 0;
+                        layerPlayData[i].tempBeatPlayData.active = false;
+                        layerPlayData[i].tempBeatPlayData.counter = 0;
+                    }
+                    for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
+                        if (sampleSectorLibrary[i].active && (sampleSectorLibrary[i].layer == layer.number)) layerInst_clearSampleSector(i);
+                    }
+                    layer.samplePlay = false;
+                    layer.playSampleSector = -1;
+                    __set_PRIMASK(primaskFree);
+                    if (freeSector()) {
+                        sectorAvailable = true;
+                        poolAddress = RAM_SAMPLE_ADDRESS + static_cast<uint32_t>(at);
+                    }
+                } else {
+                    memoryFull = true;
                 }
             }
 
-            // Option 2: Reuse current layer's existing sector if none are free
-            if (!sectorAvailable) {
+            if (memoryFull) {
+                // Not even without its own sample: the layer stays empty and the user is told.
+                uint32_t primaskFull = __get_PRIMASK();
+                __disable_irq();
                 for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
-                    if (sampleSectorLibrary[i].layer == layer.number) {
-                        sectorAvailable = true;
-                        targetSector = i;
-                        break;
-                    }
+                    if (sampleSectorLibrary[i].active && (sampleSectorLibrary[i].layer == layer.number)) layerInst_clearSampleSector(i);
                 }
+                layer.samplePlay = false;
+                layer.playSampleSector = -1;
+                layer.writeSampleSector = -1;
+                __set_PRIMASK(primaskFull);
+                alertType = ALERT_SAMPLEMEMORY;
+                lcd_drawAlert();
+                HAL_Delay(2000);
+                lcd_clearAlert();
             }
 
             // Step 3: Open File and Sequential Polling Read
             if (sectorAvailable) {
-                // Stop every in-flight beat reading this sector before writeMode goes up, so
-                // nothing reads a sample mid-overwrite.
+                // Stop every in-flight beat reading the block before writeMode goes up, so nothing
+                // reads a sample mid-overwrite.
                 uint32_t primaskSector = __get_PRIMASK();
                 __disable_irq();
-                uint32_t targetSectorAddress = RAM_SAMPLE_ADDRESS + (targetSector * kSampleByteSize);
+                const uint32_t targetSectorAddress = poolAddress;
+                const uint32_t targetSectorEnd = poolAddress + neededBytes;
                 for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                     BeatPlayData& sectorABD = layerPlayData[i].activeBeatPlayData;
                     BeatPlayData& sectorTBD = layerPlayData[i].tempBeatPlayData;
-                    if (sectorABD.active && sectorABD.ramAddress == targetSectorAddress) {
+                    if (sectorABD.active && (sectorABD.ramAddress >= targetSectorAddress) && (sectorABD.ramAddress < targetSectorEnd)) {
                         sectorABD.active = false;
                         sectorABD.counter = 0;
                     }
-                    if (sectorTBD.active && sectorTBD.ramAddress == targetSectorAddress) {
+                    if (sectorTBD.active && (sectorTBD.ramAddress >= targetSectorAddress) && (sectorTBD.ramAddress < targetSectorEnd)) {
                         sectorTBD.active = false;
                         sectorTBD.counter = 0;
                     }
@@ -20963,8 +21023,11 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
                 layer.writeSampleSector = targetSector;
                 sampleSectorLibrary[targetSector].active = true;
                 sampleSectorLibrary[targetSector].layer = layer.number;
+                sampleSectorLibrary[targetSector].address = poolAddress;
+                sampleSectorLibrary[targetSector].bytes = neededBytes;
+                sampleSectorLibrary[targetSector].planeBytes = stereoLoad ? samplePlaneBytes(layer.sampleLoadedData.sampleSize) : 0;
                 sampleSectorLibrary[targetSector].size = layer.sampleLoadedData.sampleSize - 1;
-                sampleSectorLibrary[targetSector].stereo = (layer.wavLoadedData.fmt_chunk.nbrChannels == 2);
+                sampleSectorLibrary[targetSector].stereo = stereoLoad;
                 sampleSectorLibrary[targetSector].playMode = false;
                 sampleSectorLibrary[targetSector].writeMode = true;
                 sampleSectorLibrary[targetSector].normMultiplier = 1.0f;
@@ -21030,12 +21093,13 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
                                 }
 
                                 // Sequential Write to SDRAM (a stereo sample: the right channel in the plane half a slot later)
-                                uint32_t sdramBase = RAM_SAMPLE_ADDRESS + (layer.writeSampleSector * kSampleByteSize);
+                                const uint32_t sdramBase = sampleSectorLibrary[layer.writeSampleSector].address;
+                                const uint32_t planeBytes = sampleSectorLibrary[layer.writeSampleSector].planeBytes;
                                 for (int k = 0; k < writeCount; k++) {
                                     if (sdramDataCounter >= loadLimit)
                                         break;
                                     *(volatile float*)(sdramBase + (sdramDataCounter * 4)) = val;
-                                    if (stereoLoad) *(volatile float*)(sdramBase + kStereoPlaneBytes + (sdramDataCounter * 4)) = valR;
+                                    if (stereoLoad) *(volatile float*)(sdramBase + planeBytes + (sdramDataCounter * 4)) = valR;
                                     sdramDataCounter++;
                                 }
                             }
@@ -21170,6 +21234,9 @@ void Controller::layerInst_clearSampleSector(uint8_t sectorNum_) {
     sampleSectorLibrary[sectorNum_].writeMode = false;
     sampleSectorLibrary[sectorNum_].normMultiplier = 1.0f;
     sampleSectorLibrary[sectorNum_].stereo = false;
+    sampleSectorLibrary[sectorNum_].address = 0;
+    sampleSectorLibrary[sectorNum_].bytes = 0;
+    sampleSectorLibrary[sectorNum_].planeBytes = 0;
 }
 
 void Controller::layerInst_setLevel(uint8_t layerNum_, uint8_t level_) {
@@ -22899,7 +22966,7 @@ void Controller::lcd_drawSampleViewData() {
     if (full) {
         sampleViewKey = key;
         if (ready) {
-            samplePeakColumns(reinterpret_cast<const float*>(RAM_SAMPLE_ADDRESS + static_cast<uint32_t>(sector) * kSampleByteSize), layer.sampleLoadedData.sampleSize,
+            samplePeakColumns(reinterpret_cast<const float*>(sampleSectorLibrary[sector].address), layer.sampleLoadedData.sampleSize,
                               sampleSectorLibrary[sector].normMultiplier, peaks, kSampleCols);
         } else {
             memset(peaks, 0, kSampleCols);
@@ -25754,9 +25821,11 @@ void Controller::lcd_drawMonitor() {
     lcd_drawMonitorBar(kMonitorCpuTextY, kMonitorCpuBarY, monitorCpuShown, monitorCpuDrawn);
 
     // 3. MEM
-    uint32_t sizes[kLayerLibrarySize];
-    for (uint8_t i = 0; i < kLayerLibrarySize; i++) sizes[i] = layerLibrary[i].sampleLoadedData.sampleSize;
-    lcd_drawMonitorBar(kMonitorMemTextY, kMonitorMemBarY, sampleMemPermille(sizes, kLayerLibrarySize, kSampleSize), monitorMemDrawn);
+    uint32_t poolUsed = 0;
+    for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
+        if (sampleSectorLibrary[i].active) poolUsed += sampleSectorLibrary[i].bytes;
+    }
+    lcd_drawMonitorBar(kMonitorMemTextY, kMonitorMemBarY, samplePoolPermille(poolUsed, kSamplePoolBytes), monitorMemDrawn);
 
 #ifdef DSP_PROFILE
     // 4. MEASUREMENT BUILD (make PROFILE=1): the figures as text, and the I2S error counts.

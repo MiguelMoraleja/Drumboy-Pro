@@ -124,6 +124,7 @@ void swap(T& a, T& b) {
 
 #include "Util.h"     // clamp()
 #include "PingPong.h"  // ping-pong echo
+#include "SamplePool.h"  // the sample memory pool (up to 20 s per sample)
 #include "Routing.h"  // RouteNode, routing helpers
 
 template <typename T>
@@ -355,13 +356,14 @@ const uint32_t kSampleByteSize                      = kSampleSize * 4;
 
 const uint8_t kSampleSectorLibrarySize              = 15;
 
-// A stereo sample keeps its two channels in one slot as two planes: the left channel at the start of
-// the slot, the right one half a slot later. Half the length (2.7 s), the same memory, 32-bit float.
-const uint32_t kStereoSampleSize                    = kSampleSize / 2;
-const uint32_t kStereoPlaneBytes                    = kStereoSampleSize * 4;
-
+// One loaded sample. The sectors are the fifteen descriptors; the memory comes from the pool
+// (SamplePool.h): address and bytes say where it is. A stereo sample has two planes of planeBytes
+// each (the right one planeBytes after the left); a mono sample has planeBytes 0.
 struct SampleSector {
-    bool stereo = false;                            // two planes (kStereoPlaneBytes apart)
+    uint32_t address = 0;                           // first byte in the SDRAM
+    uint32_t bytes = 0;                             // the whole block (both planes)
+    uint32_t planeBytes = 0;                        // 0 = mono
+    bool stereo = false;
     bool active = false;
     uint8_t layer = 0;
     uint32_t size = 0;
@@ -1707,6 +1709,7 @@ typedef enum {
     ALERT_OVERWRITEDRUMKIT                          = 0x0F,
     ALERT_MISSINGSAMPLE                             = 0x10,
     ALERT_MISSINGSAMPLES                            = 0x11,
+    ALERT_SAMPLEMEMORY                              = 0x7F,  // the sample pool has no room for the sample
     ALERT_LOADSUCCESS                               = 0x12,
     ALERT_LOADERROR                                 = 0x13,
     ALERT_SAVESUCCESS                               = 0x14,
@@ -1735,6 +1738,7 @@ const char kAlertTextClearDrumkit[]                 = "CLEAR DRUMKIT?";
 const char kAlertTextOverwriteDrumkit[]             = "OVERWRITE DRUMKIT?";
 const char kAlertTextMissingSample[]                = "MISSING SAMPLE";
 const char kAlertTextMissingSamples[]               = "MISSING SAMPLES";
+const char kAlertTextSampleMemory[]                 = "SAMPLE MEMORY FULL";
 
 const char kAlertTextLoadSuccess[]                  = "LOAD -> SUCCESS";
 const char kAlertTextLoadError[]                    = "LOAD -> ERROR";

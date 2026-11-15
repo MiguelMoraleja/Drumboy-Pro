@@ -279,7 +279,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.16</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.17 (testing)</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -2217,6 +2217,10 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
+  { v: "V1.17", date: "2026-11-15", status: "Testing, not published",
+    nw: ["Samples up to 20 s: the sample memory is now one shared pool instead of fifteen fixed slots, so a sample may be up to 20 s long, mono or stereo, as long as the pool has room (about 80 s of mono in total; four 20 s samples at once). A sample over 20 s is ignored by the loader instead of being cut. Short samples are unchanged, and a factory sample that used to be cut at 5.4 s now plays in full",
+         "MEM in the top-right corner now shows the share of the sample pool in use. When a sample does not fit, the alert SAMPLE MEMORY FULL appears and the layer stays empty; a sample swapped on a layer loads next to the old one when there is room, so it does not cut"],
+    fix: [] },
   { v: "V1.16", date: "2026-11-15", status: "GitHub release v1.16 · tested", pub: true,
     nw: ["Fix: SD card corruption. With the data cache (V1.15) the card driver could write stale sectors into the directory and the file table when saving, which damaged two cards. The driver now flushes the cache before every write. Use V1.16 instead of V1.15",
          "Ping-pong echo: press MIXER again while on the DUB page for a second page with ECHO WIDTH (0 to 100 %, steps of 5). At 0 the echo is the centred one of before, bit for bit; at 100 % the repeats alternate left and right (first left, then right, and so on), each FEEDBACK times the one before. The delay reads its memory at two points instead of keeping a second line, so it costs no memory, and it needs two echo times inside the 2.18 s buffer (past that the echo stays centred). Saved in the song",

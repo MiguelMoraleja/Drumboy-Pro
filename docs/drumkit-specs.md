@@ -1,13 +1,13 @@
 # Drumkit and sample specifications
 
-For anyone (a person, a script or another AI session) who prepares sample packs and drumkits for the Drumboy Pro. Facts come from the firmware source (`02 Software/Drumboy-Pro-App-H723`), as of **V1.16**. Checks are automated by [`02 Software/tools/check_drumkit.py`](../02%20Software/tools/check_drumkit.py). Planned changes are marked **planned**: do not rely on them yet.
+For anyone (a person, a script or another AI session) who prepares sample packs and drumkits for the Drumboy Pro. Facts come from the firmware source (`02 Software/Drumboy-Pro-App-H723`), as of **V1.16**. Checks are automated by [`02 Software/tools/check_drumkit.py`](../02%20Software/tools/check_drumkit.py). Features that are not in a released firmware are marked with their version.
 
 ## 1. Summary for a pack
 
 | | Do this |
 |---|---|
 | Format | WAV, PCM or float, **44.1 kHz, 24-bit** (16-bit is fine), mono for most hits |
-| Length | at most **5.44 s mono, 2.72 s stereo** (planned V1.17: **20 s**, stereo too; longer files will be ignored, not cut) |
+| Length | at most **20 s** of playback, mono or stereo (V1.17); V1.16 and older: 5.44 s mono, 2.72 s stereo, longer files are cut |
 | Stereo | only for sounds that need width; V1.15 and older play the left channel only |
 | File name | `.wav`, whole name (with `.wav`) **under 32 characters**; first 10 characters distinctive |
 | Folder | one folder per instrument directly in `Sample/`, name under 32 characters, no subfolders |
@@ -37,7 +37,7 @@ System/Image/, System/Firmware/          the firmware's own
   - 88.2 and 96 kHz: every second frame is used, with no filter (aliasing); 176.4 and 192 kHz: every fourth.
   - 8, 11.025, 16, 22.05, 24 kHz: each frame is repeated 6, 4, 3, 2, 2 times (no interpolation).
   - There is no proper resampler yet. **Convert to 44.1 kHz before importing.**
-- **Length limit.** Slot size 240,000 frames: 5.44 s of playback at 44.1 kHz for a mono sample. A stereo sample holds half: 120,000 frames (2.72 s), from V1.16. A longer file is **cut** at the limit by V1.16; it still loads. *Planned V1.17:* a shared sample pool with a per-sample limit of **20 s** (882,000 frames), applying to mono and stereo; a longer file will be ignored (marked unsupported), and the total over all layers is limited by the pool (about 80 s mono, 40 s stereo).
+- **Length limit.** **V1.17 and later:** at most **20 s of playback** (882,000 frames at 44.1 kHz, whatever the file's rate) for a mono or a stereo sample; a longer file is **ignored** (marked unsupported, it does not load). All samples share one memory pool of 14.4 MB: a 20 s mono sample takes 3.5 MB (7 MB stereo), so four fit at once, or about 80 s of mono in total (40 s stereo). If a sample does not fit, the load fails with SAMPLE MEMORY FULL and the layer stays empty. **V1.16 and older:** fixed slots of 240,000 frames (5.44 s mono, 2.72 s stereo); a longer file is cut at the limit and still loads.
 - **Stereo:** both channels are kept from V1.16 (32-bit float, left plane and right plane in one slot). Its PAN is a balance (centre untouched). Older firmware keeps only the left channel.
 - **Storage:** every sample is converted to 32-bit float in the SDRAM; 8-, 16-, 24- and 32-bit sources keep their full precision. The loader notes the peak of the sample so the per-layer NORMALIZE option can scale it.
 

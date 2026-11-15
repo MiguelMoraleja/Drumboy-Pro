@@ -838,3 +838,19 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 **Who is affected:** V1.15 (released, tag `v1.15`) with the data cache on. Anything that writes the card can damage it: saving files, the autosave, the system preset, the crash log. Test builds from V1.15 on until this fix have the same bug. Reads are safe.
 
 **Status: fixed in V1.16, tested on hardware and released in V1.16 (the owner's card recovered and works).** Done when a card survives a long session of saving songs and presets and a check of its file system afterwards shows no errors. Until the release, use V1.14, or V1.15 with the card backed up.
+
+### 57. Sample pool: samples up to 20 s
+
+**Asked by the owner (2026-11-15):** the sample length (5.44 s) is too low; a maximum of 20 s, with the loader ignoring longer samples.
+
+**Why it was not just a setting.** `kSampleSize` was the size of each of fifteen fixed 960 KB slots that fill the 14.4 MB sample area of the 16 MB SDRAM (it is also reused by the LFO rate code, so it keeps its value). Ten layers of 20 s would need 35 MB.
+
+**Decision (owner, "lets continue as you say"):** one shared pool (`SamplePool.h`, `test_samplepool`). A sample takes `frames x 4` bytes (a stereo sample two planes, each rounded up to 64 bytes) wherever it first fits between the others; the fifteen sectors stay as descriptors (address, bytes, plane size, owner). 32-bit float storage, no thinning.
+
+**Status: built in V1.17, waiting for the hardware test.**
+- **Limit:** `kSampleMaxFrames` = 882,000 frames (20 s at 44.1 kHz), mono and stereo alike. A longer file is **ignored** (marked unsupported, like an unsupported format), not cut. Room: four 20 s mono samples fit at once (14.4 MB), or about 80 s mono in total, 40 s stereo.
+- **Loading:** the new sample gets its block while the old one keeps playing when there is room (seamless swap); if there is room only without the layer's own sample, that is released and replaced (the old note stops, as before when the slots ran out); if not even then, the layer is left empty and the alert **SAMPLE MEMORY FULL** shows for 2 s.
+- **Playing, the sample view and the MEM bar** read the sector's address; the MEM bar now shows the share of the pool in use.
+- **Old samples:** nothing changes for samples under 5.44 s; a factory sample that used to be cut at 5.44 s now plays in full.
+
+**Done when.** A 15 s mono sample plays in full and shows its waveform; a 25 s sample is refused; a 12 s stereo sample plays in full on both sides; loading several long samples fills the MEM bar and the next one that does not fit gives SAMPLE MEMORY FULL; a short sample swapped on a layer that plays does not cut. Test files: `Long_Test_15s.wav`, `Long_Test_25s.wav`, `Stereo_Test_12s.wav`.

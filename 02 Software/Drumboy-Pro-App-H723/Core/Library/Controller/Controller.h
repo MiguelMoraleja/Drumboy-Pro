@@ -384,6 +384,11 @@ class Controller {
     char missingDetail[40] = "";                           // MISSING SAMPLE alert: the first missing layer, instrument and sample ("L3 Kick/Name")
     void missing_note(uint8_t layer_, const char* inst_, const char* sample_);
     uint32_t samplePool_freeBytes(uint8_t exceptLayer_) const;
+    void samplePool_releaseAll();
+    void alertDelay(uint32_t ms_);
+    void layerPan_step(int8_t dir_);
+    uint8_t panCachePos[kDubStrips] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};  // the pan gains are recomputed only when a pan changes
+    float panCacheGain[kDubStrips][2] = {{1.0f, 1.0f}};
     void samplePool_compact();
     float pingWidth = 0.0f;                                 // ping-pong width of the echo in this block (0 = centred; audio interrupt)
     float effectDelta = 0.0f;                               // right minus left of the effect's last sample (audio interrupt)

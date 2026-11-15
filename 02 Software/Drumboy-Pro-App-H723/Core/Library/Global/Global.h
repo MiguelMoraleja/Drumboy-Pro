@@ -3294,8 +3294,8 @@ struct Eq {
             filterPeak[i].x2 = 0;
             filterPeak[i].y1 = 0;
             filterPeak[i].y2 = 0;
-            for (uint8_t k = 0; k < 6; k++) right[k] = EqState();
-    }
+        }
+        for (uint8_t k = 0; k < 6; k++) right[k] = EqState();  // the right channel's history
     }
 };
 

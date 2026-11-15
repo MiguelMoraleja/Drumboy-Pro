@@ -858,3 +858,22 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 **Second report (owner, same day):** when the layer had a sample and the new one did not fit, the old one was dropped and the new one stayed selected but not loaded. Now, when the new sample does not fit even without the layer's own, **nothing is released**: the old sample stays loaded and playing, the alert says what is needed, and the selection goes back to the old sample (`prevLoadedData`). Only when the failure comes after the old sample was released (not expected: the free space is checked first) is the layer left empty.
 
 **Done when.** A 15 s mono sample plays in full and shows its waveform; a 25 s sample is refused; a 12 s stereo sample plays in full on both sides; loading several long samples fills the MEM bar and the next one that does not fit gives SAMPLE MEMORY FULL; a short sample swapped on a layer that plays does not cut. Test files: `Long_Test_15s.wav`, `Long_Test_25s.wav`, `Stereo_Test_12s.wav`.
+
+### 58. Review of V1.15 to V1.17 (2026-11-15)
+
+**Asked by the owner:** a deep review of everything since the V1.14 release, especially the SD card. A reviewer pass over the whole diff found ten things; each was checked against the code. Fixed in the third V1.17 test build:
+
+1. **Reverb off collapsed every pan to mono.** The bypass copied the left channel into the right (`memcpy(audioReverb_R, audioReverb_L)`), which was right for the old mono chain and wrong since the router fills both channels. With the reverb off (its default) and the reverb last before the master, a layer panned hard right vanished and every pan became mono. The bypass now leaves the pair unchanged.
+2. **Watchdog during long loads.** Loading up to ten samples of up to 20 s, plus the alerts (up to 3 s each), can exceed the 6 s watchdog within one pass of the main loop and restart the device in the middle of a load. The loader feeds the watchdog on every chunk, and the alerts wait in 100 ms steps that feed it (`alertDelay`).
+3. **A kit or song load counted the old kit's samples as taken.** Layers load one by one while the others still hold the previous kit's samples, so a kit that fits could report SAMPLE MEMORY FULL. A kit or song load now releases the whole pool first (`samplePool_releaseAll`).
+4. **Notes under a block that gets overwritten.** Packing only stopped notes reading the block it moved, not notes reading a freed block it copies over. It now stops notes in both ranges.
+5. **SD read, aligned path:** the destination's cache lines are now cleaned and invalidated before the DMA (a dirty line could be written back during the transfer); the invalidate after it stays.
+6. **The sample loader's 24 KB buffer was not 32-byte aligned,** so every read went sector by sector through the scratch buffer (slow, which made 20 s loads and the watchdog problem worse). It is aligned now: reads go straight into it.
+7. **The pack checker** (`tools/check_drumkit.py`) still used the V1.16 limits and compared file frames, not playback frames. It now uses the 20 s limit on playback frames with the loader's per-rate factor.
+8. **Audio cost:** the pan gains (`cosf`, `sinf` for ten layers every block) are recomputed only when a pan changes.
+9. **PAN encoder:** the two copies (turn up, turn down) with dead branches are one helper; with ADD held, every layer that can still move does.
+10. **EQ reset:** the right-channel reset sat inside the peak loop; moved after it.
+
+**Checked and found fine for the SD card:** the write path (aligned: clean before the DMA; unaligned: copy into the scratch buffer, then clean, which was the bug of item 56); the read path for unaligned buffers (DMA into the scratch buffer, invalidate, copy); every other DMA in the firmware (I2S halves cleaned and invalidated by address, the MIDI receive byte alone in its own cache line, the MIDI transmit buffer aligned and cleaned, the I2C buffers in the uncached RAM_D3, the SDRAM only touched by the CPU).
+
+**Still open:** a restart (the watchdog or a power cut) during a write can leave the file system inconsistent (FatFs is not power-fail safe); the watchdog is now fed in the long loads, but a card should still be ejected properly and backed up. Not yet tested on hardware: this build.

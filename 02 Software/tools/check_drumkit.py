@@ -3,7 +3,7 @@
 
   check_drumkit.py SAMPLE_ROOT                 check every instrument folder under SAMPLE_ROOT
   check_drumkit.py SAMPLE_ROOT --kit K.rwd ... also check that the kit's samples exist there
-  options: --max-seconds S   per-sample limit in seconds of playback (default: the firmware's, 5.44 s mono, 2.72 s stereo)
+  options: --max-seconds S   per-sample limit in seconds of playback (default 20, the V1.17 limit; V1.16 and older: 5.44 s mono, 2.72 s stereo, cut)
            --strict          a sample over the limit is an error, not a warning
 
 Exit status 1 when an error is found (warnings do not count). Standard library only.
@@ -14,8 +14,9 @@ import struct
 import sys
 
 NAME_LIMIT = 32             # kFileNameSize: a name must be shorter than this, ".wav" included
-MONO_FRAMES = 240000        # kSampleSize (the firmware's limit up to V1.16)
-STEREO_FRAMES = 120000      # half of it for a stereo sample (V1.16 and later)
+MAX_SECONDS = 20.0          # V1.17: kSampleMaxFrames = 882000 playback frames (V1.16 and older: 240000 mono, 120000 stereo)
+# The loader repeats or skips frames by the file's rate; the engine then plays them at 44.1 kHz.
+PLAYBACK_FACTOR = {8000: 6, 11025: 4, 16000: 3, 22050: 2, 24000: 2, 44100: 1, 48000: 1, 88200: 0.5, 96000: 0.5, 176400: 0.25, 192000: 0.25}
 RATES = {8000, 11025, 16000, 22050, 24000, 44100, 48000, 88200, 96000, 176400, 192000}
 KIT_HEADER = b"RW_DRUMBOYPRO_DRUMKIT    "
 LAYER_REF_BASE = 25 + 500   # file offset of layer 0's instrument flag
@@ -88,15 +89,16 @@ def check_samples(root, max_seconds, strict):
                 print(f"ERROR   {inst}/{name}: unsupported format (code {audio}, {ch} ch, {rate} Hz, {bits} bit)")
                 errors += 1
                 continue
-            # The engine plays frames at 44.1 kHz whatever the file's rate, so the length that counts is frames / 44100.
-            limit = (max_seconds * 44100.0) if max_seconds else (STEREO_FRAMES if ch == 2 else MONO_FRAMES)
-            if frames > limit:
-                text = f"{frames / 44100.0:.2f} s of playback is over the limit ({limit / 44100.0:.2f} s)"
+            # The length that counts is the playback length: the frames after the loader's repeat or skip, at 44.1 kHz.
+            playback = frames * PLAYBACK_FACTOR[rate]
+            limit = (max_seconds if max_seconds else MAX_SECONDS) * 44100.0
+            if playback > limit:
+                text = f"{playback / 44100.0:.2f} s of playback is over the limit ({limit / 44100.0:.2f} s); V1.17 ignores it, V1.16 and older cut it"
                 if strict:
                     print(f"ERROR   {inst}/{name}: {text}")
                     errors += 1
                 else:
-                    print(f"WARN    {inst}/{name}: {text}; the firmware cuts it there")
+                    print(f"WARN    {inst}/{name}: {text}")
                     warnings += 1
             if rate != 44100:
                 print(f"WARN    {inst}/{name}: {rate} Hz plays {'about 1.5 semitones low' if rate == 48000 else 'with the firmware resampling'}; convert to 44100 Hz")
@@ -143,7 +145,7 @@ def main():
     ap.add_argument("sample_root")
     ap.add_argument("--kit", nargs="*", default=[])
     ap.add_argument("--max-seconds", type=float, default=None)
-    ap.add_argument("--strict", action="store_true", help="a sample over the limit is an error (for packs; the planned loader ignores such samples)")
+    ap.add_argument("--strict", action="store_true", help="a sample over the limit is an error (V1.17 ignores such samples)")
     a = ap.parse_args()
     errors = check_samples(a.sample_root, a.max_seconds, a.strict)
     for k in a.kit:

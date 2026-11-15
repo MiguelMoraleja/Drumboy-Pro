@@ -85,7 +85,7 @@ The simplest way to make a kit: build it on the Drumboy (load samples into the t
 ```
 python3 "02 Software/tools/check_drumkit.py" /path/to/Sample
 python3 "02 Software/tools/check_drumkit.py" /path/to/Sample --kit Drumkit_001.rwd
-python3 "02 Software/tools/check_drumkit.py" /path/to/Sample --strict --max-seconds 20     # the planned V1.17 rules
+python3 "02 Software/tools/check_drumkit.py" /path/to/Sample --strict                       # V1.17 rules: a sample over 20 s is an error
 ```
 
 It reports errors (unsupported format, names too long, kit references that are not on the card) and warnings (not 44.1 kHz, sample over the limit and cut, subfolders). Exit status 1 when there is an error.

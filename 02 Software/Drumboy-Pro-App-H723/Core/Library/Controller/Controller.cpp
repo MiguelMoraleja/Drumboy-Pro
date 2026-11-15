@@ -4159,21 +4159,9 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             }
         } break;
 
-        case ENC_INST_2_PAN: {
-            // ADD + turn: every layer moves by the same step.
-            const int8_t dir = 1;
-            const uint8_t cur = dubMix.pan[selectedLayerNum];
-            if (((dir > 0) && (cur < kPanMax)) || ((dir < 0) && (cur > 0))) {
-                if (keyboard.shiftKeyPress) {
-                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-                        const uint8_t v = dubMix.pan[i] + dir;
-                        if (v <= kPanMax) layerInst_setPan(i, v);
-                    }
-                } else {
-                    layerInst_setPan(selectedLayerNum, static_cast<uint8_t>(cur + dir));
-                }
-            }
-        } break;
+        case ENC_INST_2_PAN:
+            layerPan_step(1);  // ADD + turn: every layer moves by the same step
+            break;
 
         case ENC_ROUTE_EQ_OUT:
         case ENC_ROUTE_F1_OUT:
@@ -4793,21 +4781,9 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
             }
         } break;
 
-        case ENC_INST_2_PAN: {
-            // ADD + turn: every layer moves by the same step.
-            const int8_t dir = -1;
-            const uint8_t cur = dubMix.pan[selectedLayerNum];
-            if (((dir > 0) && (cur < kPanMax)) || ((dir < 0) && (cur > 0))) {
-                if (keyboard.shiftKeyPress) {
-                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-                        const uint8_t v = dubMix.pan[i] + dir;
-                        if (v <= kPanMax) layerInst_setPan(i, v);
-                    }
-                } else {
-                    layerInst_setPan(selectedLayerNum, static_cast<uint8_t>(cur + dir));
-                }
-            }
-        } break;
+        case ENC_INST_2_PAN:
+            layerPan_step(-1);
+            break;
 
         case ENC_ROUTE_EQ_OUT:
         case ENC_ROUTE_F1_OUT:
@@ -6113,6 +6089,10 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                         memcpy(sampleName[i], &(data[layerOffset + 50 + 1]), kFileNameSize + 1);
                     }
 
+                    // 5.4b The new file replaces every sample: release the pool first, so the old samples
+                    // do not take room the new ones need.
+                    samplePool_releaseAll();
+
                     // 5.5 LIBRARY CROSS-CHECK
                     // Match extracted references against generated libraries and mark missing assets.
                     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
@@ -6315,7 +6295,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
         if (missingSample) {
             (missingSample == 1) ? alertType = ALERT_MISSINGSAMPLE : alertType = ALERT_MISSINGSAMPLES;
             lcd_drawAlert();
-            HAL_Delay(missingDetail[0] ? 3000 : 1000);  // time to read which sample
+            alertDelay(missingDetail[0] ? 3000 : 1000);  // time to read which sample
             result = SD_ERROR;
         } else if ((phaseCheck[0]) && (phaseCheck[1])) {
             result = SD_OK;
@@ -7346,6 +7326,10 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                         memcpy(sampleName[i], &(data[offset + 50 + 1]), kFileNameSize + 1);
                     }
 
+                    // 5.4b The new file replaces every sample: release the pool first, so the old samples
+                    // do not take room the new ones need.
+                    samplePool_releaseAll();
+
                     // 5.5 LIBRARY CROSS-CHECK
                     // Match extracted references against generated libraries and mark missing assets.
                     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
@@ -7450,7 +7434,7 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                     if (missingSample) {
                         (missingSample == 1) ? alertType = ALERT_MISSINGSAMPLE : alertType = ALERT_MISSINGSAMPLES;
                         lcd_drawAlert();
-                        HAL_Delay(missingDetail[0] ? 3000 : 1000);  // time to read which sample
+                        alertDelay(missingDetail[0] ? 3000 : 1000);  // time to read which sample
                         result = SD_ERROR;
                     } else {
                         result = SD_OK;
@@ -7890,7 +7874,7 @@ SdResult Controller::sd_checkSamplesInUse() {
     if (missingSampleCount > 0) {
         alertType = (missingSampleCount == 1) ? ALERT_MISSINGSAMPLE : ALERT_MISSINGSAMPLES;
         lcd_drawAlert();
-        HAL_Delay(missingDetail[0] ? 3000 : 1000);  // Give user time to read the alert
+        alertDelay(missingDetail[0] ? 3000 : 1000);  // Give user time to read the alert
         lcd_clearAlert();
         keyboard_enable();
         return SD_ERROR;
@@ -20886,7 +20870,7 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
             // inherits that same guarantee, so 4x keeps the property while quadrupling read
             // throughput.
             const uint32_t rawArraySize = 24576;
-            static uint8_t rawArray[rawArraySize];
+            static uint8_t rawArray[rawArraySize] __attribute__((aligned(32)));  // 32-byte aligned: the SD driver then reads straight into it (a cache line each)
 
             // Determine Format Coefficients
             uint32_t sRate = layer.wavLoadedData.fmt_chunk.sampleRate;
@@ -21015,7 +20999,7 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
                 snprintf(missingDetail, 36, "NEEDS %u.%u MB  FREE %u.%u MB", static_cast<unsigned>(neededBytes / 1000000u), static_cast<unsigned>((neededBytes / 100000u) % 10u), static_cast<unsigned>(freeNow / 1000000u), static_cast<unsigned>((freeNow / 100000u) % 10u));
                 alertType = ALERT_SAMPLEMEMORY;
                 lcd_drawAlert();
-                HAL_Delay(2500);
+                alertDelay(2500);
                 lcd_clearAlert();
                 missingDetail[0] = 0;
                 if (restoreOld) layerInst_setSampleSelected(layerNum_, prevSampleLoaded);  // the knob shows the sample that is loaded
@@ -21061,6 +21045,7 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
 
                     // Main Polling Loop
                     while (bytesReadTotal < totalBytes) {
+                        IWDG1->KR = 0xAAAA;  // a 20 s sample takes a while: keep the watchdog fed
                         uint32_t toRead = (totalBytes - bytesReadTotal > rawArraySize) ? rawArraySize : (totalBytes - bytesReadTotal);
 
                         // Hardware Guard: Check status register for errors during the loop
@@ -21243,6 +21228,48 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
     }
 }
 
+void Controller::samplePool_releaseAll() {
+    /// @brief Stops every layer's notes and releases every sample sector (a kit or song load replaces all of them).
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        layerPlayData[i].activeBeatPlayData.active = false;
+        layerPlayData[i].activeBeatPlayData.counter = 0;
+        layerPlayData[i].tempBeatPlayData.active = false;
+        layerPlayData[i].tempBeatPlayData.counter = 0;
+        layerLibrary[i].samplePlay = false;
+        layerLibrary[i].playSampleSector = -1;
+        layerLibrary[i].writeSampleSector = -1;
+    }
+    for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
+        if (sampleSectorLibrary[i].active) layerInst_clearSampleSector(i);
+    }
+    __set_PRIMASK(primask);
+}
+
+void Controller::alertDelay(uint32_t ms_) {
+    /// @brief HAL_Delay in steps that feed the watchdog (the alerts of a load add up within one pass of the main loop).
+    while (ms_ > 0) {
+        const uint32_t step = (ms_ > 100) ? 100 : ms_;
+        HAL_Delay(step);
+        IWDG1->KR = 0xAAAA;
+        ms_ -= step;
+    }
+}
+
+void Controller::layerPan_step(int8_t dir_) {
+    /// @brief One step of PAN: the selected layer, or with ADD held every layer that can still move.
+    if (keyboard.shiftKeyPress) {
+        for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+            const int16_t v = static_cast<int16_t>(dubMix.pan[i]) + dir_;
+            if ((v >= 0) && (v <= kPanMax)) layerInst_setPan(i, static_cast<uint8_t>(v));
+        }
+    } else {
+        const int16_t v = static_cast<int16_t>(dubMix.pan[selectedLayerNum]) + dir_;
+        if ((v >= 0) && (v <= kPanMax)) layerInst_setPan(selectedLayerNum, static_cast<uint8_t>(v));
+    }
+}
+
 uint32_t Controller::samplePool_freeBytes(uint8_t exceptLayer_) const {
     /// @brief The bytes of the sample pool not taken by other layers' samples (all of it may be one gap or several).
     uint32_t usedBytes = 0;
@@ -21272,14 +21299,17 @@ void Controller::samplePool_compact() {
         __disable_irq();
         sector.writeMode = true;  // no new note starts on it while it moves
         const uint32_t oldAddress = sector.address, oldEnd = sector.address + sector.bytes;
+        // Notes still reading the old place, or a freed block the copy is about to overwrite, stop.
+        const uint32_t newAddress = RAM_SAMPLE_ADDRESS + moves[k].to, newEnd = newAddress + sector.bytes;
+        const uint32_t lo = (oldAddress < newAddress) ? oldAddress : newAddress, hi = (oldEnd > newEnd) ? oldEnd : newEnd;
         for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
             BeatPlayData& abd = layerPlayData[i].activeBeatPlayData;
             BeatPlayData& tbd = layerPlayData[i].tempBeatPlayData;
-            if (abd.active && (abd.ramAddress >= oldAddress) && (abd.ramAddress < oldEnd)) {
+            if (abd.active && (abd.ramAddress >= lo) && (abd.ramAddress < hi)) {
                 abd.active = false;
                 abd.counter = 0;
             }
-            if (tbd.active && (tbd.ramAddress >= oldAddress) && (tbd.ramAddress < oldEnd)) {
+            if (tbd.active && (tbd.ramAddress >= lo) && (tbd.ramAddress < hi)) {
                 tbd.active = false;
                 tbd.counter = 0;
             }
@@ -26420,7 +26450,12 @@ void Controller::processAudioRouting() {
     float dubGains[kDubStrips][kRouteNodeCount];
     float panGain[kDubStrips][2];
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-        panGains(dubMix.pan[i], panGain[i][0], panGain[i][1]);
+        if (panCachePos[i] != dubMix.pan[i]) {  // cosf and sinf only when the pan changed
+            panCachePos[i] = dubMix.pan[i];
+            panGains(panCachePos[i], panCacheGain[i][0], panCacheGain[i][1]);
+        }
+        panGain[i][0] = panCacheGain[i][0];
+        panGain[i][1] = panCacheGain[i][1];
         if (dubMix.on) {
             dubNodeGains(dubMix.strip[i], 0, dubGains[i]);
             sources[2 + i] = {audioLayer[i], 0, nullptr, dubGains[i], stereoDsp.srcGain[i], panGain[i][0], panGain[i][1], stereoDsp.layerStereo[i] ? stereoDsp.layerR[i] : nullptr};
@@ -26676,8 +26711,8 @@ void Controller::processAudioReverb() {
             audioReverb_R[i] = outR - side;
         }
     } else {
-        // Bypass mode: Effect is inactive, copy mono accumulation to stereo output
-        memcpy(audioReverb_R, audioReverb_L, I2S_BLOCK_SIZE * sizeof(float));
+        // Bypass mode: the reverb is off and leaves the pair it got unchanged (the router fills both
+        // channels; copying the left into the right would undo every pan).
     }
 }
 

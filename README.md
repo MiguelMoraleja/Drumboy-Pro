@@ -10,6 +10,8 @@ This repository holds the complete hardware design (KiCad) and firmware (STM32Cu
 
 ---
 
+
+Samples and drumkits: [`docs/drumkit-specs.md`](docs/drumkit-specs.md) has the sample format, length and name limits and the kit file layout; `02 Software/tools/check_drumkit.py` checks a pack against them.
 ## Overview
 
 The MCU sits at the center of six subsystems: an NT35510 display driven over a 16-bit parallel GPIO bus, 16 MB of external SDRAM for sample streaming, an SGTL5000 audio codec over I2S/I2C, a microSD card for storage, a control surface fanned out over six MCP23017 I/O expanders, and external connectivity (MIDI, Sync, USB-C power).

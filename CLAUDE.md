@@ -1,6 +1,7 @@
 # Notes for AI assistants working on this repo
 
 Fork: MiguelMoraleja/Drumboy-Pro. Firmware: `02 Software/Drumboy-Pro-App-H723`. Planned work: `BACKLOG.md`.
+Preparing samples or drumkits: `docs/drumkit-specs.md` (formats, limits, names, kit file layout) and the checker `02 Software/tools/check_drumkit.py`.
 
 ## Before pushing firmware changes
 

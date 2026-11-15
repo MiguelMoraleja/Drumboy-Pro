@@ -381,7 +381,10 @@ class Controller {
 
     // DUB mode (DubMix.h)
     DubMix dubMix;                                          // the strips; on = DUB mode (a song setting)
+    float pingWidth = 0.0f;                                 // ping-pong width of the echo in this block (0 = centred; audio interrupt)
+    float effectDelta = 0.0f;                               // right minus left of the effect's last sample (audio interrupt)
     float fxDryScale = 1.0f;                                // 0 in DUB mode: effects and reverb run without their DRY
+    uint8_t dubPage = 0;                                    // 0: the first DUB page, 1: the second (pan, FX send, echo width)
     uint8_t dubStripSel = 0;                                // the strip the DUB page edits (a pad press selects it)
     uint32_t dubStripDrawn[kDubStrips] = {0};               // the desk: what each strip shows (a fingerprint), 0 = nothing
     uint32_t dubReturnDrawn[2] = {0, 0};

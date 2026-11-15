@@ -2710,8 +2710,20 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_MIXER:
-                                // MIXER, then DUB, then ROUTING, then the mixer again.
-                                if (!alertFlag) (menu == MIXER_MENU) ? dub_select() : ((menu == DUB_MENU) ? routing_select() : mixer_select());
+                                // MIXER, then DUB (two pages), then ROUTING, then the mixer again.
+                                if (!alertFlag) {
+                                    if ((menu == DUB_MENU) && (dubPage == 0)) {
+                                        dubPage = 1;
+                                        lcd_drawDubMenu();
+                                        encoder_update();
+                                    } else if (menu == DUB_MENU) {
+                                        routing_select();
+                                    } else if (menu == MIXER_MENU) {
+                                        dub_select();
+                                    } else {
+                                        mixer_select();
+                                    }
+                                }
                                 break;
 
                             case KEY_FILTER_0:
@@ -3424,6 +3436,7 @@ void Controller::encoder_update() {
         } else {
             enc.mode = ENC_MODE_LOCAL;
             enc.function = encoderLocalFunction[menuSafe][i];
+            if ((menuSafe == DUB_MENU) && (dubPage == 1)) enc.function = kDubPage2Function[i];
         }
 
         // 2. COUNTER STATE RESET
@@ -4218,6 +4231,9 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_DUB_FEEDBACK:
         case ENC_DUB_ECHORTN:
         case ENC_DUB_VERBRTN:
+        case ENC_DUB_PAN:
+        case ENC_DUB_FX:
+        case ENC_DUB_WIDTH:
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, true);
             break;
 
@@ -4849,6 +4865,9 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_DUB_FEEDBACK:
         case ENC_DUB_ECHORTN:
         case ENC_DUB_VERBRTN:
+        case ENC_DUB_PAN:
+        case ENC_DUB_FX:
+        case ENC_DUB_WIDTH:
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, false);
             break;
 
@@ -23372,6 +23391,7 @@ void Controller::dub_select() {
     /// @brief Opens the DUB page (the second page of the MIXER key): the selected strip's LEVEL,
     /// BUS and sends on the top row, the desk (MODE, FEEDBACK and the two returns) on the bottom.
     if (menu == DUB_MENU) return;
+    dubPage = 0;
     preMenu = menu;
     preMenuTab = menuTab;
     menuTab = -1;  // every field has its own encoder
@@ -23388,10 +23408,11 @@ void Controller::lcd_drawDubMenu() {
     lcd_setMenuHeaderState(CYAN);
     lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
     for (uint8_t f = 0; f < 8; f++) {
+        const uint8_t fn = (dubPage == 1) ? static_cast<uint8_t>(kDubPage2Function[f]) : static_cast<uint8_t>(ENC_DUB_LEVEL + f);
         lcd_setMenuHeaderState(CYAN);
-        lcd.drawText(kEncoderFuncDataLibrary[ENC_DUB_LEVEL + f].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[f], kMenuHeaderY[f]);
+        lcd.drawText(kEncoderFuncDataLibrary[fn].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[f], kMenuHeaderY[f]);
         lcd_setMenuSignState(CYAN);
-        lcd.drawText(kEncoderFuncDataLibrary[ENC_DUB_LEVEL + f].sign, kMenuSignTextSize, kMenuSignBoxX[f], kMenuSignBoxY[f]);
+        lcd.drawText(kEncoderFuncDataLibrary[fn].sign, kMenuSignTextSize, kMenuSignBoxX[f], kMenuSignBoxY[f]);
     }
     lcd_drawDub_Data();
 }
@@ -23400,6 +23421,19 @@ void Controller::lcd_drawDub_Data() {
     /// @brief Draws the DUB values: the selected strip (top row) and the desk (bottom row).
     const DubStrip& strip = dubMix.strip[dubStripSel];
     char text[8][kMenuDataTextSize + 1];
+    if (dubPage == 1) {
+        for (uint8_t f = 0; f < 8; f++) snprintf(text[f], sizeof text[f], "%10s", "");
+        char label[8];
+        panLabel(label, sizeof label, dubMix.pan[dubStripSel]);
+        snprintf(text[0], sizeof text[0], "%10s", label);
+        snprintf(text[1], sizeof text[1], "%10u", static_cast<unsigned>(strip.fx));
+        snprintf(text[4], sizeof text[4], "%10u", static_cast<unsigned>(dubMix.echoWidth));
+        lcd_setMenuDataState(WHITE);
+        for (uint8_t f = 0; f < 8; f++) lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[f], kMenuDataY[f]);
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
+        return;
+    }
     snprintf(text[0], sizeof text[0], "%10u", static_cast<unsigned>(layerLibrary[dubStripSel].level));
     snprintf(text[1], sizeof text[1], "%10s", (strip.bus == DUB_BUS_DIR) ? "DIR" : "FILT");
     snprintf(text[2], sizeof text[2], "%10u", static_cast<unsigned>(strip.echo));
@@ -23464,6 +23498,20 @@ void Controller::dub_step(EncoderFunc function_, bool up_) {
             effect_setFData(0, effect[0].type, up_ ? (sub.fData < sub.kMaxFData ? sub.fData + 1 : sub.fData) : (sub.fData > sub.kMinFData ? sub.fData - 1 : sub.fData));
             break;
         }
+        case ENC_DUB_PAN: {
+            const uint8_t cur = dubMix.pan[dubStripSel];
+            if (up_ && (cur < kPanMax)) layerInst_setPan(dubStripSel, static_cast<uint8_t>(cur + 1));
+            if (!up_ && (cur > 0)) layerInst_setPan(dubStripSel, static_cast<uint8_t>(cur - 1));
+            break;
+        }
+        case ENC_DUB_FX:
+            stepSend(strip.fx);
+            break;
+        case ENC_DUB_WIDTH:
+            // Steps of 5 %, to 100 %.
+            if (up_) dubMix.echoWidth = static_cast<uint8_t>((dubMix.echoWidth + 5 > kDubMaxWidth) ? kDubMaxWidth : dubMix.echoWidth + 5);
+            if (!up_) dubMix.echoWidth = (dubMix.echoWidth >= 5) ? static_cast<uint8_t>(dubMix.echoWidth - 5) : 0;
+            break;
         case ENC_DUB_VERBRTN:
             reverb_setWet(up_ ? (reverb.wet < kMaxReverbWet ? reverb.wet + 1 : reverb.wet) : (reverb.wet > kMinReverbWet ? reverb.wet - 1 : reverb.wet));
             break;
@@ -26281,12 +26329,15 @@ void Controller::processAudioEffect(uint8_t effectNum_) {
         float* buffer = audioEffect[effectNum_];
         float* bufferR = stereoDsp.nodeR[3 + effectNum_];
         const float dryGain = effectDryGain(effectNum_);
+        // Ping-pong of the echo: the left output is the effect's output, the right one differs by effectDelta.
+        pingWidth = ((effectNum_ == 0) && (effect_.type == EF_DELAY) && !effect_.genTransition.active) ? pingPongWidth(dubMix.echoWidth, effect_.delay.lag, kDelaySize) : 0.0f;
         for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
             const float l = buffer[i], r = bufferR[i];
             const float mid = 0.5f * (l + r), side = (l - r) * 0.5f * dryGain;
+            effectDelta = 0.0f;
             const float out = processAudioEffectHelper(effectNum_, mid);
             buffer[i] = out + side;
-            bufferR[i] = out - side;
+            bufferR[i] = out - side + effectDelta;
         }
     }
 }
@@ -26545,9 +26596,16 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // Read the delayed signal from the buffer
                 float delayedSample = delayBuf[pIdx];
 
+                // Ping-pong (PingPong.h, ECHO WIDTH of the DUB page, Effect 1 only): the right channel reads
+                // one echo time further back and feeds back from there. At width 0 the right channel is the
+                // left one and everything below is as before.
+                const float width = (effectNum_ == 0) ? pingWidth : 0.0f;
+                float rightSample = delayedSample;
+                if (width > 0.0f) rightSample = pingPongRight(delayedSample, delayBuf[pingPongSecondIndex(pIdx, delay_.lag, kDelaySize)], width, delay_.feedback);
+
                 // --- DAMPING FILTER (Feedback Loop) ---
                 // This one-pole filter softens the repeats.
-                float feedbackTarget = (input * delay_.level) + (delayedSample * delay_.feedback);
+                float feedbackTarget = (input * delay_.level) + (rightSample * delay_.feedback);
                 float filteredFeedback = delay_.lastFeedbackSample + delay_.dampingAlpha * (feedbackTarget - delay_.lastFeedbackSample);
 
                 // Update filter state for next sample
@@ -26571,8 +26629,10 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // 4. TRANSITION & STORE
                 if (effect_.genTransition.active) {
                     output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
+                    effectDelta = (width > 0.0f) ? ((rightSample - delayedSample) * wetLevel * effect_.genTransition.activeWet) : 0.0f;
                 } else {
                     output = mixData;
+                    effectDelta = (width > 0.0f) ? ((rightSample - delayedSample) * wetLevel) : 0.0f;
                 }
 
                 // 5. UPDATE INDICES

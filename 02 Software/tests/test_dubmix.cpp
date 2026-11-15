@@ -202,7 +202,7 @@ int main() {
     dubWrite(d, blob);
     DubMix back;
     CHECK(dubRead(back, blob, kDubFileSize) && back.on && back.strip[3].bus == 1 && back.strip[3].echo == 30 && back.strip[3].verb == 70 && back.strip[9].fx == 9, "round trip");
-    CHECK(!dubRead(back, blob, kDubFileSize - 1) && !back.on, "too short: default");
+    CHECK(!dubRead(back, blob, kDubFileSizeV2 - 1) && !back.on, "too short: default");
     // Pan: kept, defaults to the centre, validated; a version 1 block (no pan) still reads.
     d.pan[4] = 7;
     d.pan[9] = 40;
@@ -232,7 +232,17 @@ int main() {
     memcpy(bad, blob, kDubFileSize);
     bad[0] = 'X';
     CHECK(!dubRead(back, bad, kDubFileSize), "wrong marker");
-    CHECK(kDubFileSize == 55 && kDubFileSizeV1 == 45, "block sizes %u %u", kDubFileSize, kDubFileSizeV1);
+    CHECK(kDubFileSize == 56 && kDubFileSizeV2 == 55 && kDubFileSizeV1 == 45, "block sizes %u %u %u", kDubFileSize, kDubFileSizeV2, kDubFileSizeV1);
+    // The echo width: stored in the last byte; a block of 55 bytes (before the width) reads as 0.
+    DubMix w;
+    w.echoWidth = 70;
+    uint8_t wb[kDubFileSize];
+    dubWrite(w, wb);
+    DubMix wr;
+    CHECK(dubRead(wr, wb, kDubFileSize) && wr.echoWidth == 70, "echo width round trip");
+    CHECK(dubRead(wr, wb, kDubFileSizeV2) && wr.echoWidth == 0, "a 55-byte block has no width");
+    wb[kDubFileSizeV2] = 101;
+    CHECK(!dubRead(wr, wb, kDubFileSize), "a width over 100 rejects the block");
 
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

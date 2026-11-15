@@ -381,6 +381,8 @@ class Controller {
 
     // DUB mode (DubMix.h)
     DubMix dubMix;                                          // the strips; on = DUB mode (a song setting)
+    char missingDetail[40] = "";                           // MISSING SAMPLE alert: the first missing layer, instrument and sample ("L3 Kick/Name")
+    void missing_note(uint8_t layer_, const char* inst_, const char* sample_);
     float pingWidth = 0.0f;                                 // ping-pong width of the echo in this block (0 = centred; audio interrupt)
     float effectDelta = 0.0f;                               // right minus left of the effect's last sample (audio interrupt)
     float fxDryScale = 1.0f;                                // 0 in DUB mode: effects and reverb run without their DRY

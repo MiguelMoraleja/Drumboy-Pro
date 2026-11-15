@@ -6301,14 +6301,21 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
         // 7. POST-LOAD VALIDATION
         // Raise alert if any instrument/sample reference cannot be resolved.
         uint8_t missingSample = 0;
+        missingDetail[0] = 0;
         for (uint8_t j = 0; j < kLayerLibrarySize; j++) {
-            if (instMissing[j]) missingSample += 1;
-            if (sampleMissing[j]) missingSample += 1;
+            if (instMissing[j]) {
+                missingSample += 1;
+                missing_note(j, instName[j], nullptr);
+            }
+            if (sampleMissing[j]) {
+                missingSample += 1;
+                missing_note(j, instName[j], sampleName[j]);
+            }
         }
         if (missingSample) {
             (missingSample == 1) ? alertType = ALERT_MISSINGSAMPLE : alertType = ALERT_MISSINGSAMPLES;
             lcd_drawAlert();
-            HAL_Delay(1000);
+            HAL_Delay(missingDetail[0] ? 3000 : 1000);  // time to read which sample
             result = SD_ERROR;
         } else if ((phaseCheck[0]) && (phaseCheck[1])) {
             result = SD_OK;
@@ -7429,14 +7436,21 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                     // 5.6 POST-LOAD VALIDATION
                     // Raise alert if any instrument/sample reference cannot be resolved.
                     uint8_t missingSample = 0;
+                    missingDetail[0] = 0;
                     for (uint8_t j = 0; j < kLayerLibrarySize; j++) {
-                        if (instMissing[j]) missingSample += 1;
-                        if (sampleMissing[j]) missingSample += 1;
+                        if (instMissing[j]) {
+                            missingSample += 1;
+                            missing_note(j, instName[j], nullptr);
+                        }
+                        if (sampleMissing[j]) {
+                            missingSample += 1;
+                            missing_note(j, instName[j], sampleName[j]);
+                        }
                     }
                     if (missingSample) {
                         (missingSample == 1) ? alertType = ALERT_MISSINGSAMPLE : alertType = ALERT_MISSINGSAMPLES;
                         lcd_drawAlert();
-                        HAL_Delay(1000);
+                        HAL_Delay(missingDetail[0] ? 3000 : 1000);  // time to read which sample
                         result = SD_ERROR;
                     } else {
                         result = SD_OK;
@@ -7770,6 +7784,7 @@ SdResult Controller::sd_checkSamplesInUse() {
     /// Clears invalid references and reports missing assets to the user.
 
     uint8_t missingSampleCount = 0;
+    missingDetail[0] = 0;
     bool instMissing[kLayerLibrarySize] = {false};
     bool sampleMissing[kLayerLibrarySize] = {false};
     char buffer[kFileNameSize];
@@ -7863,6 +7878,7 @@ SdResult Controller::sd_checkSamplesInUse() {
         // 5. SAMPLE STATE RECOVERY
         // Reset sample state when the referenced sample is missing.
         if (sampleMissing[i]) {
+            missing_note(i, layer.instLoadedData.nameLong, layer.sampleLoadedData.nameLong);
             layerInst_setSampleSelected(i, -1);
             layerInst_setSampleLoaded(i);
             missingSampleCount++;
@@ -7874,7 +7890,7 @@ SdResult Controller::sd_checkSamplesInUse() {
     if (missingSampleCount > 0) {
         alertType = (missingSampleCount == 1) ? ALERT_MISSINGSAMPLE : ALERT_MISSINGSAMPLES;
         lcd_drawAlert();
-        HAL_Delay(1000);  // Give user time to read the alert
+        HAL_Delay(missingDetail[0] ? 3000 : 1000);  // Give user time to read the alert
         lcd_clearAlert();
         keyboard_enable();
         return SD_ERROR;
@@ -8607,6 +8623,34 @@ void Controller::lcd_drawAlert() {
     // 4. ALERT TEXT DRAW
     // Render resolved message at alert center.
     lcd.drawText(alertText, strlen(alertText), 480, 265);
+
+    // 5. WHICH SAMPLE (missing sample alerts): a second line under the box
+    if (((alertType == ALERT_MISSINGSAMPLE) || (alertType == ALERT_MISSINGSAMPLES)) && missingDetail[0]) {
+        lcd.clearRect(355, 282, 250, 14);
+        lcd.drawText(missingDetail, strlen(missingDetail), 480, 285);
+    }
+}
+
+void Controller::missing_note(uint8_t layer_, const char* inst_, const char* sample_) {
+    /// @brief Remembers the first missing instrument or sample for the alert: "L3 Kick/Name" (at most 35 characters, the width of the box).
+    if (missingDetail[0]) return;
+    // Built by hand: the names are cut to fit, which snprintf would warn about.
+    char* out = missingDetail;
+    const char* const end = missingDetail + 35;
+    auto put = [&](const char* s_) {
+        while ((*s_) && (out < end)) *out++ = *s_++;
+    };
+    put("L");
+    if (layer_ + 1 >= 10) put("1");
+    const char digit[2] = {static_cast<char>('0' + ((layer_ + 1) % 10)), 0};
+    put(digit);
+    put(" ");
+    put(inst_);
+    if (sample_) {
+        put("/");
+        put(sample_);
+    }
+    *out = 0;
 }
 
 void Controller::lcd_clearAlert() {
@@ -8617,6 +8661,7 @@ void Controller::lcd_clearAlert() {
     lcd.setForeColor(CYAN);
     lcd.setBackColor(BLACK);
     lcd.clearRect(355, 260, 250, 20);
+    lcd.clearRect(355, 282, 250, 14);  // the line naming a missing sample
 
     // 2. CONTENT RESTORE
     // Redraw song lane that can be overlapped by alert box (or the whole full-area view).

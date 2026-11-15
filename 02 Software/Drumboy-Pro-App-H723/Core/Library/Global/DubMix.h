@@ -24,7 +24,9 @@
 const uint8_t kDubStrips = 10;
 const uint8_t kDubMaxSend = 100;
 const uint16_t kDubFileSizeV1 = 3 + 1 + 1 + 4 * kDubStrips;  // 45: version 1, no pan
-const uint16_t kDubFileSize = kDubFileSizeV1 + kDubStrips;    // 55: version 2, with the pan of each layer
+const uint16_t kDubFileSizeV2 = kDubFileSizeV1 + kDubStrips;  // 55: version 2, with the pan of each layer
+const uint16_t kDubFileSize = kDubFileSizeV2 + 1;             // 56: and the echo width (older firmware reads the first 55 bytes and ignores the last)
+const uint8_t kDubMaxWidth = 100;
 
 enum DubBus : uint8_t { DUB_BUS_FILT = 0, DUB_BUS_DIR = 1 };
 
@@ -38,6 +40,7 @@ struct DubStrip {
 struct DubMix {
     bool on = false;
     DubStrip strip[kDubStrips];
+    uint8_t echoWidth = 0;  // 0 = the centred echo of today, 100 = full ping-pong (the repeats alternate left and right)
     uint8_t pan[kDubStrips] = {kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre};  // Pan.h, in CHAIN and in DUB
 };
 
@@ -70,13 +73,14 @@ inline void dubWrite(const DubMix& d_, uint8_t* out_) {
         out_[8 + 4 * i] = d_.strip[i].fx;
     }
     for (uint8_t i = 0; i < kDubStrips; i++) out_[kDubFileSizeV1 + i] = d_.pan[i];
+    out_[kDubFileSizeV2] = d_.echoWidth;
 }
 
 // Returns false (and leaves the default mix, CHAIN) when the block is missing or not valid.
 inline bool dubRead(DubMix& d_, const uint8_t* in_, uint16_t size_) {
     dubClear(d_);
     if ((size_ < kDubFileSizeV1) || (memcmp(in_, "DUB", 3) != 0) || ((in_[3] != 1) && (in_[3] != 2))) return false;
-    if ((in_[3] == 2) && (size_ < kDubFileSize)) return false;
+    if ((in_[3] == 2) && (size_ < kDubFileSizeV2)) return false;
     DubMix d;
     d.on = (in_[4] & 1) != 0;
     for (uint8_t i = 0; i < kDubStrips; i++) {
@@ -91,6 +95,10 @@ inline bool dubRead(DubMix& d_, const uint8_t* in_, uint16_t size_) {
         for (uint8_t i = 0; i < kDubStrips; i++) {
             if (in_[kDubFileSizeV1 + i] > kPanMax) return false;
             d.pan[i] = in_[kDubFileSizeV1 + i];
+        }
+        if (size_ >= kDubFileSize) {
+            if (in_[kDubFileSizeV2] > kDubMaxWidth) return false;
+            d.echoWidth = in_[kDubFileSizeV2];
         }
     }
     d_ = d;

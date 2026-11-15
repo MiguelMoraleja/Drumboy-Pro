@@ -123,6 +123,7 @@ void swap(T& a, T& b) {
 }
 
 #include "Util.h"     // clamp()
+#include "PingPong.h"  // ping-pong echo
 #include "Routing.h"  // RouteNode, routing helpers
 
 template <typename T>
@@ -354,7 +355,13 @@ const uint32_t kSampleByteSize                      = kSampleSize * 4;
 
 const uint8_t kSampleSectorLibrarySize              = 15;
 
+// A stereo sample keeps its two channels in one slot as two planes: the left channel at the start of
+// the slot, the right one half a slot later. Half the length (2.7 s), the same memory, 32-bit float.
+const uint32_t kStereoSampleSize                    = kSampleSize / 2;
+const uint32_t kStereoPlaneBytes                    = kStereoSampleSize * 4;
+
 struct SampleSector {
+    bool stereo = false;                            // two planes (kStereoPlaneBytes apart)
     bool active = false;
     uint8_t layer = 0;
     uint32_t size = 0;
@@ -419,6 +426,8 @@ static_assert(0xC0EA6000u + kPreviewRingSize * 4u <= 0xC0FB9640u, "preview ring 
 struct StereoDsp {
     float nodeR[5][I2S_BLOCK_SIZE];
     float srcGain[10][kRouteGainStateSize];
+    float layerR[10][I2S_BLOCK_SIZE];               // the right channel of a layer playing a stereo sample
+    bool layerStereo[10];                           // which layers did this block
 };
 extern StereoDsp stereoDsp;
 
@@ -1295,6 +1304,10 @@ typedef enum {
 
     ENC_INST_2_PAN                                  = 0x88,  // layer PAN (page 3, Pan.h)
 
+    ENC_DUB_PAN                                     = 0x89,  // DUB page 2: the selected strip's pan and FX send, then the echo's width
+    ENC_DUB_FX                                      = 0x8A,
+    ENC_DUB_WIDTH                                   = 0x8B,
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1355,6 +1368,10 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // DUB_MENU = 0x18
     // Top row: the selected strip. Bottom row: the desk.
     {ENC_DUB_LEVEL, ENC_DUB_BUS, ENC_DUB_ECHO, ENC_DUB_VERB, ENC_DUB_MODE, ENC_DUB_FEEDBACK, ENC_DUB_ECHORTN, ENC_DUB_VERBRTN}};
+
+// DUB page 2 (the next step in the MIXER cycle): the selected strip's pan and FX send on the top row,
+// the echo's width on the bottom row.
+const EncoderFunc kDubPage2Function[8] = {ENC_DUB_PAN, ENC_DUB_FX, ENC_FNC_NONE, ENC_FNC_NONE, ENC_DUB_WIDTH, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1529,7 +1546,11 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_DUB_ECHORTN,         ENC_RES_M, "ECHO RTN  ", "DUB   ", "  %", false},
     {ENC_DUB_VERBRTN,         ENC_RES_M, "VERB RTN  ", "DUB   ", "  %", false},
 
-    {ENC_INST_2_PAN,          ENC_RES_M, "PAN       ", "LAYER ", "   ", false}
+    {ENC_INST_2_PAN,          ENC_RES_M, "PAN       ", "LAYER ", "   ", false},
+
+    {ENC_DUB_PAN,             ENC_RES_M, "PAN       ", "DUB   ", "   ", false},
+    {ENC_DUB_FX,              ENC_RES_M, "FX SEND   ", "DUB   ", "  %", false},
+    {ENC_DUB_WIDTH,           ENC_RES_M, "ECHO WIDTH", "DUB   ", "  %", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -6719,6 +6740,7 @@ struct LfoPlayData {
 struct BeatPlayData {
     bool active;
     uint32_t ramAddress;
+    uint32_t stereoOffset;                          // bytes from the left plane to the right one; 0 = a mono sample
 
     float volumeMultiplier;
     uint32_t resolutionCoef;

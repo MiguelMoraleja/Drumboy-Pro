@@ -13,6 +13,8 @@ Fork: MiguelMoraleja/Drumboy-Pro. Firmware: `02 Software/Drumboy-Pro-App-H723`. 
 
 The owner's standing rule (2026-11-13): never trade sound quality for speed, memory or simplicity. If the audio engine runs out of processor time, find the room elsewhere (data cache, faster code, the unused DTCM RAM, a leaner screen, a specialized firmware build for heavy use) and do not thin out filters, effects, bit depth or sample rate. A cheaper algorithm is only acceptable if it sounds the same. Say so in the backlog when a choice touches this.
 
+SD writes with the data cache on need a cache clean before every DMA (`FATFS/Target/sd_diskio.c`): a missing clean in the scratch-buffer path corrupted two cards (backlog 56). Any new DMA from a cacheable buffer needs the same.
+
 The Makefile does not see a change of `DCACHE` or `PROFILE` (the data cache is on by default since V1.15; `DCACHE=0` turns it off): use a clean or another `BUILD` directory after changing them, and build the update package with a clean `build/`. Update file names stay within 28 characters (the bootloader ignored a 31-character name).
 
 ## Crash reports

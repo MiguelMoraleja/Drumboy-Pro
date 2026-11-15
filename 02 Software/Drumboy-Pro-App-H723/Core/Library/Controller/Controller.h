@@ -381,7 +381,12 @@ class Controller {
 
     // DUB mode (DubMix.h)
     DubMix dubMix;                                          // the strips; on = DUB mode (a song setting)
+    char missingDetail[40] = "";                           // MISSING SAMPLE alert: the first missing layer, instrument and sample ("L3 Kick/Name")
+    void missing_note(uint8_t layer_, const char* inst_, const char* sample_);
+    float pingWidth = 0.0f;                                 // ping-pong width of the echo in this block (0 = centred; audio interrupt)
+    float effectDelta = 0.0f;                               // right minus left of the effect's last sample (audio interrupt)
     float fxDryScale = 1.0f;                                // 0 in DUB mode: effects and reverb run without their DRY
+    uint8_t dubPage = 0;                                    // 0: the first DUB page, 1: the second (pan, FX send, echo width)
     uint8_t dubStripSel = 0;                                // the strip the DUB page edits (a pad press selects it)
     uint32_t dubStripDrawn[kDubStrips] = {0};               // the desk: what each strip shows (a fingerprint), 0 = nothing
     uint32_t dubReturnDrawn[2] = {0, 0};
@@ -554,6 +559,7 @@ class Controller {
     bool enqueueMidiTx(const uint8_t* data, uint8_t len);
     void serviceMidiTx();
     void receiveMidiCommand();
+    void midi_thru(uint8_t byte_);
     void midi_receiveClock(uint32_t nowCycles_);
     void midi_clockEngage(bool fromMidi_);
     void midi_clockRelease();

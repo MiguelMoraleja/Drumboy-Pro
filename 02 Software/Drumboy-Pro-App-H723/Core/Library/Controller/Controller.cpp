@@ -1233,6 +1233,7 @@ void Controller::receiveMidiCommand() {
                     io.midi.rxTransportRunning = true;
                     io.midi.rxClockPhaseValid = true;
                     midi_clockEngage(true);
+                    midi_thru(event.data1);
                     if (event.data1 == 0xFA) {
                         io.midi.rxStartFlag = true;
                         io.midi.rxPlayFlag = true;
@@ -1249,6 +1250,7 @@ void Controller::receiveMidiCommand() {
                     io.midi.rxClockPhaseValid = false;
                     // The clock stops with the transport: the Drumboy runs free to its stop point.
                     midi_clockRelease();
+                    midi_thru(event.data1);
                     if (event.data1 == 0xFC)
                         io.midi.rxStopFlag = true;
                     else
@@ -1263,6 +1265,14 @@ void Controller::receiveMidiCommand() {
         default:
             break;
     }
+}
+
+void Controller::midi_thru(uint8_t byte_) {
+    /// @brief Passes an incoming real-time byte on to MIDI OUT (MIDI IN and OUT both on SYNC; see
+    /// midiThruForwards). Called from the UART receive interrupt; the ring buffer is interrupt-safe.
+    if (!io.midi.txActive) return;
+    if (!midiThruForwards(byte_, io.midi.rxClock, io.midi.rxTransport, io.midi.txClock, io.midi.txTransport)) return;
+    enqueueMidiTx(&byte_, 1);
 }
 
 void Controller::midi_receiveClock(uint32_t nowCycles_) {
@@ -1286,6 +1296,7 @@ void Controller::midi_receiveClock(uint32_t nowCycles_) {
     const ClockTickResult result = clockLockTick(lock, nowCycles_);
     if (result == CLOCK_REJECTED) return;
     io.midi.rxClockTickPhase = nextPhase;
+    midi_thru(0xF8);     // MIDI OUT passes the clock on (a tick the lock rejected is not passed)
     syncOutClockTick();  // the sync output jack follows the incoming clock
 
     // Only while playing. Locked but stopped (a START the Drumboy didn't follow because it wasn't
@@ -2710,8 +2721,20 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_MIXER:
-                                // MIXER, then DUB, then ROUTING, then the mixer again.
-                                if (!alertFlag) (menu == MIXER_MENU) ? dub_select() : ((menu == DUB_MENU) ? routing_select() : mixer_select());
+                                // MIXER, then DUB (two pages), then ROUTING, then the mixer again.
+                                if (!alertFlag) {
+                                    if ((menu == DUB_MENU) && (dubPage == 0)) {
+                                        dubPage = 1;
+                                        lcd_drawDubMenu();
+                                        encoder_update();
+                                    } else if (menu == DUB_MENU) {
+                                        routing_select();
+                                    } else if (menu == MIXER_MENU) {
+                                        dub_select();
+                                    } else {
+                                        mixer_select();
+                                    }
+                                }
                                 break;
 
                             case KEY_FILTER_0:
@@ -3424,6 +3447,7 @@ void Controller::encoder_update() {
         } else {
             enc.mode = ENC_MODE_LOCAL;
             enc.function = encoderLocalFunction[menuSafe][i];
+            if ((menuSafe == DUB_MENU) && (dubPage == 1)) enc.function = kDubPage2Function[i];
         }
 
         // 2. COUNTER STATE RESET
@@ -4218,6 +4242,9 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_DUB_FEEDBACK:
         case ENC_DUB_ECHORTN:
         case ENC_DUB_VERBRTN:
+        case ENC_DUB_PAN:
+        case ENC_DUB_FX:
+        case ENC_DUB_WIDTH:
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, true);
             break;
 
@@ -4849,6 +4876,9 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_DUB_FEEDBACK:
         case ENC_DUB_ECHORTN:
         case ENC_DUB_VERBRTN:
+        case ENC_DUB_PAN:
+        case ENC_DUB_FX:
+        case ENC_DUB_WIDTH:
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, false);
             break;
 
@@ -6271,14 +6301,21 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
         // 7. POST-LOAD VALIDATION
         // Raise alert if any instrument/sample reference cannot be resolved.
         uint8_t missingSample = 0;
+        missingDetail[0] = 0;
         for (uint8_t j = 0; j < kLayerLibrarySize; j++) {
-            if (instMissing[j]) missingSample += 1;
-            if (sampleMissing[j]) missingSample += 1;
+            if (instMissing[j]) {
+                missingSample += 1;
+                missing_note(j, instName[j], nullptr);
+            }
+            if (sampleMissing[j]) {
+                missingSample += 1;
+                missing_note(j, instName[j], sampleName[j]);
+            }
         }
         if (missingSample) {
             (missingSample == 1) ? alertType = ALERT_MISSINGSAMPLE : alertType = ALERT_MISSINGSAMPLES;
             lcd_drawAlert();
-            HAL_Delay(1000);
+            HAL_Delay(missingDetail[0] ? 3000 : 1000);  // time to read which sample
             result = SD_ERROR;
         } else if ((phaseCheck[0]) && (phaseCheck[1])) {
             result = SD_OK;
@@ -7399,14 +7436,21 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                     // 5.6 POST-LOAD VALIDATION
                     // Raise alert if any instrument/sample reference cannot be resolved.
                     uint8_t missingSample = 0;
+                    missingDetail[0] = 0;
                     for (uint8_t j = 0; j < kLayerLibrarySize; j++) {
-                        if (instMissing[j]) missingSample += 1;
-                        if (sampleMissing[j]) missingSample += 1;
+                        if (instMissing[j]) {
+                            missingSample += 1;
+                            missing_note(j, instName[j], nullptr);
+                        }
+                        if (sampleMissing[j]) {
+                            missingSample += 1;
+                            missing_note(j, instName[j], sampleName[j]);
+                        }
                     }
                     if (missingSample) {
                         (missingSample == 1) ? alertType = ALERT_MISSINGSAMPLE : alertType = ALERT_MISSINGSAMPLES;
                         lcd_drawAlert();
-                        HAL_Delay(1000);
+                        HAL_Delay(missingDetail[0] ? 3000 : 1000);  // time to read which sample
                         result = SD_ERROR;
                     } else {
                         result = SD_OK;
@@ -7740,6 +7784,7 @@ SdResult Controller::sd_checkSamplesInUse() {
     /// Clears invalid references and reports missing assets to the user.
 
     uint8_t missingSampleCount = 0;
+    missingDetail[0] = 0;
     bool instMissing[kLayerLibrarySize] = {false};
     bool sampleMissing[kLayerLibrarySize] = {false};
     char buffer[kFileNameSize];
@@ -7833,6 +7878,7 @@ SdResult Controller::sd_checkSamplesInUse() {
         // 5. SAMPLE STATE RECOVERY
         // Reset sample state when the referenced sample is missing.
         if (sampleMissing[i]) {
+            missing_note(i, layer.instLoadedData.nameLong, layer.sampleLoadedData.nameLong);
             layerInst_setSampleSelected(i, -1);
             layerInst_setSampleLoaded(i);
             missingSampleCount++;
@@ -7844,7 +7890,7 @@ SdResult Controller::sd_checkSamplesInUse() {
     if (missingSampleCount > 0) {
         alertType = (missingSampleCount == 1) ? ALERT_MISSINGSAMPLE : ALERT_MISSINGSAMPLES;
         lcd_drawAlert();
-        HAL_Delay(1000);  // Give user time to read the alert
+        HAL_Delay(missingDetail[0] ? 3000 : 1000);  // Give user time to read the alert
         lcd_clearAlert();
         keyboard_enable();
         return SD_ERROR;
@@ -8577,6 +8623,34 @@ void Controller::lcd_drawAlert() {
     // 4. ALERT TEXT DRAW
     // Render resolved message at alert center.
     lcd.drawText(alertText, strlen(alertText), 480, 265);
+
+    // 5. WHICH SAMPLE (missing sample alerts): a second line under the box
+    if (((alertType == ALERT_MISSINGSAMPLE) || (alertType == ALERT_MISSINGSAMPLES)) && missingDetail[0]) {
+        lcd.clearRect(355, 282, 250, 14);
+        lcd.drawText(missingDetail, strlen(missingDetail), 480, 285);
+    }
+}
+
+void Controller::missing_note(uint8_t layer_, const char* inst_, const char* sample_) {
+    /// @brief Remembers the first missing instrument or sample for the alert: "L3 Kick/Name" (at most 35 characters, the width of the box).
+    if (missingDetail[0]) return;
+    // Built by hand: the names are cut to fit, which snprintf would warn about.
+    char* out = missingDetail;
+    const char* const end = missingDetail + 35;
+    auto put = [&](const char* s_) {
+        while ((*s_) && (out < end)) *out++ = *s_++;
+    };
+    put("L");
+    if (layer_ + 1 >= 10) put("1");
+    const char digit[2] = {static_cast<char>('0' + ((layer_ + 1) % 10)), 0};
+    put(digit);
+    put(" ");
+    put(inst_);
+    if (sample_) {
+        put("/");
+        put(sample_);
+    }
+    *out = 0;
 }
 
 void Controller::lcd_clearAlert() {
@@ -8587,6 +8661,7 @@ void Controller::lcd_clearAlert() {
     lcd.setForeColor(CYAN);
     lcd.setBackColor(BLACK);
     lcd.clearRect(355, 260, 250, 20);
+    lcd.clearRect(355, 282, 250, 14);  // the line naming a missing sample
 
     // 2. CONTENT RESTORE
     // Redraw song lane that can be overlapped by alert box (or the whole full-area view).
@@ -19813,6 +19888,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                 // initialize temp beat data
                 tBD.active = true;
                 tBD.ramAddress = RAM_SAMPLE_ADDRESS + (targetSector * kSampleByteSize);
+                tBD.stereoOffset = sampleSectorLibrary[targetSector].stereo ? kStereoPlaneBytes : 0;
                 tBD.counterMax = sampleSectorLibrary[targetSector].size;
                 tBD.mixerInMode = layer.mixerInMode;
                 lD.beatStartFlag = true;
@@ -20697,8 +20773,9 @@ void Controller::layerInst_setSampleSelected(uint8_t layerNum_, int16_t sample_)
                                     layer.sampleSelectedData.sampleSize = layer.sampleSelectedData.sampleByteSize * layer.sampleSelectedData.coefSampleSize;
 
                                     // Cap sample size
-                                    if (layer.sampleSelectedData.sampleSize > kSampleSize) {
-                                        layer.sampleSelectedData.sampleSize = kSampleSize;
+                                    const uint32_t sampleLimit = (layer.sampleSelectedData.channel == CH_STEREO) ? kStereoSampleSize : kSampleSize;  // a stereo sample holds half the length
+                                    if (layer.sampleSelectedData.sampleSize > sampleLimit) {
+                                        layer.sampleSelectedData.sampleSize = sampleLimit;
                                         layer.sampleSelectedData.sampleByteSize = layer.sampleSelectedData.sampleSize / layer.sampleSelectedData.coefSampleSize;
                                     }
                                 } else {
@@ -20832,6 +20909,8 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
 
             // Normalization & Tracking Vars
             uint32_t sdramDataCounter = 0;
+            const bool stereoLoad = (layer.wavLoadedData.fmt_chunk.nbrChannels == 2);
+            const uint32_t loadLimit = stereoLoad ? kStereoSampleSize : kSampleSize;
             float minFloat = 0.0f, maxFloat = 0.0f;
 
             // Calculate samples per pixel based on final playback size.
@@ -20885,6 +20964,7 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
                 sampleSectorLibrary[targetSector].active = true;
                 sampleSectorLibrary[targetSector].layer = layer.number;
                 sampleSectorLibrary[targetSector].size = layer.sampleLoadedData.sampleSize - 1;
+                sampleSectorLibrary[targetSector].stereo = (layer.wavLoadedData.fmt_chunk.nbrChannels == 2);
                 sampleSectorLibrary[targetSector].playMode = false;
                 sampleSectorLibrary[targetSector].writeMode = true;
                 sampleSectorLibrary[targetSector].normMultiplier = 1.0f;
@@ -20913,40 +20993,49 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
                             }
                             uint32_t readSamples = sd.bytesread / offsetSize;
                             for (uint32_t j = 0; j < readSamples; j++) {
-                                float val = 0.0f;
                                 uint32_t idx = j * offsetSize;
 
-                                // Multiformat PCM to Float Conversion
-                                if (layer.wavLoadedData.fmt_chunk.bitPerSample == 8) {
-                                    val = ((float)((uint8_t)rawArray[idx] - 128)) / 128.0f;
-                                } else if (layer.wavLoadedData.fmt_chunk.bitPerSample == 16) {
-                                    int16_t s16 = (int16_t)(rawArray[idx] | (rawArray[idx + 1] << 8));
-                                    val = (float)s16 / 32768.0f;
-                                } else if (layer.wavLoadedData.fmt_chunk.bitPerSample == 24) {
-                                    int32_t s24 = (rawArray[idx] | (rawArray[idx + 1] << 8) | (rawArray[idx + 2] << 16));
-                                    if (s24 & 0x800000) s24 |= 0xFF000000;
-                                    val = (float)s24 / 8388607.0f;
-                                } else if (layer.wavLoadedData.fmt_chunk.bitPerSample == 32) {
-                                    memcpy(&val, &rawArray[idx], 4);
-                                }
+                                // Multiformat PCM to Float Conversion (one channel of the frame at byte offset at_)
+                                auto readChannel = [&](uint32_t at_) -> float {
+                                    float v = 0.0f;
+                                    if (layer.wavLoadedData.fmt_chunk.bitPerSample == 8) {
+                                        v = ((float)((uint8_t)rawArray[at_] - 128)) / 128.0f;
+                                    } else if (layer.wavLoadedData.fmt_chunk.bitPerSample == 16) {
+                                        int16_t s16 = (int16_t)(rawArray[at_] | (rawArray[at_ + 1] << 8));
+                                        v = (float)s16 / 32768.0f;
+                                    } else if (layer.wavLoadedData.fmt_chunk.bitPerSample == 24) {
+                                        int32_t s24 = (rawArray[at_] | (rawArray[at_ + 1] << 8) | (rawArray[at_ + 2] << 16));
+                                        if (s24 & 0x800000) s24 |= 0xFF000000;
+                                        v = (float)s24 / 8388607.0f;
+                                    } else if (layer.wavLoadedData.fmt_chunk.bitPerSample == 32) {
+                                        memcpy(&v, &rawArray[at_], 4);
+                                    }
+                                    return v;
+                                };
+                                const float val = readChannel(idx);
+                                const float valR = stereoLoad ? readChannel(idx + coefBps) : 0.0f;
                                 if (val < minFloat) minFloat = val;
                                 if (val > maxFloat) maxFloat = val;
+                                if (valR < minFloat) minFloat = valR;
+                                if (valR > maxFloat) maxFloat = valR;
 
-                                // Update visual peaks for the 60-bin graph array
+                                // Update visual peaks for the 60-bin graph array (the louder channel)
                                 uint8_t graphIdx = sdramDataCounter / samplesPerPixel;
                                 if (graphIdx < 60) {
-                                    uint8_t currentPeak = static_cast<uint8_t>(fabsf(val) * 30.0f);
+                                    const float louder = (fabsf(valR) > fabsf(val)) ? fabsf(valR) : fabsf(val);
+                                    uint8_t currentPeak = static_cast<uint8_t>(louder * 30.0f);
                                     if (currentPeak > layer.sampleLoadedData.graphData[graphIdx]) {
                                         layer.sampleLoadedData.graphData[graphIdx] = currentPeak;
                                     }
                                 }
 
-                                // Sequential Write to SDRAM
+                                // Sequential Write to SDRAM (a stereo sample: the right channel in the plane half a slot later)
                                 uint32_t sdramBase = RAM_SAMPLE_ADDRESS + (layer.writeSampleSector * kSampleByteSize);
                                 for (int k = 0; k < writeCount; k++) {
-                                    if (sdramDataCounter >= kSampleSize)
+                                    if (sdramDataCounter >= loadLimit)
                                         break;
                                     *(volatile float*)(sdramBase + (sdramDataCounter * 4)) = val;
+                                    if (stereoLoad) *(volatile float*)(sdramBase + kStereoPlaneBytes + (sdramDataCounter * 4)) = valR;
                                     sdramDataCounter++;
                                 }
                             }
@@ -21080,6 +21169,7 @@ void Controller::layerInst_clearSampleSector(uint8_t sectorNum_) {
     sampleSectorLibrary[sectorNum_].playMode = false;
     sampleSectorLibrary[sectorNum_].writeMode = false;
     sampleSectorLibrary[sectorNum_].normMultiplier = 1.0f;
+    sampleSectorLibrary[sectorNum_].stereo = false;
 }
 
 void Controller::layerInst_setLevel(uint8_t layerNum_, uint8_t level_) {
@@ -23372,6 +23462,7 @@ void Controller::dub_select() {
     /// @brief Opens the DUB page (the second page of the MIXER key): the selected strip's LEVEL,
     /// BUS and sends on the top row, the desk (MODE, FEEDBACK and the two returns) on the bottom.
     if (menu == DUB_MENU) return;
+    dubPage = 0;
     preMenu = menu;
     preMenuTab = menuTab;
     menuTab = -1;  // every field has its own encoder
@@ -23388,10 +23479,11 @@ void Controller::lcd_drawDubMenu() {
     lcd_setMenuHeaderState(CYAN);
     lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
     for (uint8_t f = 0; f < 8; f++) {
+        const uint8_t fn = (dubPage == 1) ? static_cast<uint8_t>(kDubPage2Function[f]) : static_cast<uint8_t>(ENC_DUB_LEVEL + f);
         lcd_setMenuHeaderState(CYAN);
-        lcd.drawText(kEncoderFuncDataLibrary[ENC_DUB_LEVEL + f].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[f], kMenuHeaderY[f]);
+        lcd.drawText(kEncoderFuncDataLibrary[fn].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[f], kMenuHeaderY[f]);
         lcd_setMenuSignState(CYAN);
-        lcd.drawText(kEncoderFuncDataLibrary[ENC_DUB_LEVEL + f].sign, kMenuSignTextSize, kMenuSignBoxX[f], kMenuSignBoxY[f]);
+        lcd.drawText(kEncoderFuncDataLibrary[fn].sign, kMenuSignTextSize, kMenuSignBoxX[f], kMenuSignBoxY[f]);
     }
     lcd_drawDub_Data();
 }
@@ -23400,6 +23492,19 @@ void Controller::lcd_drawDub_Data() {
     /// @brief Draws the DUB values: the selected strip (top row) and the desk (bottom row).
     const DubStrip& strip = dubMix.strip[dubStripSel];
     char text[8][kMenuDataTextSize + 1];
+    if (dubPage == 1) {
+        for (uint8_t f = 0; f < 8; f++) snprintf(text[f], sizeof text[f], "%10s", "");
+        char label[8];
+        panLabel(label, sizeof label, dubMix.pan[dubStripSel]);
+        snprintf(text[0], sizeof text[0], "%10s", label);
+        snprintf(text[1], sizeof text[1], "%10u", static_cast<unsigned>(strip.fx));
+        snprintf(text[4], sizeof text[4], "%10u", static_cast<unsigned>(dubMix.echoWidth));
+        lcd_setMenuDataState(WHITE);
+        for (uint8_t f = 0; f < 8; f++) lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[f], kMenuDataY[f]);
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
+        return;
+    }
     snprintf(text[0], sizeof text[0], "%10u", static_cast<unsigned>(layerLibrary[dubStripSel].level));
     snprintf(text[1], sizeof text[1], "%10s", (strip.bus == DUB_BUS_DIR) ? "DIR" : "FILT");
     snprintf(text[2], sizeof text[2], "%10u", static_cast<unsigned>(strip.echo));
@@ -23464,6 +23569,20 @@ void Controller::dub_step(EncoderFunc function_, bool up_) {
             effect_setFData(0, effect[0].type, up_ ? (sub.fData < sub.kMaxFData ? sub.fData + 1 : sub.fData) : (sub.fData > sub.kMinFData ? sub.fData - 1 : sub.fData));
             break;
         }
+        case ENC_DUB_PAN: {
+            const uint8_t cur = dubMix.pan[dubStripSel];
+            if (up_ && (cur < kPanMax)) layerInst_setPan(dubStripSel, static_cast<uint8_t>(cur + 1));
+            if (!up_ && (cur > 0)) layerInst_setPan(dubStripSel, static_cast<uint8_t>(cur - 1));
+            break;
+        }
+        case ENC_DUB_FX:
+            stepSend(strip.fx);
+            break;
+        case ENC_DUB_WIDTH:
+            // Steps of 5 %, to 100 %.
+            if (up_) dubMix.echoWidth = static_cast<uint8_t>((dubMix.echoWidth + 5 > kDubMaxWidth) ? kDubMaxWidth : dubMix.echoWidth + 5);
+            if (!up_) dubMix.echoWidth = (dubMix.echoWidth >= 5) ? static_cast<uint8_t>(dubMix.echoWidth - 5) : 0;
+            break;
         case ENC_DUB_VERBRTN:
             reverb_setWet(up_ ? (reverb.wet < kMaxReverbWet ? reverb.wet + 1 : reverb.wet) : (reverb.wet > kMinReverbWet ? reverb.wet - 1 : reverb.wet));
             break;
@@ -25560,6 +25679,12 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
                 const float a = fabsf(buf[j]);
                 if (a > peak) peak = a;
             }
+            if (stereoDsp.layerStereo[i]) {
+                for (uint16_t j = 0; j < I2S_BLOCK_SIZE; j++) {
+                    const float a = fabsf(stereoDsp.layerR[i][j]);
+                    if (a > peak) peak = a;
+                }
+            }
             layerPeak[i] = peak;
         }
         PROF_LAP(2);
@@ -25907,6 +26032,7 @@ void Controller::processAudioLayer() {
 
         // Reset the audio buffer for the current layer
         memset(audioLayer[i], 0, I2S_BLOCK_SIZE * sizeof(float));
+        stereoDsp.layerStereo[i] = false;
 
         // --- Handle Sample Retriggering ---
         if (aBD.newBeatFlag) {
@@ -25931,6 +26057,13 @@ void Controller::processAudioLayer() {
         if (!aBD.active) continue;
 
         float* targetBuffer = audioLayer[i];
+        // A stereo sample also fills the right buffer (its right plane is stereoOffset bytes further on).
+        const bool stereo = (aBD.stereoOffset != 0);
+        float* targetBufferR = stereoDsp.layerR[i];
+        if (stereo) {
+            memset(targetBufferR, 0, I2S_BLOCK_SIZE * sizeof(float));
+            stereoDsp.layerStereo[i] = true;
+        }
 
         // 3. PROCESSING PATH RESOLUTION
         // Use fast path for unity pitch + forward direction; else use interpolated slow path.
@@ -25944,7 +26077,9 @@ void Controller::processAudioLayer() {
 
             // Cache RAM data into local stack buffer for processing
             float localCache[I2S_BLOCK_SIZE];
+            float localCacheR[I2S_BLOCK_SIZE];
             if (copySize > 0) memcpy(localCache, sourceAddress, copySize * sizeof(float));
+            if (stereo && (copySize > 0)) memcpy(localCacheR, (const float*)((uint32_t)sourceAddress + aBD.stereoOffset), copySize * sizeof(float));
 
             if (aBD.counter == aBD.counterStart) io.midi.txTriggerNoteOn[i] = true;
 
@@ -25952,6 +26087,7 @@ void Controller::processAudioLayer() {
 
             for (uint16_t j = 0; j < copySize; j++) {
                 float sample = localCache[j];
+                float sampleR = stereo ? localCacheR[j] : 0.0f;
 
                 // Apply Bitcrush effect if the resolution coefficient is modified
                 if (bitCrushActive) {
@@ -25960,6 +26096,13 @@ void Controller::processAudioLayer() {
                     tempUnsigned &= aBD.resolutionCoef;
                     float valBack = (float)tempUnsigned * kInvScale24;
                     sample = (valBack * 2.0f) - 1.0f;
+                    if (stereo) {
+                        valShifted = (sampleR + 1.0f) * 0.5f;
+                        tempUnsigned = (uint32_t)(valShifted * kScale24);
+                        tempUnsigned &= aBD.resolutionCoef;
+                        valBack = (float)tempUnsigned * kInvScale24;
+                        sampleR = (valBack * 2.0f) - 1.0f;
+                    }
                 }
 
                 // Handle fade-in/fade-out logic
@@ -25969,12 +26112,15 @@ void Controller::processAudioLayer() {
                 }
 
                 if (aBD.fadeAction) {
-                    sample *= kFadeVolumeMultiplier[aBD.counterFade];
+                    const float fadeMul = kFadeVolumeMultiplier[aBD.counterFade];
+                    sample *= fadeMul;
+                    sampleR *= fadeMul;
                     if (aBD.counterFade < 49) aBD.counterFade++;
                 }
 
                 // Apply final volume and store in output buffer
                 targetBuffer[j] = sample * aBD.volumeMultiplier;
+                if (stereo) targetBufferR[j] = sampleR * aBD.volumeMultiplier;
             }
 
             // Update sample counter and check for playback end
@@ -26011,12 +26157,17 @@ void Controller::processAudioLayer() {
                     return val;
                 };
 
-                float currentSample;
+                float currentSample, currentSampleR = 0.0f;
                 if (counterDiff == 0.0f) {
                     currentSample = getSample(ramAddress);
+                    if (stereo) currentSampleR = getSample(ramAddress + aBD.stereoOffset);
                 } else {
                     // Linear interpolation between two samples
                     currentSample = getSample(ramAddress) + ((getSample(ramAddress + 4) - getSample(ramAddress)) * counterDiff);
+                    if (stereo) {
+                        const uint32_t addrR = ramAddress + aBD.stereoOffset;
+                        currentSampleR = getSample(addrR) + ((getSample(addrR + 4) - getSample(addrR)) * counterDiff);
+                    }
                 }
 
                 // Handle Fading Triggers
@@ -26028,6 +26179,7 @@ void Controller::processAudioLayer() {
 
                 if (aBD.fadeAction) {
                     currentSample *= kFadeVolumeMultiplier[aBD.counterFade];
+                    currentSampleR *= kFadeVolumeMultiplier[aBD.counterFade];
                     if (aBD.counterFade < 49)
                         aBD.counterFade++;
                     else if (!aBD.newBeatFlag)
@@ -26036,6 +26188,7 @@ void Controller::processAudioLayer() {
 
                 // Store sample with volume scaling
                 targetBuffer[k] = currentSample * aBD.volumeMultiplier;
+                if (stereo) targetBufferR[k] = currentSampleR * aBD.volumeMultiplier;
 
                 // --- Direction and Counter Management ---
                 switch (aBD.directionMode) {
@@ -26132,9 +26285,9 @@ void Controller::processAudioRouting() {
         panGains(dubMix.pan[i], panGain[i][0], panGain[i][1]);
         if (dubMix.on) {
             dubNodeGains(dubMix.strip[i], 0, dubGains[i]);
-            sources[2 + i] = {audioLayer[i], 0, nullptr, dubGains[i], stereoDsp.srcGain[i], panGain[i][0], panGain[i][1]};
+            sources[2 + i] = {audioLayer[i], 0, nullptr, dubGains[i], stereoDsp.srcGain[i], panGain[i][0], panGain[i][1], stereoDsp.layerStereo[i] ? stereoDsp.layerR[i] : nullptr};
         } else {
-            sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr, nullptr, stereoDsp.srcGain[i], panGain[i][0], panGain[i][1]};
+            sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr, nullptr, stereoDsp.srcGain[i], panGain[i][0], panGain[i][1], stereoDsp.layerStereo[i] ? stereoDsp.layerR[i] : nullptr};
         }
     }
 
@@ -26281,12 +26434,15 @@ void Controller::processAudioEffect(uint8_t effectNum_) {
         float* buffer = audioEffect[effectNum_];
         float* bufferR = stereoDsp.nodeR[3 + effectNum_];
         const float dryGain = effectDryGain(effectNum_);
+        // Ping-pong of the echo: the left output is the effect's output, the right one differs by effectDelta.
+        pingWidth = ((effectNum_ == 0) && (effect_.type == EF_DELAY) && !effect_.genTransition.active) ? pingPongWidth(dubMix.echoWidth, effect_.delay.lag, kDelaySize) : 0.0f;
         for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
             const float l = buffer[i], r = bufferR[i];
             const float mid = 0.5f * (l + r), side = (l - r) * 0.5f * dryGain;
+            effectDelta = 0.0f;
             const float out = processAudioEffectHelper(effectNum_, mid);
             buffer[i] = out + side;
-            bufferR[i] = out - side;
+            bufferR[i] = out - side + effectDelta;
         }
     }
 }
@@ -26545,9 +26701,16 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // Read the delayed signal from the buffer
                 float delayedSample = delayBuf[pIdx];
 
+                // Ping-pong (PingPong.h, ECHO WIDTH of the DUB page, Effect 1 only): the right channel reads
+                // one echo time further back and feeds back from there. At width 0 the right channel is the
+                // left one and everything below is as before.
+                const float width = (effectNum_ == 0) ? pingWidth : 0.0f;
+                float rightSample = delayedSample;
+                if (width > 0.0f) rightSample = pingPongRight(delayedSample, delayBuf[pingPongSecondIndex(pIdx, delay_.lag, kDelaySize)], width, delay_.feedback);
+
                 // --- DAMPING FILTER (Feedback Loop) ---
                 // This one-pole filter softens the repeats.
-                float feedbackTarget = (input * delay_.level) + (delayedSample * delay_.feedback);
+                float feedbackTarget = (input * delay_.level) + (rightSample * delay_.feedback);
                 float filteredFeedback = delay_.lastFeedbackSample + delay_.dampingAlpha * (feedbackTarget - delay_.lastFeedbackSample);
 
                 // Update filter state for next sample
@@ -26571,8 +26734,10 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // 4. TRANSITION & STORE
                 if (effect_.genTransition.active) {
                     output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
+                    effectDelta = (width > 0.0f) ? ((rightSample - delayedSample) * wetLevel * effect_.genTransition.activeWet) : 0.0f;
                 } else {
                     output = mixData;
+                    effectDelta = (width > 0.0f) ? ((rightSample - delayedSample) * wetLevel) : 0.0f;
                 }
 
                 // 5. UPDATE INDICES

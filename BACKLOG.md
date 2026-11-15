@@ -828,3 +828,13 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 **Asked by the owner (2026-11-15).** After an SD card recovery, presets reported MISSING SAMPLE with no hint which sample, so the cause (a card copy that dropped files) was guesswork. The alert now has a second line under its box with the first missing layer, instrument and sample (`L3 Kick/Name`, cut to 35 characters), and stays on screen 3 s instead of 1 s. It covers song and kit loads and the in-use check (`missing_note`, `missingDetail`). The count (MISSING SAMPLES) still tells how many; only the first is named.
 
 **Status: built in V1.16, waiting for the hardware test.** Done when a preset that names a sample that is not on the card shows its layer, instrument and sample.
+
+### 56. SD card corruption with the data cache (V1.15), fixed in V1.16
+
+**Found by the owner's second SD card failure (2026-11-15), the first being the card recovered on 2026-11-14.** Both cards showed damaged directories (`System/Preset` turned into a file, `Sample` holding macOS log files, PRESET FOLDER ERROR). The cause is in `FATFS/Target/sd_diskio.c`, added with the data cache (V1.15): FatFs writes its directory and table sectors through buffers that are not 32-byte aligned, and for those the driver copies each sector into a scratch buffer and lets the DMA write it. With the data cache on, the copy stays in the cache (write-back) and was never cleaned, so the DMA wrote what the RAM held before: stale sectors, into the directory and the FAT. The fast path (aligned buffers) did clean, and the read path invalidates correctly. V1.14 had no data cache and does not have the bug.
+
+**Fix:** `SCB_CleanDCache_by_Addr` on the scratch buffer after each sector copy, before the DMA write.
+
+**Who is affected:** V1.15 (released, tag `v1.15`) with the data cache on. Anything that writes the card can damage it: saving files, the autosave, the system preset, the crash log. Test builds from V1.15 on until this fix have the same bug. Reads are safe.
+
+**Status: fixed in V1.16, waiting for the hardware test.** Done when a card survives a long session of saving songs and presets and a check of its file system afterwards shows no errors. Until the release, use V1.14, or V1.15 with the card backed up.

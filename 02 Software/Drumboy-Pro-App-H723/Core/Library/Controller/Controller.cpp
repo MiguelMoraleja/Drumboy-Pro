@@ -20842,6 +20842,8 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
     f_close(&sd.file);
     Layer& layer = layerLibrary[layerNum_];
     const int16_t prevSampleLoaded = layer.sampleLoaded;
+    const SampleData prevLoadedData = layer.sampleLoadedData;  // to go back to it when the new sample does not fit
+    const WavData prevLoadedWav = layer.wavLoadedData;
     char prevSampleLoadedFileName[sizeof(layer.sampleLoadedData.fileName)] = {0};
     memcpy(prevSampleLoadedFileName, layer.sampleLoadedData.fileName, sizeof(prevSampleLoadedFileName));
 
@@ -20923,6 +20925,7 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
             // Step 2: a sector (descriptor) and a block of the sample pool (SamplePool.h)
             bool sectorAvailable = false;
             bool memoryFull = false;
+            bool keepOld = false;
             uint8_t targetSector = 0;
             uint32_t poolAddress = 0;
             const uint32_t neededBytes = sampleBytes((layer.sampleLoadedData.sampleSize > 0) ? layer.sampleLoadedData.sampleSize : 1, stereoLoad);
@@ -20985,19 +20988,29 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
                 }
             } else {
                 memoryFull = true;
+                keepOld = true;  // nothing was released: the old sample can stay
             }
 
             if (memoryFull) {
-                // Not even without its own sample: the layer stays empty and the user is told how much it needs.
-                uint32_t primaskFull = __get_PRIMASK();
-                __disable_irq();
-                for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
-                    if (sampleSectorLibrary[i].active && (sampleSectorLibrary[i].layer == layer.number)) layerInst_clearSampleSector(i);
+                // The new sample does not fit even without the layer's own. If nothing was released, the old
+                // sample stays loaded and playing and the selection goes back to it; otherwise the layer is empty.
+                const bool restoreOld = keepOld && (prevSampleLoaded != -1) && (layer.playSampleSector >= 0) && sampleSectorLibrary[layer.playSampleSector].active;
+                if (restoreOld) {
+                    layer.sampleLoaded = prevSampleLoaded;
+                    layer.sampleLoadedData = prevLoadedData;
+                    layer.wavLoadedData = prevLoadedWav;
+                    layer.writeSampleSector = -1;
+                } else {
+                    uint32_t primaskFull = __get_PRIMASK();
+                    __disable_irq();
+                    for (uint8_t i = 0; i < kSampleSectorLibrarySize; i++) {
+                        if (sampleSectorLibrary[i].active && (sampleSectorLibrary[i].layer == layer.number)) layerInst_clearSampleSector(i);
+                    }
+                    layer.samplePlay = false;
+                    layer.playSampleSector = -1;
+                    layer.writeSampleSector = -1;
+                    __set_PRIMASK(primaskFull);
                 }
-                layer.samplePlay = false;
-                layer.playSampleSector = -1;
-                layer.writeSampleSector = -1;
-                __set_PRIMASK(primaskFull);
                 const uint32_t freeNow = samplePool_freeBytes(layer.number);
                 snprintf(missingDetail, 36, "NEEDS %u.%u MB  FREE %u.%u MB", static_cast<unsigned>(neededBytes / 1000000u), static_cast<unsigned>((neededBytes / 100000u) % 10u), static_cast<unsigned>(freeNow / 1000000u), static_cast<unsigned>((freeNow / 100000u) % 10u));
                 alertType = ALERT_SAMPLEMEMORY;
@@ -21005,6 +21018,7 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
                 HAL_Delay(2500);
                 lcd_clearAlert();
                 missingDetail[0] = 0;
+                if (restoreOld) layerInst_setSampleSelected(layerNum_, prevSampleLoaded);  // the knob shows the sample that is loaded
             }
 
             // Step 3: Open File and Sequential Polling Read

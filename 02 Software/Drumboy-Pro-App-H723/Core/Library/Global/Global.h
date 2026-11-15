@@ -15,6 +15,12 @@
 #include "LaneView.h"
 #include "LoadMeter.h"
 #include "FilterCurve.h"
+#include "StatusLine.h"
+#include "SampleView.h"
+#include "DubMix.h"
+#include "DubView.h"
+#include "NoteView.h"
+#include "Pan.h"
 #include "UndoLog.h"
 #include "Metronome.h"
 #include "MidiClock.h"
@@ -405,9 +411,19 @@ static_assert(0xC0EA6000u + kPreviewRingSize * 4u <= 0xC0FB9640u, "preview ring 
 //                                                  0xC0FF2EA4 - 0xC0FFFFFF     : 53.595 bytes free
 
 // Scratch for the full-area views, in that free tail: the two filter curves as drawn (their y per
-// point), so a changed curve is erased by redrawing it instead of clearing the whole plot.
+// point), so a changed curve is erased by redrawing it instead of clearing the whole plot. +2048:
+// the sample view's 840 peak columns.
+// Stereo audio work memory in the DTCM RAM (zero wait states, only the CPU uses it): the right
+// channel of the EQ, Filter 1, Filter 2, Effect 1 and Effect 2 nodes (the reverb has its own pair),
+// and what each layer's route and pan gains reached in the last block. Zeroed at start-up (main.cpp).
+struct StereoDsp {
+    float nodeR[5][I2S_BLOCK_SIZE];
+    float srcGain[10][kRouteGainStateSize];
+};
+extern StereoDsp stereoDsp;
+
 #define RAM_VIEW_SCRATCH_ADDRESS                    0xC0FF3000u
-static_assert((RAM_VIEW_SCRATCH_ADDRESS >= 0xC0FF2EA4u) && (RAM_VIEW_SCRATCH_ADDRESS + 2u * kCurvePoints * sizeof(uint16_t) <= 0xC0FFFFF0u), "view scratch must fit the free tail of the SDRAM");
+static_assert((RAM_VIEW_SCRATCH_ADDRESS >= 0xC0FF2EA4u) && (RAM_VIEW_SCRATCH_ADDRESS + 4096u <= 0xC0FFFFF0u), "view scratch must fit the free tail of the SDRAM");
 
 ////////////////////////////////////////////////////////////////////////////////
 /* Sdram Constants -----------------------------------------------------------*/
@@ -1268,6 +1284,17 @@ typedef enum {
 
     ENC_INST_2_STYLE                                = 0x7F,  // layer STYLE (page 3; the left S key is SOLO since V1.14)
 
+    ENC_DUB_LEVEL                                   = 0x80,  // DUB page (DubMix.h): the selected strip, then the desk
+    ENC_DUB_BUS                                     = 0x81,
+    ENC_DUB_ECHO                                    = 0x82,
+    ENC_DUB_VERB                                    = 0x83,
+    ENC_DUB_MODE                                    = 0x84,
+    ENC_DUB_FEEDBACK                                = 0x85,
+    ENC_DUB_ECHORTN                                 = 0x86,
+    ENC_DUB_VERBRTN                                 = 0x87,
+
+    ENC_INST_2_PAN                                  = 0x88,  // layer PAN (page 3, Pan.h)
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1307,7 +1334,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // LAYER_INST_1_MENU = 0x10
     {ENC_INST_1_INST, ENC_INST_1_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_1_START, ENC_INST_1_END, ENC_INST_1_TIMING, ENC_INST_1_PROB},
     // LAYER_INST_2_MENU = 0x11
-    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_INST_2_STYLE, ENC_FNC_NONE, ENC_FNC_NONE},
+    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_INST_2_STYLE, ENC_INST_2_PAN, ENC_FNC_NONE},
     // LAYER_SONG_MENU = 0x12
     // Tabs 2-3 hold the fill graph.
     {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_SONG_MOVE, ENC_SONG_SHIFT},
@@ -1324,7 +1351,10 @@ const EncoderFunc encoderLocalFunction[][8] = {
     {ENC_CHAIN_STEP, ENC_CHAIN_BANK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_CHAIN_REPEATS, ENC_CHAIN_LENGTH, ENC_CHAIN_END, ENC_CHAIN_PLAY},
     // NOTE_MENU = 0x17
     // Tabs 2-3 show the selected note.
-    {ENC_NOTE_BEAT, ENC_NOTE_VEL, ENC_FNC_NONE, ENC_FNC_NONE, ENC_NOTE_PROB, ENC_NOTE_COND, ENC_NOTE_NUDGE, ENC_FNC_NONE}};
+    {ENC_NOTE_BEAT, ENC_NOTE_VEL, ENC_FNC_NONE, ENC_FNC_NONE, ENC_NOTE_PROB, ENC_NOTE_COND, ENC_NOTE_NUDGE, ENC_FNC_NONE},
+    // DUB_MENU = 0x18
+    // Top row: the selected strip. Bottom row: the desk.
+    {ENC_DUB_LEVEL, ENC_DUB_BUS, ENC_DUB_ECHO, ENC_DUB_VERB, ENC_DUB_MODE, ENC_DUB_FEEDBACK, ENC_DUB_ECHORTN, ENC_DUB_VERBRTN}};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1488,7 +1518,18 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_NOTE_COND,           ENC_RES_M, "CONDITION ", "NOTE  ", "   ", false},
     {ENC_NOTE_NUDGE,          ENC_RES_M, "NUDGE     ", "NOTE  ", "  %", false},
 
-    {ENC_INST_2_STYLE,        ENC_RES_S, "STYLE     ", "LAYER ", "   ", false}
+    {ENC_INST_2_STYLE,        ENC_RES_S, "STYLE     ", "LAYER ", "   ", false},
+
+    {ENC_DUB_LEVEL,           ENC_RES_M, "LEVEL     ", "DUB   ", "  %", false},
+    {ENC_DUB_BUS,             ENC_RES_S, "BUS       ", "DUB   ", "   ", false},
+    {ENC_DUB_ECHO,            ENC_RES_M, "ECHO      ", "DUB   ", "  %", false},
+    {ENC_DUB_VERB,            ENC_RES_M, "VERB      ", "DUB   ", "  %", false},
+    {ENC_DUB_MODE,            ENC_RES_S, "MODE      ", "DUB   ", "   ", false},
+    {ENC_DUB_FEEDBACK,        ENC_RES_M, "FEEDBACK  ", "DUB   ", "  %", false},
+    {ENC_DUB_ECHORTN,         ENC_RES_M, "ECHO RTN  ", "DUB   ", "  %", false},
+    {ENC_DUB_VERBRTN,         ENC_RES_M, "VERB RTN  ", "DUB   ", "  %", false},
+
+    {ENC_INST_2_PAN,          ENC_RES_M, "PAN       ", "LAYER ", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -1616,7 +1657,8 @@ typedef enum {
     ROUTING_MENU                                    = 0x14,  // MIXER pressed again
     EUCLID_MENU                                     = 0x15,  // LAYER SONG tapped on the Layer Song page
     SONG_MENU                                       = 0x16,  // song mode: the SONG key tapped on its own
-    NOTE_MENU                                       = 0x17   // per-note settings: LAYER SONG tapped on the EUCLID page
+    NOTE_MENU                                       = 0x17,  // per-note settings: LAYER SONG tapped on the EUCLID page
+    DUB_MENU                                        = 0x18   // the dub mixer: the second page of the MIXER key (DubMix.h)
 } Menu;
 
 typedef enum {
@@ -2797,6 +2839,12 @@ struct FilterMixTransition {
     FilterTransitionAction actionWet;
 };
 
+// The history of one channel of a filter: the first section (x, y) and the second one (u, v: the 24 dB slope).
+struct FilterState {
+    float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
+    float u1 = 0.0f, u2 = 0.0f, v1 = 0.0f, v2 = 0.0f;
+};
+
 struct Filter {
     uint8_t num;
     bool active;
@@ -2824,11 +2872,8 @@ struct Filter {
     float a1                                        = 0.0f;
     float a2                                        = 0.0f;
 
-    // history (States)
-    float x1                                        = 0.0f;
-    float x2                                        = 0.0f;
-    float y1                                        = 0.0f;
-    float y2                                        = 0.0f;
+    // history (states): one set per channel, left then right (the filter is stereo since V1.15)
+    FilterState state[2];
 
     void initialize() {
         active = kInitialFilterActive;
@@ -2847,13 +2892,9 @@ struct Filter {
         cleanMemory();
     }
 
-    // Second section (the 24 dB slope) and its history.
+    // Second section (the 24 dB slope).
     BiquadCoef stage2;
     uint8_t stages                                  = 1;
-    float u1                                        = 0.0f;
-    float u2                                        = 0.0f;
-    float v1                                        = 0.0f;
-    float v2                                        = 0.0f;
 
     void calculateCoef() {
         // The design is in FilterCurve.h, shared with the curve on the filter page.
@@ -2870,14 +2911,8 @@ struct Filter {
     }
 
     void cleanMemory() {
-        x1 = 0.0f;
-        x2 = 0.0f;
-        y1 = 0.0f;
-        y2 = 0.0f;
-        u1 = 0.0f;
-        u2 = 0.0f;
-        v1 = 0.0f;
-        v2 = 0.0f;
+        state[0] = FilterState();
+        state[1] = FilterState();
     }
 
     Filter(uint8_t num_) : num(num_) {}
@@ -3084,6 +3119,11 @@ struct EqGenTransition {
     EqTransitionAction actionWet;
 };
 
+// The history of one biquad of the EQ's right channel (the left channel keeps its history in its EqFilter).
+struct EqState {
+    float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
+};
+
 struct Eq {
     bool active                                     = kInitialEqActive;
 
@@ -3103,6 +3143,7 @@ struct Eq {
     uint8_t gainPeak[4]                             = {kInitialEqGainPeak[0], kInitialEqGainPeak[1], kInitialEqGainPeak[2], kInitialEqGainPeak[3]};
 
     EqFilter filterPeak[4];
+    EqState right[6];                               // right channel: low shelf, high shelf, peaks 1-4 (same coefficients as the left)
 
     void initialize() {
         active = kInitialEqActive;
@@ -3228,9 +3269,21 @@ struct Eq {
             filterPeak[i].x2 = 0;
             filterPeak[i].y1 = 0;
             filterPeak[i].y2 = 0;
-        }
+            for (uint8_t k = 0; k < 6; k++) right[k] = EqState();
+    }
     }
 };
+
+// The same biquad for the right channel: the left channel's coefficients, the right channel's own history.
+static inline float processEqBiquadRight(const EqFilter& f, EqState& s, float input, bool active) {
+    if (!active) return input;
+    const float output = (f.b0 * input) + (f.b1 * s.x1) + (f.b2 * s.x2) - (f.a1 * s.y1) - (f.a2 * s.y2) + EQ_ANTI_DENORMAL;
+    s.x2 = s.x1;
+    s.x1 = input;
+    s.y2 = s.y1;
+    s.y1 = output;
+    return output;
+}
 
 static inline float processEqBiquad(EqFilter& f, float input, bool active) {
     if (!active) return input;

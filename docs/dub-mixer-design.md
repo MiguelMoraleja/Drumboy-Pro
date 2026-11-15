@@ -136,11 +136,11 @@ Second page (the next step in the MIXER cycle):
 
 Each phase is a release that can be tested on its own. D1 and D2 need no new DSP beyond the echo's clipper and second read point.
 
-## 6. Open decisions for the owner
+## 6. Decisions (owner, 2026-11-13: "yours on all of them", so the recommendations stand)
 
-1. **"Sends to the FX and filters":** this design reads it as sends to the effects, a filter on every channel, and a bus into the dub filter. If filters should instead be send destinations with a level (a strip partly into Filter 1, partly dry), BUS becomes a level instead of a switch.
-2. **Throw keys:** EFFECT 1 + pad and REVERB + pad, or another pair (for example FILL + pad for the echo, since FILL already means "more" on a layer).
-3. **Does a throw pad also play the sound,** so a live hit can be thrown, or only open the send for the sequenced hits (this design)?
-4. **Where the big knob acts:** on the FILT bus only (this design, possible now) or over the whole mix including the returns (needs the master stage of backlog 48).
-5. **Page order:** MIXER → DUB → ROUTING, or DUB first because it is the page you perform on.
-6. **Effect 2:** a third send (this design), or fixed on the echo return (a phaser or overdrive on the repeats), or on the FILT bus.
+1. **Filters:** a one-knob filter per strip plus a BUS switch, FILT (through the EQ and the dub filter) or DIR (straight to the master). A BUS level (a strip partly through the dub filter) can replace the switch later without changing the rest.
+2. **Throw keys:** EFFECT 1 + pad throws into the echo, REVERB + pad into the reverb. Tapping either key alone still opens its page.
+3. **A throw pad does not play the sound:** it only opens the send for the sequenced hits. Throwing a live hit can be added later as a setting.
+4. **The big knob acts on the FILT bus only.** Filtering the returns as well needs the master stage of backlog 48 and stays in the last phase (D5).
+5. **Effect 2 is a third send** (phaser, flanger, chorus or distortion), reached from strip page 2 (FX SEND) with its return on its own page.
+6. **Page order:** MIXER, then DUB, then ROUTING.

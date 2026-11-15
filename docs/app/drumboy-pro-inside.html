@@ -279,7 +279,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.14 (testing)</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.15 (testing)</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -555,7 +555,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">⟲</span><div><b>No MIDI loops:</b> while it follows a clock it sends no clock and no start/stop of its own on MIDI OUT. Before, a setup that echoed MIDI OUT back to MIDI IN doubled the tempo and ran away to 200 BPM. The sync jack follows the incoming clock.</div></div>
           <div class="k"><span class="keycap">♪</span><div><b>Notes</b> play at their velocity; chords and fast runs (running status) all play; a note with velocity 0 is silent. Recording keeps soft notes (velocity below 64) as GHOST. MIDI OUT sends each hit's real velocity: FLAT 127, GHOST 64, fills as they play.</div></div>
           <div class="k"><span class="keycap">▬</span><div><b>CPU and MEM</b> (V1.14): two small bars in the top-right corner of every page. <b>CPU</b> is the audio engine's load: the slowest audio block of the last quarter second as a share of the time a block may take. It rises at once and falls slowly, and turns magenta from 80 %, where dropouts get close. <b>MEM</b> is the sample memory in use: the ten layers' samples as a share of their ten slots (5.44 s each). The numbers beside them are percent.</div></div>
-          <div class="k"><span class="keycap">⏱</span><div><b>Watchdog</b> (V1.14): if the firmware stops responding for 6 seconds (a freeze that is not a crash), the device restarts by itself and shows <b>CRASH 7 AT 0000sssm</b>: <b>sss</b> is what the main loop was doing (1 keys, 2 screen, 3 a full-area view, 4 SD card, 5 rhythm, 6 mixer, 7 autosave, 9 test page) and <b>m</b> the page that was open. It is also added to <span class="mono">System/Crash.log</span>. Start-up is not watched.</div></div>
+          <div class="k"><span class="keycap">⏱</span><div><b>Watchdog</b> (V1.14): if the firmware stops responding for 6 seconds (a freeze that is not a crash), the device restarts by itself and shows <b>CRASH 7 S06 P18 L98</b> (V1.15; before: CRASH 7 AT 0000sssm): <b>S</b> is the stage, what the main loop was doing (1 keys, 2 screen, 3 a full-area view, 4 SD card, 5 rhythm, 6 mixer, 7 autosave, 9 test page, 11 presets, 12 clipboards, 13 navigation, 14 MIDI out, 15 MIDI notes in, 16 MIDI transport, 17 sync). In <span class="mono">System/Crash.log</span> the line also has <span class="mono">lr</span> (loop passes since power-on) and <span class="mono">sp</span> (the audio load in tenths of a percent as last shown: near 1000 means the audio engine starved the main loop) <b>P</b> the page that was open (in hex, 18 is the DUB page) and <b>L</b> the audio load in percent (LOV from 99 %: the audio engine starved the loop). It is also added to <span class="mono">System/Crash.log</span>. Start-up is not watched.</div></div>
           <div class="k"><span class="keycap">↯</span><div><b>CRASH k AT address</b> (V1.14): if the firmware crashes it now restarts by itself instead of freezing, and shows this until ADD or CLEAR. The details are added to <span class="mono">System/Crash.log</span> on the SD card: send that line to find the cause.</div></div>
           <div class="k"><span class="keycap">!</span><div><b>ERR nnnn</b> instead of SLAVE on the Rhythm page counts MIDI bytes lost on the way in. It should stay at SLAVE.</div></div>
         </div>
@@ -575,7 +575,7 @@ table.rel td.new { min-width: 280px; }
   <section id="view-ideas" role="tabpanel" aria-labelledby="tab-ideas" class="stagecol" hidden>
     <div class="panel intro">
       <h2>Screen ideas</h2>
-      <p>Mockups of screens the firmware could draw, at the device's real size (960×540) with its own fonts, frame and positions. Six are built in V1.14 and wait for the hardware test: the beat marks and dimmed lanes of <b>Main screen</b>, <b>Euclid rings</b>, <b>Song timeline</b>, <b>Routing</b>, <b>Filter curve</b> and <b>EQ curve</b>. The CPU and MEM monitor in the top-right corner is built too. The rest are proposals. The first group uses the big main area for one feature while its page is open; the second group are smaller additions. Each one names its backlog item; the reasoning is in <span class="mono">docs/ux-and-signal-path-analysis.md</span>.</p>
+      <p>Mockups of screens the firmware could draw, at the device's real size (960×540) with its own fonts, frame and positions. Six were built in V1.14 (tested, released), and <b>Sample</b> is built in V1.15 and waits for the hardware test: the beat marks and dimmed lanes of <b>Main screen</b>, <b>Euclid rings</b>, <b>Song timeline</b>, <b>Routing</b>, <b>Filter curve</b> and <b>EQ curve</b>. The CPU and MEM monitor in the top-right corner is built too. The rest are proposals. The first group uses the big main area for one feature while its page is open; the second group are smaller additions. Each one names its backlog item; the reasoning is in <span class="mono">docs/ux-and-signal-path-analysis.md</span>.</p>
       <p class="muted">The names, patterns and values are examples. The device's fonts have no lowercase, so everything on screen is in capitals.</p>
     </div>
     <div class="panel" style="display:grid; gap:14px">
@@ -846,12 +846,12 @@ function mOverviewText(lines) { lines.forEach(([t, c], k) => P.text(t, 494, 32 +
 const IDEAS = [
   { id: "lanes", group: 0, name: "Main screen", item: "38, 41, 42", size: "S–M each", today: true,
     note: ["Today every beat is the same mark, a muted layer differs only by its box, and messages get a 5-character spot.",
-           "Built in V1.14 (waiting for the hardware test): beat height shows velocity, a hollow beat has a chance below 100 %, a yellow dot marks a condition, and the muted layer (7) is dimmed. Still proposals: each layer has a small meter, and a status line names the last action, the MIDI clock and unsaved work."],
+           "Built in V1.14: beat height shows velocity, a hollow beat has a chance below 100 %, a yellow dot marks a condition, and the muted layer (7) is dimmed. Still proposals: each layer has a small meter, and a status line names the last action, the MIDI clock and unsaved work."],
     draw(idea) {
       mLanes(idea, { dim: [6], meters: true });
       if (!idea) { P.text(" UNDO", 170, 112, 5, LC.CY, "C"); return; }
       P.text("UNDO: MOVE BEAT  3 BACK  1 FWD", 305, 103, 5, LC.YE);
-      P.text("CLK 97.43 LOCKED   UNSAVED 4 MIN", 928, 103, 5, LC.CY, "R");
+      P.text("CLK 97.43 LOCKED   AUTOSAVE 4 MIN AGO", 928, 103, 5, LC.CY, "R");
     } },
   { id: "note", group: 1, name: "NOTE graph", item: "39", size: "S", today: true,
     note: ["Today the NOTE page describes the selected beat in text.",
@@ -972,77 +972,68 @@ const IDEAS = [
       });
       P.text("MUTE HELD", 305, 103, 5, LC.YE);
     } },
-  { id: "mix", group: 0, name: "Dub mixer", item: "45, 46, 47, 49", size: "L, in phases", today: false,
+  { id: "mix", group: 0, name: "Dub mixer", item: "45, 46, 47, 49", size: "L, in phases", today: false, built: "V1.15",
     note: ["",
-           "The lane area becomes a desk: one strip per layer and one for line-in, each with its channel filter (FL), echo send (EC), reverb send (RV), fader and meter; then the ECHO and VERB returns, and the big DUB FILTER knob over the master meters. The top row edits the selected strip (2, cyan); the bottom row is always the desk: FEEDBACK, the two returns and the dub filter. Layer 5 is being thrown into the echo (yellow, hold EFFECT 1 + its pad), layer 7 is muted but its echo tail still rings, and FEEDBACK is past 100 %, so the echo is building up. The echo is ping-pong (its repeats alternate left and right), and strips that go straight to the master (DIR: 1 and 4) can be panned. Design: docs/dub-mixer-design.md."],
+           "Built in V1.15 (waiting for the hardware test), in the style of an old mixing console: twelve columns fill the whole lane area, the ten layers and the ECHO and VERB returns. Each column has a scribble plate (amber and filled for the selected strip), the bus switch (FILT or DIR), two knobs with their values (the ECHO and VERB sends; FDBK and DAMP on the echo, DECAY and SIZE on the reverb), a pan bar, a shorter fader with its scale and an LED ladder meter, and a foot plate with the channel number and a lamp (MUTE red, the returns ON green). Not built yet: the filter knob per strip, the line-in strip, the DUB FILTER dial, master meters, throws. Design: docs/dub-mixer-design.md."],
     draw() {
       mMenu("DB", 2);
-      mField(0, "LEVEL", "74"); mField(1, "FILTER", "HP 35"); mField(2, "ECHO", "35", "  %"); mField(3, "VERB", "62", "  %");
-      mField(4, "FEEDBACK", "104", "  %", LC.MA); mField(5, "ECHO RTN", "80", "  %"); mField(6, "VERB RTN", "70", "  %"); mField(7, "DUB FILTER", "HP 500", " HZ");
+      mField(0, "LEVEL", "74"); mField(1, "BUS", "FILT"); mField(2, "ECHO", "35", "  %"); mField(3, "VERB", "62", "  %");
+      mField(4, "MODE", "DUB"); mField(5, "FEEDBACK", "55", "  %"); mField(6, "ECHO RTN", "80", "  %"); mField(7, "VERB RTN", "70", "  %");
       mBig();
-      const names = ["KICK 808", "SNARE TI", "HAT CLOS", "HAT OPEN", "CLAP", "RIM", "TOM LOW", "SHAKER", "COWBELL", "PERC FX", "LINE IN"];
-      //            level flt  ec  rv  bus meter
-      const ch = [[82,   0,   0,  5, 0, 70], [74,  35,  35, 62, 1, 58], [60,  60,   0,  8, 1, 40], [55,  45,  20, 20, 0, 12], [70,   0, 100, 55, 1, 50],
-                  [45,   0,  45, 10, 1, 20], [66, -40,  30, 30, 1,  0], [40,  70,  10,  0, 1, 30], [50,   0,  60, 15, 1,  8], [58, -20,  20, 70, 1, 66], [64,  25,  40, 35, 1, 44]];
-      const sel = 1, muted = 6, thrown = 4, FY0 = 204, FH = 208;
-      const bar = (x, y, w, v, c, lbl, lc) => { P.text(lbl, x, y, 5, lc); P.frame(x + 17, y, w, 7, LC.G35); if (v > 0) P.rect(x + 18, y + 1, Math.round(v * (w - 2) / 100), 5, c); };
-      const fader = (x, v, c, m) => {
-        P.rect(x + 20, FY0, 1, FH, LC.G35);
-        for (let t = 0; t <= 4; t++) P.rect(x + 13, FY0 + Math.round(t * (FH - 1) / 4), 5, 1, LC.G35);
-        P.rect(x + 12, FY0 + Math.round((100 - v) * (FH - 7) / 100), 17, 7, c);
-        P.frame(x + 38, FY0, 7, FH, LC.G25);
-        const mh = Math.round(m * (FH - 2) / 100);
-        if (mh > 0) { P.rect(x + 39, FY0 + FH - 1 - mh, 5, mh, LC.GN); if (m > 62) P.rect(x + 39, FY0 + FH - 1 - mh, 5, Math.round((m - 62) * (FH - 2) / 100), LC.YE); }
+      // Same numbers as the firmware (DubView.h, lcd_drawDeskColumn).
+      const AMB = "#ffa600", X0 = 24, STEP = 76, W = 73;
+      const lev = [82, 74, 60, 55, 70, 45, 66, 40, 50, 58], ech = [0, 35, 0, 20, 100, 45, 30, 10, 60, 20], vrb = [5, 62, 8, 20, 55, 10, 30, 0, 15, 70];
+      const bus = [1, 0, 0, 1, 0, 0, 0, 0, 0, 0], pan = [20, 20, 6, 31, 20, 20, 20, 12, 20, 20], met = [70, 58, 40, 12, 50, 20, 0, 30, 8, 66];
+      const sel = 1, muted = 6, FY = 246, FH = 128, CAP = 11;
+      const knob = (cx, cy, pc, c) => {
+        const pt = (r, q) => { const th = (-135 + 270 * q / 100) * Math.PI / 180; return [Math.round(cx + r * Math.sin(th)), Math.round(cy - r * Math.cos(th))]; };
+        for (let k = 0; k <= 4; k++) { const [x, y] = pt(15, k * 25); P.rect(x, y, 1, 1, LC.G50); if (k % 2 === 0) { const [x2, y2] = pt(16, k * 25); P.rect(x2, y2, 1, 1, LC.G50); } }
+        P.disc(cx, cy, 10, LC.G25); P.ring(cx, cy, 11, c);
+        const [px, py] = pt(9, pc); P.line(cx, cy, px, py, AMB); P.line(cx + 1, cy, px + 1, py, AMB);
       };
-      ch.forEach(([lv, fl, ec, rv, bus, m], i) => {
-        const x = 24 + i * 60, dim = i === muted, c = dim ? LC.G35 : i === sel ? LC.CY : (i % 2 ? LC.G75 : LC.W), lc = dim ? LC.G35 : LC.G75;
-        P.rect(x + 58, 134, 1, 304, LC.G25);
-        if (i === sel) P.rect(x, 133, 57, 1, LC.CY);
-        P.text(i < 10 ? String(i + 1).padStart(2, "0") : "LI", x + 1, 137, 7, c);
-        if (dim) P.text("MUTE", x + 28, 138, 5, LC.G75);
-        if (i === thrown) P.text("THRW", x + 28, 138, 5, LC.YE);
-        P.text(names[i], x + 1, 150, 5, c);
-        // channel filter: one knob, low-pass to the left, off in the centre, high-pass to the right
-        P.text("FL", x + 1, 162, 5, lc); P.frame(x + 18, 162, 38, 7, LC.G35); P.rect(x + 37, 161, 1, 9, LC.G50);
-        if (fl !== 0) { const cx = x + 37, w = Math.round(Math.abs(fl) * 17 / 100); P.rect(fl > 0 ? cx + 1 : cx - w, 163, w, 5, c); }
-        bar(x + 1, 174, 38, ec, i === thrown ? LC.YE : c, "EC", i === thrown ? LC.YE : lc);
-        bar(x + 1, 186, 38, rv, c, "RV", lc);
-        fader(x, lv, c, dim ? 0 : m);
-        P.text(bus ? "FILT" : (i === 3 ? "DIR  R30" : "DIR    C"), x + 1, 428, 5, lc);
-      });
-      // returns
-      const rx = [690, 766];
-      P.rect(686, 134, 1, 304, LC.G50);
-      P.text("ECHO", rx[0] + 1, 137, 7, LC.YE); P.text(" 3/4", rx[0] + 42, 138, 5, LC.G75);
-      P.text("PING-PONG", rx[0] + 1, 150, 5, LC.G75);
-      bar(rx[0] + 1, 162, 50, 100, LC.MA, "FB", LC.MA);
-      bar(rx[0] + 1, 174, 50, 55, LC.W, "TN", LC.G75);
-      bar(rx[0] + 1, 186, 50, 30, LC.W, ">R", LC.G75);
-      fader(rx[0] + 8, 80, LC.YE, 74); P.frame(rx[0] + 56, FY0, 7, FH, LC.G25); P.rect(rx[0] + 57, FY0 + FH - 1 - 96, 5, 96, LC.GN); P.text("RETURN L R", rx[0] + 1, 428, 5, LC.G75);
-      P.rect(rx[1] - 4, 134, 1, 304, LC.G25);
-      P.text("VERB", rx[1] + 1, 137, 7, LC.W);
-      P.text("SPRING", rx[1] + 1, 150, 5, LC.G75);
-      bar(rx[1] + 1, 162, 50, 60, LC.W, "DC", LC.G75);
-      bar(rx[1] + 1, 174, 50, 40, LC.W, "SZ", LC.G75);
-      fader(rx[1] + 8, 70, LC.W, 48); P.text("RETURN", rx[1] + 1, 428, 5, LC.G75);
-      // the big knob and the master
-      P.rect(842, 134, 1, 304, LC.G50);
-      P.text("DUB FILTER", 891, 138, 5, LC.G75, "C");
-      const kx = 891, ky = 196, steps = 11, pos = 5;
-      P.ring(kx, ky, 30, LC.G50); P.ring(kx, ky, 29, LC.G50);
-      for (let k = 0; k < steps; k++) { const a = (-225 + k * 27) * Math.PI / 180; P.line(kx + 34 * Math.cos(a), ky + 34 * Math.sin(a), kx + 38 * Math.cos(a), ky + 38 * Math.sin(a), k === pos ? LC.CY : LC.G75); }
-      { const a = (-225 + pos * 27) * Math.PI / 180; for (const d of [-1, 0, 1]) P.line(kx + d, ky, kx + d + 27 * Math.cos(a), ky + 27 * Math.sin(a), LC.CY); P.disc(kx, ky, 4, LC.CY); }
-      P.text("OFF", 850, 232, 5, LC.G75); P.text("7.5K", 908, 232, 5, LC.G75);
-      P.text("HP 500", 891, 246, 7, LC.CY, "C");
-      P.text("MASTER", 891, 270, 5, LC.G75, "C");
-      [[866, 72], [880, 66]].forEach(([x, m]) => { P.frame(x, 282, 9, 130, LC.G25); const mh = Math.round(m * 128 / 100); P.rect(x + 1, 411 - mh, 7, mh, LC.GN); P.rect(x + 1, 411 - mh, 7, Math.round((m - 55) * 128 / 100), LC.YE); });
-      P.text("L", 868, 416, 5, LC.G75); P.text("R", 882, 416, 5, LC.G75);
-      P.frame(906, 282, 7, 130, LC.G25); P.rect(907, 283, 5, 22, LC.MA); P.text("GR", 903, 416, 5, LC.G75);
-      P.text("LIMIT -3 DB", 891, 428, 5, LC.G75, "C");
+      const ladder = (x, lit, on) => { for (let k = 0; k < 13; k++) { const y = FY + FH - (k + 1) * 9, c = on && k < lit ? (k < 9 ? LC.GN : k < 12 ? LC.YE : LC.RE) : LC.G25; P.rect(x + 50, y, 7, 7, c); } };
+      const column = (col) => {
+        const x = X0 + col * STEP, ret = col >= 10, isSel = col === sel;
+        let l1, l2, level, k, kn, on = true, aud = true, bs = 0, pn = 20, lamp, pn_heard = false;
+        if (!ret) { l1 = String(col + 1).padStart(2, "0"); l2 = LAYER_NAMES[col].slice(0, 9); level = lev[col]; k = [ech[col], vrb[col]]; kn = ["ECHO", "VERB"]; bs = bus[col]; pn = pan[col]; aud = col !== muted; lamp = col === muted; pn_heard = bs === 1; }
+        else if (col === 10) { l1 = "ECHO"; l2 = "DELAY"; level = 80; k = [69, 30]; kn = ["FDBK", "DAMP"]; lamp = true; }
+        else { l1 = "VERB"; l2 = "REVERB"; level = 70; k = [60, 40]; kn = ["DECAY", "SIZE"]; lamp = true; }
+        const c = !aud || !on ? LC.G35 : (isSel ? AMB : (col % 2 ? LC.G75 : LC.W));
+        P.rect(x + W + 1, 134, 1, 303, LC.G25);
+        // 1. scribble plate
+        if (isSel) { P.rect(x + 1, 134, W - 2, 20, AMB); P.text(l1, x + 5, 137, 5, LC.K, "L", AMB); P.text(l2, x + 5, 145, 5, LC.K, "L", AMB); }
+        else { P.frame(x + 1, 134, W - 2, 20, LC.G50); P.text(l1, x + 5, 137, 5, c); P.text(l2, x + 5, 145, 5, c); }
+        // 2. bus switch / ON
+        if (!ret) { [["FILT", 0], ["DIR", 1]].forEach(([n, v], i) => { const cx = x + 1 + i * 36, lit = bs === v; if (lit) { P.rect(cx, 158, 35, 11, aud ? LC.G75 : LC.G35); P.text(n, cx + Math.floor((35 - n.length * 7) / 2) + 1, 160, 5, LC.K, "L", aud ? LC.G75 : LC.G35); } else { P.frame(cx, 158, 35, 11, LC.G35); P.text(n, cx + Math.floor((35 - n.length * 7) / 2) + 1, 160, 5, LC.G50); } }); }
+        else { P.rect(x + 1, 158, W - 2, 11, LC.G75); P.text("ON", x + Math.floor((W - 14) / 2) + 1, 160, 5, LC.K, "L", LC.G75); }
+        // 3. knobs
+        [18, 55].forEach((ox, i) => { const cx = x + ox; knob(cx, 189, k[i], aud ? LC.G75 : LC.G35); P.text(kn[i], cx - Math.floor(kn[i].length * 7 / 2) + 1, 203, 5, LC.G75); const v = k[i] + "%"; P.text(v, cx - Math.floor(v.length * 7 / 2) + 1, 213, 5, aud ? LC.W : LC.G50); });
+        // 4. pan bar
+        if (!ret) {
+          P.frame(x + 1, 228, 41, 7, pn_heard ? LC.G50 : LC.G35); P.rect(x + 1 + 20, 226, 1, 11, pn_heard ? LC.G50 : LC.G35);
+          P.rect(x + 2 + Math.floor(pn * 36 / 40), 229, 3, 5, pn_heard ? c : LC.G35);
+          const lbl = pn === 20 ? "C" : pn < 20 ? "L" + String(20 - pn).padStart(2) : "R" + String(pn - 20).padStart(2);
+          P.text(lbl, x + 46, 228, 5, pn_heard ? LC.W : LC.G50);
+        }
+        // 5. fader
+        P.text("10", x + 2, FY - 3, 5, LC.G50); P.text("5", x + 9, FY + 61, 5, LC.G50); P.text("0", x + 9, FY + FH - 5, 5, LC.G50);
+        for (let t = 0; t <= 10; t++) { const ty = FY + 5 + Math.floor(t * (FH - CAP) / 10); P.rect(x + 19 + (t % 5 ? 3 : 0), ty, t % 5 ? 4 : 7, 1, LC.G50); }
+        P.rect(x + 30, FY, 2, FH, LC.G35);
+        const cy = FY + Math.floor((100 - level) * (FH - CAP) / 100);
+        P.rect(x + 20, cy, 21, CAP, c); P.rect(x + 20, cy + 5, 21, 1, LC.K);
+        ladder(x, !ret && aud ? Math.ceil(met[col] * 13 / 100) : 0, true);
+        const lv = String(level); P.text(lv, x + 30 - Math.floor(lv.length * 7 / 2), 379, 5, aud && on ? LC.W : LC.G50);
+        // 6. foot plate
+        P.frame(x + 1, 394, W - 2, 38, LC.G50);
+        P.text(ret ? (col === 10 ? "E" : "V") : String(col + 1).padStart(2, "0"), x + (ret ? 14 : 8), 400, 10, c);
+        P.rect(x + 46, 400, 18, 14, lamp ? (ret ? LC.GN : LC.RE) : LC.G25);
+        P.text(ret ? "ON" : "MUTE", x + 46 + (ret ? 3 : -2), 418, 5, LC.G50);
+      };
+      for (let col = 0; col < 12; col++) column(col);
     } },
-  { id: "editor", group: 0, name: "Note editor", item: "45", size: "L", today: false,
+  { id: "editor", group: 0, name: "Step edit", item: "45", size: "L", today: false, built: "V1.15",
     note: ["",
-           "One layer across the whole lane area: its beats, a velocity lane and a chance lane, with conditions as tags. The selected beat is magenta; the eight fields edit it as on the NOTE page."],
+           "Built in V1.15 (waiting for the hardware test), as the NOTE page's view: one layer across the whole lane area: its beats as blocks (a fill is as long as it lasts, a muted beat is an outline, a ghost beat is half height), a velocity lane and a chance lane below (a hollow bar is a chance under 100 %), a yellow dot under a beat with a condition, and a ruler with the bar numbers. The selected beat is magenta, and the top right says what it is: its number, position, velocity, chance, condition and nudge. The NOTE fields choose and edit the beat; only the changed columns are drawn again. The picture is the first design: in the firmware the condition is a dot (the name is at the top right) and the bars are thinner."],
     draw() {
       mMenu("NT", 3);
       mField(0, "NOTE", "   8 OF 16"); mField(1, "VELOCITY", "55");
@@ -1073,7 +1064,7 @@ const EUC = [[16, 4, 0], [8, 2, 2], [16, 8, 0], [8, 3, 3], [16, 5, 2], [12, 7, 0
 const BIG = [
   { id: "bigeuclid", group: 0, name: "Euclid rings", item: "45", size: "M–L", today: true, built: "V1.14",
     note: ["Today the EUCLID page shows one layer's pattern as a row of characters above the lanes.",
-           "Built in V1.14 (waiting for the hardware test). While the EUCLID page is open, the lanes give way to this view: all ten layers as rings around one centre, the outer ring being layer 1. One turn is one loop, starting at the top; a yellow marker orbits with the playhead. The selected layer (5) is cyan, with its grid as ticks and larger dots for louder beats; a muted layer (8) is dimmed. On the right, every layer's beats as a row with their count, so layers can be compared. Leaving the page brings the lanes back."],
+           "Built in V1.14. While the EUCLID page is open, the lanes give way to this view: all ten layers as rings around one centre, the outer ring being layer 1. One turn is one loop, starting at the top; a yellow marker orbits with the playhead. The selected layer (5) is cyan, with its grid as ticks and larger dots for louder beats; a muted layer (8) is dimmed. On the right, every layer's beats as a row with their count, so layers can be compared. Leaving the page brings the lanes back."],
     draw(idea) {
       mMenu("EU", 5);
       mField(0, "STEPS", "16"); mField(1, "HITS", "5");
@@ -1111,7 +1102,7 @@ const BIG = [
     } },
   { id: "bigsong", group: 0, name: "Song timeline", item: "45", size: "M–L", today: true, built: "V1.14",
     note: ["Today the SONG page lists the chain as text above the lanes, and you only see the bank that is playing.",
-           "Built in V1.14 (waiting for the hardware test). While the SONG page is open, the lanes give way to the chain as a timeline: each step is a box as wide as its repeats, the selected step is cyan, and the loop playing now has a bar that fills in yellow as it goes by. The line below says where the chain is and what comes next. Under it, all five banks as thumbnails of their ten lanes: the playing bank is cyan, banks the chain uses are white, the others are dimmed."],
+           "Built in V1.14. While the SONG page is open, the lanes give way to the chain as a timeline: each step is a box as wide as its repeats, the selected step is cyan, and the loop playing now has a bar that fills in yellow as it goes by. The line below says where the chain is and what comes next. Under it, all five banks as thumbnails of their ten lanes: the playing bank is cyan, banks the chain uses are white, the others are dimmed."],
     draw(idea) {
       mMenu("SG");
       mField(0, "STEP", "   2 OF  4"); mField(1, "BANK", "2");
@@ -1152,7 +1143,7 @@ const BIG = [
     } },
   { id: "bigrouting", group: 0, name: "Routing", item: "45", size: "M–L", today: true, built: "V1.14",
     note: ["Today the ROUTING page writes the chains as text above the lanes.",
-           "Built in V1.14 (waiting for the hardware test). While the ROUTING page is open, the lanes give way to the patch as a diagram: the six modules and the master along the top, joined as they are patched (a route to the next module is a line between the boxes, a longer one goes over them). Modules that get no signal are dimmed. Below, one row per source (the ten layers, the metronome and line-in) with a mark under the module it enters. With sends (item 46), each mark becomes a level bar and a layer can have several."],
+           "Built in V1.14. While the ROUTING page is open, the lanes give way to the patch as a diagram: the six modules and the master along the top, joined as they are patched (a route to the next module is a line between the boxes, a longer one goes over them). Modules that get no signal are dimmed. Below, one row per source (the ten layers, the metronome and line-in) with a mark under the module it enters. With sends (item 46), each mark becomes a level bar and a layer can have several."],
     draw(idea) {
       mMenu("RT");
       mField(0, "EQ OUT", "FILTER-1"); mField(1, "FILTER-1", "EFFECT-1");
@@ -1189,7 +1180,7 @@ const BIG = [
     } },
   { id: "bigfilter", group: 0, name: "Filter curve", item: "40, 45", size: "M", today: true, built: "V1.14",
     note: ["Today the filter page is eight numbers above the lanes.",
-           "Built in V1.14 (waiting for the hardware test). While a FILTER page is open, the lanes give way to the filter's response from 20 Hz to 20 kHz: the page's filter in cyan (gray while it is off) with its cutoff as a dotted line, the other filter in gray behind it when it is on. The curve is computed from the same numbers the audio uses, so TYPE, SLOPE, FREQ, RESONANCE, DRY and WET all show; DRIVE is a gain with a soft clip before the filter and is not part of the shape."],
+           "Built in V1.14. While a FILTER page is open, the lanes give way to the filter's response from 20 Hz to 20 kHz: the page's filter in cyan (gray while it is off) with its cutoff as a dotted line, the other filter in gray behind it when it is on. The curve is computed from the same numbers the audio uses, so TYPE, SLOPE, FREQ, RESONANCE, DRY and WET all show; DRIVE is a gain with a soft clip before the filter and is not part of the shape."],
     draw(idea) {
       mMenu("F1");
       mField(0, "ACTIVE", "ON"); mField(1, "TYPE", "LOWPASS"); mField(2, "SLOPE", "12", " DB"); mField(3, "FREQ", "1.2", "KHZ");
@@ -1212,7 +1203,7 @@ const BIG = [
     } },
   { id: "bigeq", group: 0, name: "EQ curve", item: "40, 45", size: "M", today: true, built: "V1.14",
     note: ["Today the EQ page is eight fields above the lanes; each band's frequency and gain are numbers.",
-           "Built in V1.14 (waiting for the hardware test). While the EQ page is open, the lanes give way to the six bands together as one curve from 20 Hz to 20 kHz. Each band has a small square at its frequency and gain, with its name above the plot: LO and HI are the shelves, 1 to 4 the peaks. The curve is gray while the EQ is off."],
+           "Built in V1.14. While the EQ page is open, the lanes give way to the six bands together as one curve from 20 Hz to 20 kHz. Each band has a small square at its frequency and gain, with its name above the plot: LO and HI are the shelves, 1 to 4 the peaks. The curve is gray while the EQ is off."],
     draw(idea) {
       mMenu("EQ");
       mField(0, "ACTIVE", "ON"); mField(1, "Q", "02"); mField(2, "LO-SHELF", "+4", " DB"); mField(3, "HI-SHEL", "-4", " DB");
@@ -1240,9 +1231,9 @@ const BIG = [
       bands.forEach(([n, , f, g]) => { const x = fx(f), y = dy(g); P.rect(x - 3, y - 3, 7, 7, LC.K); P.frame(x - 3, y - 3, 7, 7, LC.W); P.text(n, x - Math.floor(n.length * 7 / 2) + 1, Y0 - 9, 5, LC.W); });
       P.text("EQ    ", X0, 140, 7, LC.CY);
     } },
-  { id: "bigsample", group: 0, name: "Sample", item: "45", size: "L", today: true,
+  { id: "bigsample", group: 0, name: "Sample", item: "45", size: "L", today: true, built: "V1.15",
     note: ["Today the instrument page shows the waveform as 60 bars in the small area.",
-           "The waveform over the whole area with the START and END handles, the part outside them dimmed, and a cursor at the play position. Zoom and slices could follow."],
+           "Built in V1.15. While instrument page 2 (START and END) is open, the lanes give way to the sample at full width: 840 columns, each the peak of its stretch of the sample, cyan between START and END and gray outside, with the two handles in yellow and their values above. Turning START or END redraws only the columns the handle crossed. The title names the layer, instrument and sample; the length of the played part is at the right. A play cursor, zoom and slices could follow."],
     draw(idea) {
       mMenu("LI", 1);
       mField(0, "INSTRUMENT", "KICK 808"); mField(1, "SAMPLE", "KICK 808");
@@ -1257,13 +1248,15 @@ const BIG = [
       }
       P.text("0.42 S  16 BIT  44.1 KHZ", 494, 54, 7, LC.G75);
       mBig();
-      const x0 = 40, w = 880, yc = 290, st = 0.05, en = 0.80;
-      P.text("01 KICK 808", x0, 144, 10, LC.CY);
-      P.rect(x0, yc, w, 1, LC.G35);
-      for (let x = 0; x < w; x++) { const t = x / w, a = Math.round(amp(t) * 112), c = t >= st && t <= en ? LC.CY : LC.G35; P.rect(x0 + x, yc - a, 1, 2 * a + 1, c); }
-      [[st, "START"], [en, "END"]].forEach(([t, n]) => { const x = x0 + Math.round(t * w); P.rect(x, 170, 1, 240, LC.W); P.rect(x - 3, 170, 7, 5, LC.W); P.text(n, x + 6, 172, 7, LC.W, "L", null); });
-      const xp = x0 + Math.round(0.27 * w); for (let y = 178; y < 404; y += 2) P.rect(xp, y, 1, 1, LC.YE);
-      for (let k = 0; k <= 4; k++) { const x = x0 + Math.round(k * w / 4); P.rect(x, 414, 1, 5, LC.G50); P.text((k * 0.105).toFixed(2), x + 4, 416, 5, LC.G50, "L", null); }
+      // Same numbers as the firmware (SampleView.h, lcd_drawSampleViewData): 840 columns at x 60.
+      const X0 = 60, COLS = 840, yc = 280, half = 100, start = 5, end = 80;
+      const xp = pc => X0 + Math.floor(pc * (COLS - 1) / 100);
+      P.text("LAYER 01  KICK 808    KICK 808", X0, 134, 10, LC.CY);
+      P.text("0.32 SEC", X0 + COLS, 137, 7, LC.WH || LC.W, "R");
+      for (let x = X0; x < X0 + COLS; x += 4) P.rect(x, yc, 1, 1, LC.G25);
+      for (let c = 0; c < COLS; c++) { const t = c / COLS, a = Math.max(1, Math.round(amp(t) * half)), act = c >= xp(start) - X0 && c <= xp(end) - X0; P.rect(X0 + c, yc - a, 1, 2 * a + 1, act ? LC.CY : LC.G50); }
+      [[start, "START " + start, "R"], [end, "END " + end, "L"]].forEach(([pc, n, al]) => { const x = xp(pc); P.rect(x, 168, 1, 225, LC.YE); P.text(n, al === "R" ? x - 4 : x + 5, 157, 5, LC.YE, al); });
+      [[0, "0"], [25, "25"], [50, "50"], [75, "75"], [100, "100"]].forEach(([pc, n]) => { const x = xp(pc), w = n.length * 7; P.rect(x, 393, 1, 3, LC.G75); P.text(n, pc === 0 ? x : pc === 100 ? x - w + 2 : x - Math.floor(w / 2), 399, 5, LC.G75); });
     } },
 ];
 IDEAS.splice(3, 0, ...BIG);
@@ -2224,7 +2217,18 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
-  { v: "V1.14", date: "2026-11-08", status: "Testing, not published",
+  { v: "V1.15", date: "2026-11-13", status: "Testing, not published",
+    nw: ["Layer meters: a small level bar in each lane (peak, -48 to 0 dB, falling slowly) with a red square for a block that reached full scale; dimmed layers show a gray bar",
+         "Instrument page 2 (START, END): the lane area shows the sample at full width (peaks of 840 stretches), cyan between START and END, gray outside, with both handles and their values; turning START or END redraws only the columns the handle crossed",
+         "Data cache on: the audio engine now runs with the processor's data cache (the samples and effect buffers in the SDRAM, the main RAM, with the DMA buffers kept in step). On the same song the audio load fell from 45 % to 15 % with identical sound, which leaves room for the 24 dB filters, more effects and the stereo path",
+         "PAN per layer (instrument page 3, the field next to STYLE; ADD + turn moves every layer): C in the centre, L1 to L20 to the left, R1 to R20 to the right, constant power with 0 dB in the centre, so a centred layer sounds exactly as before and a hard-panned one is as loud as a centred one. It is heard for every layer: the router, the EQ and both filters run in stereo, and the effects and the reverb keep the pan of the dry signal while their own sound stays in the middle (stereo effects follow). A centred layer is bit-for-bit what the mono engine made. Saved in the song file",
+         "Step edit screen: while the NOTE page is open, the lane area shows the layer's beats across the full width, with a velocity lane and a chance lane under them, a dot under beats with a condition, a bar ruler, and the selected beat in magenta with its details at the top right",
+         "DUB desk redesigned like an old mixing console: twelve wide columns fill the whole lane area (ten layers, ECHO, VERB); scribble plates (amber for the selected strip), the FILT | DIR switch, two knobs with values per column, the pan bar, shorter faders with a scale and LED ladder meters, foot plates with the channel number and a mute lamp",
+         "DUB desk: while the DUB page is open, the lane area shows a strip per layer (number, name, ECHO and VERB send bars, a LEVEL fader with a live level meter, the bus) and the ECHO and VERB returns (fader for the WET, FEEDBACK bar on the echo); a pad press selects the strip, and a strip is drawn again only when something on it changes",
+         "DUB mixer, first step: MIXER, then DUB, then ROUTING. DUB mode per song (MODE field, CHAIN or DUB): every layer is a strip with a BUS (FILT through EQ and Filter 1, or DIR straight to the master) and ECHO and VERB sends (0 to 100 %) into Effect 1 (through Filter 2) and the reverb; the effects and the reverb then run without their DRY, and their WET is the return level (ECHO RTN, VERB RTN). Turning MODE to DUB makes Effect 1 a delay and switches it and the reverb on. A pad press selects the strip; FEEDBACK is the delay's. Saved in the song file (older firmware ignores it)",
+         "Status line in the strip under the top menu: while M, F, the left S, I, the right S or SONG is held, it says what the other keys do with it; otherwise it shows the MIDI clock (tempo, LOCKED) and when the last autosave was written"],
+    fix: [] },
+  { v: "V1.14", date: "2026-11-13", status: "GitHub release v1.14 · tested", pub: true,
     nw: ["NOTE page (song → EUCLID → NOTE): each beat gets its own VELOCITY, CHANCE (5 % steps), CONDITION (A:B, !A:B, 1ST, PRE, FKEY and negations) and NUDGE (±12 % of a 16th)",
          "FKEY condition: those beats play only while the F (FILL) key is held (the screen shows FKEY); !FKEY only while it is not",
          "ADD + turn changes every beat of the bank; CLEAR resets a beat, ADD + CLEAR the bank",
@@ -2241,7 +2245,7 @@ const RELEASES = [
          "EQ page: the lane area shows the six bands as one curve, with a handle per band at its frequency and gain",
          "FILTER 1 and FILTER 2 pages: the lane area shows the filter's response from 20 Hz to 20 kHz, with the cutoff marked and the other filter behind it",
          "CPU and MEM monitor in the top-right corner of every page: the audio engine's load (magenta from 80 %) and the sample memory in use",
-         "Watchdog: a freeze longer than 6 seconds restarts the device and shows CRASH 7 AT 0000sssm (what the loop was doing, which page)",
+         "Watchdog: a freeze longer than 6 seconds restarts the device and shows CRASH 7 S06 P18 L98 (the stage the loop was in, the page, the audio load)",
          "Diagnostics: SAVE / SDERR while autosave writes, its duration on the Metronome page; a crash restarts the firmware and shows CRASH k AT address (details in System/Crash.log)"],
     fix: ["Locked to MIDI clock but stopped, the sequencer timer ran about 15x too fast (LFOs and TIMING delays with it); since V1.13",
           "The song and NOTE pages kept the old bank's beat after a bank change at the loop end (edits went to the wrong beat)",

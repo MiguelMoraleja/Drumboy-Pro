@@ -87,14 +87,14 @@ static void legacyChain(const State& s, float outL[N], float outR[N]) {
 template <typename Process>
 static void runBlock(const RoutePatch& patch, const RouteBuffers& buf, const float* const* src, const uint8_t* masks, uint8_t count, Process process) {
     RouteSource sources[16];
-    for (uint8_t k = 0; k < count; k++) sources[k] = {src[k], masks[k], nullptr};
+    for (uint8_t k = 0; k < count; k++) sources[k] = {src[k], masks[k], nullptr, nullptr, nullptr, 1.0f, 1.0f};
     RouteState state;
     routeBlock<N>(patch, state, buf, sources, count, process);
 }
 
 static void routedChain(const State& s, const RoutePatch& patch, float outL[N], float outR[N]) {
-    static float node[6][N], revR[N];
-    RouteBuffers buf = {{node[0], node[1], node[2], node[3], node[4], node[5]}, revR, outL, outR};
+    static float nodeL[6][N], nodeR[6][N];
+    RouteBuffers buf = {{nodeL[0], nodeL[1], nodeL[2], nodeL[3], nodeL[4], nodeL[5]}, {nodeR[0], nodeR[1], nodeR[2], nodeR[3], nodeR[4], nodeR[5]}, outL, outR};
     const float* src[kSources];
     uint8_t masks[kSources];
     for (uint8_t k = 0; k < kSources; k++) {
@@ -103,12 +103,17 @@ static void routedChain(const State& s, const RoutePatch& patch, float outL[N], 
     }
     runBlock(patch, buf, src, masks, kSources, [&](uint8_t m) {
         if (m == NODE_REV) {
+            // The reverb makes its stereo field from the mono sum of its pair (equal channels here).
             for (uint16_t i = 0; i < N; i++) {
-                revR[i] = s.active[m] ? revRight(node[m][i]) : node[m][i];
-                if (s.active[m]) node[m][i] = mod(m, node[m][i]);
+                const float in = 0.5f * (nodeL[m][i] + nodeR[m][i]);
+                nodeR[m][i] = s.active[m] ? revRight(in) : in;
+                nodeL[m][i] = s.active[m] ? mod(m, in) : in;
             }
         } else if (s.active[m]) {
-            for (uint16_t i = 0; i < N; i++) node[m][i] = mod(m, node[m][i]);
+            for (uint16_t i = 0; i < N; i++) {
+                nodeL[m][i] = mod(m, nodeL[m][i]);
+                nodeR[m][i] = mod(m, nodeR[m][i]);
+            }
         }
     });
 }
@@ -145,17 +150,19 @@ static void testParallelPaths() {
     // hat -> master directly, clap -> EQ -> FX 2 -> master.
     RoutePatch p = {{routeBit(NODE_FX2), routeBit(NODE_MASTER), routeBit(NODE_FX1), routeBit(NODE_REV), routeBit(NODE_MASTER), routeBit(NODE_MASTER)}};
     CHECK(routePatchValid(p), "example patch should be valid");
-    static float node[6][N], revR[N], L[N], R[N];
+    static float nodeL[6][N], nodeR[6][N], L[N], R[N];
     static float src[4][N];
     memset(src, 0, sizeof(src));
     const uint8_t at[4] = {1, 5, 9, 13};  // impulse positions, one per source
     for (uint8_t k = 0; k < 4; k++) src[k][at[k]] = 1.0f;
     const float* srcs[4] = {src[0], src[1], src[2], src[3]};
     const uint8_t masks[4] = {routeBit(NODE_F1), routeBit(NODE_F2), routeBit(NODE_MASTER), routeBit(NODE_EQ)};
-    RouteBuffers buf = {{node[0], node[1], node[2], node[3], node[4], node[5]}, revR, L, R};
+    RouteBuffers buf = {{nodeL[0], nodeL[1], nodeL[2], nodeL[3], nodeL[4], nodeL[5]}, {nodeR[0], nodeR[1], nodeR[2], nodeR[3], nodeR[4], nodeR[5]}, L, R};
     runBlock(p, buf, srcs, masks, 4, [&](uint8_t m) {
-        for (uint16_t i = 0; i < N; i++) node[m][i] *= prime[m];
-        if (m == NODE_REV) for (uint16_t i = 0; i < N; i++) revR[i] = node[m][i];
+        for (uint16_t i = 0; i < N; i++) {
+            nodeL[m][i] *= prime[m];
+            nodeR[m][i] *= prime[m];
+        }
     });
     const float want[4] = {3, 5 * 7 * 13, 1, 2 * 11};
     const char* name[4] = {"kick", "snare", "hat", "clap"};
@@ -171,8 +178,10 @@ static void testParallelPaths() {
     const uint8_t both[1] = {static_cast<uint8_t>(routeBit(NODE_MASTER) | routeBit(NODE_REV))};
     const float* one[1] = {src[0]};
     runBlock(kDefaultRoutePatch, buf, one, both, 1, [&](uint8_t m) {
-        for (uint16_t i = 0; i < N; i++) node[m][i] *= prime[m];
-        if (m == NODE_REV) for (uint16_t i = 0; i < N; i++) revR[i] = node[m][i];
+        for (uint16_t i = 0; i < N; i++) {
+            nodeL[m][i] *= prime[m];
+            nodeR[m][i] *= prime[m];
+        }
     });
     CHECK(L[at[0]] == 1 + 13, "dry + reverb copy: got %g", (double)L[at[0]]);
 
@@ -219,13 +228,11 @@ static void testLegacyConversion() {
 // Crossfades: with pass-through modules the master must equal the input on every sample,
 // whatever the route does, so a route change can never jump in level.
 static void testCrossfades() {
-    static float node[6][N], revR[N], L[N], R[N];
+    static float nodeL[6][N], nodeR[6][N], L[N], R[N];
     float dc[N];
     for (uint16_t i = 0; i < N; i++) dc[i] = 1.0f;
-    RouteBuffers buf = {{node[0], node[1], node[2], node[3], node[4], node[5]}, revR, L, R};
-    auto passThrough = [&](uint8_t m) {
-        if (m == NODE_REV) memcpy(revR, node[m], sizeof(revR));
-    };
+    RouteBuffers buf = {{nodeL[0], nodeL[1], nodeL[2], nodeL[3], nodeL[4], nodeL[5]}, {nodeR[0], nodeR[1], nodeR[2], nodeR[3], nodeR[4], nodeR[5]}, L, R};
+    auto passThrough = [&](uint8_t) {};
 
     // A source: MASTER -> REVERB. First block snaps, then a 64-sample fade over two blocks.
     RouteState state;
@@ -238,8 +245,7 @@ static void testCrossfades() {
     for (int b = 0; b < 3; b++) {
         routeBlock<N>(kDefaultRoutePatch, state, buf, &src, 1, [&](uint8_t m) {
             if (m == NODE_REV) {
-                memcpy(revR, node[m], sizeof(revR));
-                for (uint16_t i = 0; i < N; i++) reverbShare[b * N + i] = node[m][i];
+                for (uint16_t i = 0; i < N; i++) reverbShare[b * N + i] = nodeL[m][i];
             }
         });
         for (uint16_t i = 0; i < N; i++) CHECK(std::fabs(L[i] - 1.0f) < 1e-6f && std::fabs(R[i] - 1.0f) < 1e-6f, "block %d sample %u: level %g", b, i, (double)L[i]);
@@ -278,8 +284,7 @@ static void testCrossfades() {
         s3.mask = routeBit((uint8_t)dest(rng));
         float share[N][7] = {};
         routeBlock<N>(flat, st3, buf, &s3, 1, [&](uint8_t m) {
-            for (uint16_t i = 0; i < N; i++) share[i][m] = node[m][i];
-            if (m == NODE_REV) memcpy(revR, node[m], sizeof(revR));
+            for (uint16_t i = 0; i < N; i++) share[i][m] = nodeL[m][i];
         });
         for (uint16_t i = 0; i < N; i++) {
             float modules = 0;

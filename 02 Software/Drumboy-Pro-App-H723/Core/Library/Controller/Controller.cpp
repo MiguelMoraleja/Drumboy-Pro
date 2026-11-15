@@ -341,6 +341,10 @@ void Controller::initialize() {
         startMidiClockTimer();  // Start the midi Sequencer Heartbeat
 
         // 6. Autosave: the empty song is the clean state; offer unsaved work from last time.
+        for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+            meterDrawn[i] = 0xFFFFFFFFu;  // layer meters: nothing drawn yet
+            dubMeterDrawn[i] = 0xFFFF;
+        }
         autosave_markClean();
         autosaveTiming.lastCheckMs = HAL_GetTick();
         lastInputMs = HAL_GetTick();
@@ -486,11 +490,13 @@ void Controller::update() {
             if (!mixer.liMute) mixer_setLiMute(true);
         }
 
+        watchdog_stage(WD_STAGE_PRESET);
         // 7. PRESET PERSISTENCE
         // Commit dirty preset data to storage.
         if (systemPresetSaveFlag) saveSystemPreset();
         if (encoderPresetSaveFlag) saveEncoderPreset();
 
+        watchdog_stage(WD_STAGE_CLIPBOARD);
         // 8. CLIPBOARD OPERATIONS (LFO)
         // Handle copy, paste, and reset actions for LFO data.
         if ((lfoCopyActionFlag) && (selectedLfoNum != -1)) {
@@ -547,6 +553,7 @@ void Controller::update() {
             song_pasteBank();
         }
 
+        watchdog_stage(WD_STAGE_NAV);
         // 11. SECONDARY NAVIGATION
         // Execute long-press navigation handlers.
         if (keyboard.upActionFlag) {
@@ -558,6 +565,7 @@ void Controller::update() {
             keyboard_downLong();
         }
 
+        watchdog_stage(WD_STAGE_MIDITX);
         // 12. OUTBOUND MIDI TRANSMISSION
         // Enqueue pending MIDI note events for each layer into the TX ring buffer.
         for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
@@ -575,6 +583,7 @@ void Controller::update() {
             }
         }
 
+        watchdog_stage(WD_STAGE_MIDIRX);
         // 13. INBOUND MIDI PROCESSING
         // Translate incoming MIDI events to playback and recording actions.
         // Every note in the queue (MidiParser.h), at its velocity: chords and fast runs all play.
@@ -603,6 +612,7 @@ void Controller::update() {
             }
         }
 
+        watchdog_stage(WD_STAGE_TRANSPORT);
         // 14. INBOUND MIDI TRANSPORT AND CLOCK
         // Handle transport commands and tempo updates signaled by the MIDI RX ISR.
         // Executed here in main context so that LCD, timers, and state can be safely updated.
@@ -730,6 +740,7 @@ void Controller::update() {
             io.midi.rxClockFlag = false;
         }
 
+        watchdog_stage(WD_STAGE_SYNC);
         // 15. INBOUND SYNC HANDLING (MODE-A / MODE-B)
         // MODE-A: clock-only sync; local play/record can arm and start on next clock.
         // MODE-B: gate controls play/stop; clock continuously updates tempo.
@@ -1143,7 +1154,7 @@ void Controller::startMidiTx() {
 
     // 2. IN-FLIGHT BUFFER LOAD
     // Copy next message into a static buffer that persists across the async DMA transfer.
-    static uint8_t txDmaBuf[8];
+    static uint8_t txDmaBuf[32] __attribute__((aligned(32)));  // a whole cache line: the data cache build cleans it before the DMA reads it
     MidiTxMsg& msg = io.midi.txRing[io.midi.txRingTail];
     uint8_t len = msg.len;
     for (uint8_t i = 0; i < len; i++) txDmaBuf[i] = msg.data[i];
@@ -1151,6 +1162,9 @@ void Controller::startMidiTx() {
 
     // 3. TRANSMITTER LOCK AND DMA START
     io.midi.txBusy = true;
+#ifdef ENABLE_DCACHE
+    SCB_CleanDCache_by_Addr(reinterpret_cast<uint32_t*>(txDmaBuf), sizeof txDmaBuf);
+#endif
     if (HAL_UART_Transmit_DMA(&huart6, txDmaBuf, len) != HAL_OK) {
         io.midi.txBusy = false;
     }
@@ -1698,6 +1712,10 @@ void Controller::keyboard_action() {
                             // Browsing samples: the pad replays the preview, not the loaded sample.
                         } else {
                             Layer& layer = layerLibrary[layerNum];
+                            if ((menu == DUB_MENU) && (dubStripSel != layerNum)) {
+                                dubStripSel = layerNum;  // the DUB page edits the strip of the pad just pressed
+                                lcd_drawDub_Data();
+                            }
                             if (layerAudible(layerNum) && (layer.samplePlay)) layer_playBeat(layerNum, 1.0f);
                             if (recordActive) {
                                 undo_captureRecord(layerNum, activeSongBank);
@@ -2692,8 +2710,8 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_MIXER:
-                                // A second press opens the ROUTING page; the next press returns to the mixer.
-                                if (!alertFlag) (menu == MIXER_MENU) ? routing_select() : mixer_select();
+                                // MIXER, then DUB, then ROUTING, then the mixer again.
+                                if (!alertFlag) (menu == MIXER_MENU) ? dub_select() : ((menu == DUB_MENU) ? routing_select() : mixer_select());
                                 break;
 
                             case KEY_FILTER_0:
@@ -3389,10 +3407,10 @@ void Controller::encoder_update() {
 
     if (activeEncoderBank >= kEncoderBankSize) activeEncoderBank = kMinEncoderGlobalTab;
     const uint8_t encoderFuncCount = sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]);
-    // Every page with a row in encoderLocalFunction (NOTE_MENU is the last). A page past the table
+    // Every page with a row in encoderLocalFunction (DUB_MENU is the last). A page past the table
     // used to fall back to INIT_MENU, which binds the GLOBAL encoder functions.
     constexpr uint8_t kLocalRows = sizeof(encoderLocalFunction) / sizeof(encoderLocalFunction[0]);
-    static_assert(kLocalRows == NOTE_MENU + 1, "encoderLocalFunction needs one row per menu");
+    static_assert(kLocalRows == DUB_MENU + 1, "encoderLocalFunction needs one row per menu");
     const Menu menuSafe = (static_cast<uint8_t>(menu) < kLocalRows) ? menu : INIT_MENU;
 
     // 1. MODE/FUNCTION BINDING
@@ -4117,6 +4135,22 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             }
         } break;
 
+        case ENC_INST_2_PAN: {
+            // ADD + turn: every layer moves by the same step.
+            const int8_t dir = 1;
+            const uint8_t cur = dubMix.pan[selectedLayerNum];
+            if (((dir > 0) && (cur < kPanMax)) || ((dir < 0) && (cur > 0))) {
+                if (keyboard.shiftKeyPress) {
+                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+                        const uint8_t v = dubMix.pan[i] + dir;
+                        if (v <= kPanMax) layerInst_setPan(i, v);
+                    }
+                } else {
+                    layerInst_setPan(selectedLayerNum, static_cast<uint8_t>(cur + dir));
+                }
+            }
+        } break;
+
         case ENC_ROUTE_EQ_OUT:
         case ENC_ROUTE_F1_OUT:
         case ENC_ROUTE_F2_OUT:
@@ -4174,6 +4208,17 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_NOTE_COND:
         case ENC_NOTE_NUDGE:
             if (menu == NOTE_MENU) note_step(encoder[encoderNum_].function, true);
+            break;
+
+        case ENC_DUB_LEVEL:
+        case ENC_DUB_BUS:
+        case ENC_DUB_ECHO:
+        case ENC_DUB_VERB:
+        case ENC_DUB_MODE:
+        case ENC_DUB_FEEDBACK:
+        case ENC_DUB_ECHORTN:
+        case ENC_DUB_VERBRTN:
+            if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, true);
             break;
 
         case ENC_CHAIN_STEP:
@@ -4721,6 +4766,22 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
             }
         } break;
 
+        case ENC_INST_2_PAN: {
+            // ADD + turn: every layer moves by the same step.
+            const int8_t dir = -1;
+            const uint8_t cur = dubMix.pan[selectedLayerNum];
+            if (((dir > 0) && (cur < kPanMax)) || ((dir < 0) && (cur > 0))) {
+                if (keyboard.shiftKeyPress) {
+                    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+                        const uint8_t v = dubMix.pan[i] + dir;
+                        if (v <= kPanMax) layerInst_setPan(i, v);
+                    }
+                } else {
+                    layerInst_setPan(selectedLayerNum, static_cast<uint8_t>(cur + dir));
+                }
+            }
+        } break;
+
         case ENC_ROUTE_EQ_OUT:
         case ENC_ROUTE_F1_OUT:
         case ENC_ROUTE_F2_OUT:
@@ -4778,6 +4839,17 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_NOTE_COND:
         case ENC_NOTE_NUDGE:
             if (menu == NOTE_MENU) note_step(encoder[encoderNum_].function, false);
+            break;
+
+        case ENC_DUB_LEVEL:
+        case ENC_DUB_BUS:
+        case ENC_DUB_ECHO:
+        case ENC_DUB_VERB:
+        case ENC_DUB_MODE:
+        case ENC_DUB_FEEDBACK:
+        case ENC_DUB_ECHORTN:
+        case ENC_DUB_VERBRTN:
+            if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, false);
             break;
 
         case ENC_CHAIN_STEP:
@@ -6431,7 +6503,7 @@ uint32_t Controller::file_stateCrc() {
     }
     uint8_t chainData[kChainFileSize];
     chainWrite(songChain, chainData);
-    return file_noteCrc(autosaveCrc32(crc, chainData, kChainFileSize));
+    return file_dubCrc(file_noteCrc(autosaveCrc32(crc, chainData, kChainFileSize)));
 }
 
 /* Autosave (Autosave.h) -----------------------------------------------------*/
@@ -6542,6 +6614,10 @@ bool Controller::autosave_write() {
     const bool ok = autosave_writeFiles();
     autosaveLastMs = HAL_GetTick() - start;
     autosaveLastOk = ok;
+    if (ok) {
+        autosaveLastAt = HAL_GetTick();
+        autosaveWritten = true;
+    }
     if (ok) {
         textClearFlag = true;  // remove SAVE (ARMED comes back if armed)
     } else {
@@ -6748,6 +6824,7 @@ void Controller::file_readNotes(const char* fileName_) {
     /// @brief Applies the BTX block (BeatNote.h) of a song file to the loaded beats, matching each
     /// entry by layer, bank and start (as the loader quantized it). No block = all default.
     f_close(&sd.file);
+    dubClear(dubMix);  // a song without a DUB block plays as CHAIN
     if (f_open(&sd.file, fileName_, FA_READ) != FR_OK) return;
     uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
     UINT got = 0;
@@ -6770,8 +6847,21 @@ void Controller::file_readNotes(const char* fileName_) {
             }
             remaining -= chunk;
         }
+        // The DUB block follows the notes (older firmware never reads that far).
+        if (remaining == 0) {
+            uint8_t dubData[kDubFileSize] = {0};
+            UINT dubGot = 0;
+            if (f_read(&sd.file, dubData, kDubFileSize, &dubGot) == FR_OK) dubRead(dubMix, dubData, static_cast<uint16_t>(dubGot));
+        }
     }
     f_close(&sd.file);
+}
+
+uint32_t Controller::file_dubCrc(uint32_t crc_) {
+    /// @brief Feeds the DUB block (as written) into a CRC, so autosave sees mixer edits.
+    uint8_t dubData[kDubFileSize];
+    dubWrite(dubMix, dubData);
+    return autosaveCrc32(crc_, dubData, kDubFileSize);
 }
 
 SdResult Controller::sd_saveFile(uint8_t fileNum_) {
@@ -6859,7 +6949,12 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
                         uint8_t chainData[kChainFileSize];
                         chainWrite(songChain, chainData);
                         // Per-note settings after the chain (BeatNote.h).
-                        if ((f_write(&sd.file, chainData, kChainFileSize, &sd.byteswritten) == FR_OK) && file_writeNotes()) result = SD_OK;
+                        if ((f_write(&sd.file, chainData, kChainFileSize, &sd.byteswritten) == FR_OK) && file_writeNotes()) {
+                            // The DUB block after the notes (DubMix.h).
+                            uint8_t dubData[kDubFileSize];
+                            dubWrite(dubMix, dubData);
+                            if (f_write(&sd.file, dubData, kDubFileSize, &sd.byteswritten) == FR_OK) result = SD_OK;
+                        }
                     }
                 }
             }
@@ -8213,6 +8308,8 @@ void Controller::lcd_update() {
     watchdog_stage(WD_STAGE_VIEW);
     lcd_updateLaneView();
     watchdog_stage(WD_STAGE_SCREEN);
+    lcd_drawLayerMeters();
+    lcd_drawStatusLine();
 
     // 2. TRANSPORT ICON UPDATE
     // Refresh reset/play/stop/record icons.
@@ -8901,6 +8998,10 @@ void Controller::lcd_drawMenuIcon(Menu menu_) {
 
             case NOTE_MENU:
                 iconStr = "NT";
+                break;
+
+            case DUB_MENU:
+                iconStr = "DB";
                 break;
 
             case SONG_MENU:
@@ -12225,6 +12326,13 @@ void Controller::lcd_drawLayerInst2Menu(uint8_t layerNum_) {
     lcd_setMenuSignState(GRAY_75);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
     lcd_drawLayerInst_StyleData(layerNum_);
+
+    // PAN (tab 6): left to right, heard for a layer that goes straight to the master.
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kHeaderPan, kMenuHeaderTextSize, kMenuHeaderX[6], kMenuHeaderY[6]);
+    lcd_setMenuSignState(GRAY_75);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[6], kMenuSignBoxY[6]);
+    lcd_drawLayerInst_PanData(layerNum_);
 }
 
 void Controller::lcd_drawLayerInst_StyleData(uint8_t layerNum_) {
@@ -14052,6 +14160,7 @@ void Controller::file_newAction() {
     // Reset song transport and playback runtime state.
     reset();
     chainClear(songChain);
+    dubClear(dubMix);
     chainRestart(songChain, chainPlay);
     songStepSel = 0;
 
@@ -21984,9 +22093,9 @@ static const uint16_t kRingRowY = 196, kRingRowStep = 22, kRingRowPlayY = 186;
 
 bool Controller::laneViewHidden() const {
     /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG, ROUTING,
-    /// FILTER and EQ pages). Everything that draws into a lane checks it, and asks for the view to be
+    /// FILTER, EQ and instrument page 2 pages). Everything that draws into a lane checks it, and asks for the view to be
     /// refreshed instead.
-    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU);
+    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU);
 }
 
 void Controller::lcd_drawLaneView() {
@@ -21996,6 +22105,13 @@ void Controller::lcd_drawLaneView() {
     laneViewShown = menu;
     for (uint8_t b = 0; b < kChainBanks; b++) songThumbDrawn[b] = 0;  // the cleared area holds no thumbnails
     filterViewDrawn = false;                                          // and no curves
+    sampleViewKey = 0;                                                // and no waveform
+    for (uint8_t i = 0; i < kDubStrips; i++) {                        // and no desk
+        dubStripDrawn[i] = 0;
+        dubMeterDrawn[i] = 0xFFFF;
+    }
+    dubReturnDrawn[0] = dubReturnDrawn[1] = 0;
+    noteViewKey = 0;                                                  // and no step edit screen
     lcd_drawLaneViewData();
 }
 
@@ -22020,6 +22136,15 @@ void Controller::lcd_drawLaneViewData() {
             break;
         case EQ_MENU:
             lcd_drawEqViewData();
+            break;
+        case LAYER_INST_1_MENU:
+            lcd_drawSampleViewData();
+            break;
+        case DUB_MENU:
+            lcd_drawDubViewData();
+            break;
+        case NOTE_MENU:
+            lcd_drawNoteViewData();
             break;
         default:
             break;
@@ -22123,6 +22248,9 @@ void Controller::lcd_updateLaneView() {
     // The filter pages have no draw call to hook: watch both filters' settings instead.
     if (((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)) && (filterViewState() != filterViewStateDrawn)) viewDirty = true;
     if ((menu == EQ_MENU) && (eqViewState() != filterViewStateDrawn)) viewDirty = true;
+    if ((menu == LAYER_INST_1_MENU) && (sampleViewState() != sampleViewStateDrawn)) viewDirty = true;
+    if ((menu == DUB_MENU) && (dubViewState() != dubViewStateDrawn)) viewDirty = true;
+    if ((menu == NOTE_MENU) && (noteViewState() != noteViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -22159,6 +22287,7 @@ void Controller::lcd_drawEuclidViewPlay() {
 void Controller::lcd_restoreLanes() {
     /// @brief Leaving a full-area view: draws the ten lane frames again and everything in them.
     laneViewShown = INIT_MENU;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) meterDrawn[i] = 0xFFFFFFFFu;  // the lanes are drawn new: so are their meters
     viewDirty = false;
     viewFull = false;
     ringPlayShown = false;
@@ -22595,6 +22724,754 @@ void Controller::lcd_drawEqViewData() {
     lcd.setFont(FONT_07x09);
     lcd.setForeColor(c);
     lcd.drawText(eq.active ? "EQ    " : "EQ OFF", 6, kCurveX, kCurveLegendY);
+}
+
+/* SAMPLE view: a full-area view (SampleView.h) ---------------------------------*/
+
+uint32_t Controller::sampleViewState() const {
+    /// @brief A fingerprint of everything the sample view shows.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(static_cast<uint32_t>(selectedLayerNum + 1));
+    if (selectedLayerNum < 0) return h;
+    const Layer& layer = layerLibrary[selectedLayerNum];
+    mix(layer.start);
+    mix(layer.end);
+    mix(layer.direction);
+    mix(layer.pitch);
+    mix(layer.sampleLoadedData.sampleSize);
+    mix(static_cast<uint32_t>(layer.playSampleSector + 1));
+    const int8_t sector = layer.playSampleSector;
+    mix((sector >= 0) && sampleSectorLibrary[sector].writeMode);
+    for (const char* c = layer.sampleLoadedData.fileName; *c; c++) mix(static_cast<uint8_t>(*c));
+    return h;
+}
+
+void Controller::lcd_drawSampleColumns(uint16_t from_, uint16_t to_, uint8_t start_, uint8_t end_) {
+    /// @brief Draws columns from_..to_ of the waveform: cleared first, cyan inside START..END, gray outside.
+    const uint8_t* peaks = reinterpret_cast<const uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS + 2048);
+    for (uint16_t c = from_; c <= to_ && c < kSampleCols; c++) {
+        const uint16_t x = kSampleX + c;
+        lcd.clearVLine(x, kSampleCenterY - kSampleHalf, 2 * kSampleHalf + 1);
+        lcd.setForeColor(sampleColumnActive(c, start_, end_) ? CYAN : GRAY_50);
+        const uint8_t h = peaks[c];
+        if (h > 0) {
+            lcd.drawVLine(x, kSampleCenterY - h, 2 * h + 1);
+        } else {
+            lcd.drawPixel(x, kSampleCenterY);
+        }
+    }
+}
+
+void Controller::lcd_drawSampleHandles(uint8_t start_, uint8_t end_, bool clear_) {
+    /// @brief The START and END handles with their values above the plot (clear_: erase them).
+    lcd.setFont(FONT_05x07);
+    lcd.setBackColor(BLACK);
+    const uint16_t xs = sampleXOfPercent(start_), xe = sampleXOfPercent(end_);
+    if (clear_) {
+        lcd.clearVLine(xs, kSampleHandleTop, kSampleHandleBottom - kSampleHandleTop + 1);
+        lcd.clearVLine(xe, kSampleHandleTop, kSampleHandleBottom - kSampleHandleTop + 1);
+        lcd.clearRect(kSampleX - 4, kSampleHandleTop - 12, kSampleCols + 8, 9);
+        return;
+    }
+    lcd.setForeColor(YELLOW);
+    lcd.drawVLine(xs, kSampleHandleTop, kSampleHandleBottom - kSampleHandleTop + 1);
+    lcd.drawVLine(xe, kSampleHandleTop, kSampleHandleBottom - kSampleHandleTop + 1);
+    char text[16];
+    snprintf(text, sizeof text, "START %u", static_cast<unsigned>(start_));
+    lcd.setAlignment(RIGHT);
+    lcd.drawText(text, static_cast<uint16_t>(strlen(text)), xs - 4, kSampleHandleTop - 11);
+    snprintf(text, sizeof text, "END %u", static_cast<unsigned>(end_));
+    lcd.setAlignment(LEFT);
+    lcd.drawText(text, static_cast<uint16_t>(strlen(text)), xe + 5, kSampleHandleTop - 11);
+}
+
+void Controller::lcd_drawSampleViewData() {
+    /// @brief Redraws the SAMPLE view of the selected layer: the waveform (peaks of 840 stretches,
+    /// computed again only when the sample changes), cyan between START and END and gray outside,
+    /// the two handles, the title and the length of the played part. When only START or END moved,
+    /// just the columns they crossed are drawn again.
+    sampleViewStateDrawn = sampleViewState();
+    if (selectedLayerNum < 0) return;
+    const Layer& layer = layerLibrary[selectedLayerNum];
+    uint8_t* const peaks = reinterpret_cast<uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS + 2048);
+    const int8_t sector = layer.playSampleSector;
+    const bool ready = (sector >= 0) && !sampleSectorLibrary[sector].writeMode && (layer.sampleLoadedData.sampleSize > 0);
+
+    // 1. THE PEAKS: again only for another sample (or when it has just finished loading)
+    uint32_t key = 2166136261u;
+    for (const char* c = layer.sampleLoadedData.fileName; *c; c++) key = (key ^ static_cast<uint8_t>(*c)) * 16777619u;
+    key = (key ^ layer.sampleLoadedData.sampleSize) * 16777619u;
+    key = (key ^ static_cast<uint32_t>(selectedLayerNum + 1)) * 16777619u;
+    key = (key ^ (ready ? 1u : 2u)) * 16777619u;
+    if (key == 0) key = 1;
+    const bool full = (key != sampleViewKey);
+    if (full) {
+        sampleViewKey = key;
+        if (ready) {
+            samplePeakColumns(reinterpret_cast<const float*>(RAM_SAMPLE_ADDRESS + static_cast<uint32_t>(sector) * kSampleByteSize), layer.sampleLoadedData.sampleSize,
+                              sampleSectorLibrary[sector].normMultiplier, peaks, kSampleCols);
+        } else {
+            memset(peaks, 0, kSampleCols);
+        }
+    }
+
+    // 2. THE PLOT
+    lcd.setBackColor(BLACK);
+    if (full) {
+        lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
+        // Centre line and a tick every 25 % with its label.
+        lcd.setForeColor(GRAY_25);
+        for (uint16_t x = kSampleX; x < kSampleX + kSampleCols; x += 4) lcd.drawPixel(x, kSampleCenterY);
+        lcd.setFont(FONT_05x07);
+        lcd.setAlignment(LEFT);
+        static const char* const kTick[5] = {"0", "25", "50", "75", "100"};
+        for (uint8_t k = 0; k < 5; k++) {
+            const uint16_t x = sampleXOfPercent(static_cast<uint8_t>(k * 25));
+            lcd.setForeColor(GRAY_75);
+            lcd.drawVLine(x, kSampleScaleY + 1, 3);
+            const uint16_t len = static_cast<uint16_t>(strlen(kTick[k]));
+            lcd.drawText(kTick[k], len, static_cast<uint16_t>((k == 0) ? x : ((k == 4) ? x - len * 7 + 2 : x - (len * 7) / 2)), kSampleScaleY + 7);
+        }
+        lcd_drawSampleColumns(0, kSampleCols - 1, layer.start, layer.end);
+    } else {
+        uint16_t from, to;
+        if (sampleDirtyColumns(sampleViewStart, sampleViewEnd, layer.start, layer.end, from, to)) {
+            lcd_drawSampleHandles(sampleViewStart, sampleViewEnd, true);
+            lcd_drawSampleColumns(from, to, layer.start, layer.end);
+        }
+    }
+    lcd_drawSampleHandles(layer.start, layer.end, false);
+    sampleViewStart = layer.start;
+    sampleViewEnd = layer.end;
+
+    // 3. TITLE AND LENGTH (fixed width, so the old text is overwritten)
+    char line[48];
+    int len = snprintf(line, sizeof line, "LAYER %.2s  %.12s  %.10s", kDataLayerNum[selectedLayerNum], layer.instLoadedData.nameShortL, ready ? layer.sampleLoadedData.nameShortR : "LOADING");
+    for (int i = (len > 0 ? len : 0); i < 34; i++) line[i] = ' ';
+    lcd.setFont(FONT_10x14);
+    lcd.setAlignment(LEFT);
+    lcd.setForeColor(CYAN);
+    lcd.drawText(line, 34, kSampleX, kSampleTitleY);
+    const uint32_t centi = sampleSecondsCenti(layer.sampleLoadedData.timeData, layer.start, layer.end, ::pitchFactor(layer.pitch));
+    len = snprintf(line, sizeof line, "%lu.%02lu SEC%s", static_cast<unsigned long>(centi / 100), static_cast<unsigned long>(centi % 100), (layer.direction == 1 || layer.direction == 3) ? "  REVERSE" : "         ");
+    lcd.clearRect(kSampleX + kSampleCols - 200, kSampleTitleY + 3, 200, 9);
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(RIGHT);
+    lcd.setForeColor(WHITE);
+    lcd.drawText(line, static_cast<uint16_t>(len > 0 ? len : 0), kSampleX + kSampleCols, kSampleTitleY + 3);
+}
+
+/* DUB page (DubMix.h) --------------------------------------------------------------*/
+
+uint32_t Controller::dubViewState() const {
+    /// @brief A fingerprint of everything the desk shows except the meters.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(dubStripSel);
+    for (uint8_t i = 0; i < kDubStrips; i++) {
+        const DubStrip& st = dubMix.strip[i];
+        mix(st.bus);
+        mix(st.echo);
+        mix(st.verb);
+        mix(dubMix.pan[i]);
+        mix(layerLibrary[i].level);
+        mix(layerAudible(i) ? 1u : 0u);
+        mix(layerLibrary[i].mute ? 1u : 0u);
+        for (const char* c = layerLibrary[i].instLoadedData.nameShortL; *c; c++) mix(static_cast<uint8_t>(*c));
+    }
+    mix(effect[0].active);
+    mix(effect[0].type);
+    mix(effect[0].subEffect[effect[0].type].fData);
+    mix(effect[0].subEffect[EF_DELAY].cData);
+    mix(reverb.active);
+    mix(reverb.wet);
+    mix(reverb.decay);
+    return h;
+}
+
+static const RGB16Color kDeskAmber = 0xFD20;  // the console's accent colour: knob pointers, the selected scribble strip
+
+void Controller::lcd_drawDeskKnob(uint16_t cx_, uint16_t cy_, uint8_t percent_, RGB16Color color_) {
+    /// @brief A console knob: a ring, a dark cap, scale dots around it and an amber pointer.
+    lcd.setForeColor(GRAY_50);
+    for (uint8_t k = 0; k <= 4; k++) {
+        int16_t x, y;
+        deskKnobPoint(cx_, cy_, kDeskKnobRadius + 4, static_cast<uint8_t>(k * 25), x, y);
+        lcd.drawPixel(static_cast<uint16_t>(x), static_cast<uint16_t>(y));
+        if ((k == 0) || (k == 2) || (k == 4)) {
+            deskKnobPoint(cx_, cy_, kDeskKnobRadius + 5, static_cast<uint8_t>(k * 25), x, y);
+            lcd.drawPixel(static_cast<uint16_t>(x), static_cast<uint16_t>(y));
+        }
+    }
+    lcd.setForeColor(GRAY_25);
+    lcd.fillCircle(cx_, cy_, kDeskKnobRadius - 1);
+    lcd.setForeColor(color_);
+    lcd.drawCircle(cx_, cy_, kDeskKnobRadius);
+    int16_t px, py;
+    deskKnobPoint(cx_, cy_, kDeskKnobRadius - 2, percent_, px, py);
+    lcd.setForeColor(kDeskAmber);
+    lcd.drawLine(cx_, cy_, static_cast<uint16_t>(px), static_cast<uint16_t>(py));
+    lcd.drawLine(static_cast<uint16_t>(cx_ + 1), cy_, static_cast<uint16_t>(px + 1), static_cast<uint16_t>(py));
+}
+
+void Controller::lcd_drawDeskSegments(uint8_t column_, uint8_t lit_, bool audible_) {
+    /// @brief The LED ladder beside a fader: 13 segments from the bottom, green, yellow, then red.
+    const uint16_t x = deskX(column_) + kDeskMeterX;
+    for (uint8_t k = 0; k < kDeskMeterSegments; k++) {
+        RGB16Color c = GRAY_25;
+        if (audible_ && (k < lit_)) c = (k < kDeskMeterGreen) ? GREEN : ((k < kDeskMeterYellow) ? YELLOW : RED);
+        lcd.setForeColor(c);
+        lcd.fillRect(x, deskSegmentY(k), kDeskMeterWidth, deskSegmentHeight());
+    }
+}
+
+void Controller::lcd_drawDeskColumn(uint8_t column_) {
+    /// @brief One column of the desk, drawn from nothing: a layer strip (0-9) or a return (10 ECHO,
+    /// 11 VERB). A scribble plate, the bus switch, two knobs with their values, the pan bar, the
+    /// fader with its scale and LED ladder, and the foot plate.
+    const uint16_t x = deskX(column_);
+    const bool isReturn = (column_ >= kDubStrips);
+    const uint8_t layer = column_;
+    const Effect& echo = effect[0];
+    const bool echoIsDelay = (echo.type == EF_DELAY);
+
+    // What this column shows
+    bool audible = true, selected = false, on = true, muted = false, panHeard = false;
+    uint8_t level, knob[2], bus = DUB_BUS_FILT, pan = kPanCentre;
+    const char* knobName[2];
+    char line1[12], line2[12];
+    if (!isReturn) {
+        const DubStrip& st = dubMix.strip[layer];
+        audible = layerAudible(layer);
+        selected = (layer == dubStripSel);
+        muted = layerLibrary[layer].mute;
+        level = layerLibrary[layer].level;
+        knob[0] = st.echo;
+        knob[1] = st.verb;
+        knobName[0] = "ECHO";
+        knobName[1] = "VERB";
+        bus = st.bus;
+        pan = dubMix.pan[layer];
+        panHeard = layerPanActive(layer);
+        snprintf(line1, sizeof line1, "%.2s", kDataLayerNum[layer]);
+        snprintf(line2, sizeof line2, "%.9s", layerLibrary[layer].instLoadedData.nameShortL);
+    } else if (column_ == kDubStrips) {
+        on = echo.active;
+        level = echo.subEffect[echo.type].fData;
+        knob[0] = echoIsDelay ? static_cast<uint8_t>((static_cast<uint16_t>(echo.subEffect[EF_DELAY].cData) * 100u) / kMaxDelayFeedback) : 0;
+        knob[1] = echoIsDelay ? echo.subEffect[EF_DELAY].dData : 0;
+        knobName[0] = "FDBK";
+        knobName[1] = "DAMP";
+        snprintf(line1, sizeof line1, "ECHO");
+        snprintf(line2, sizeof line2, "%.6s", kEffectTypeDataLibrary[echo.type].nameLongR + 4);
+    } else {
+        on = reverb.active;
+        level = reverb.wet;
+        knob[0] = reverb.decay;
+        knob[1] = reverb.size;
+        knobName[0] = "DECAY";
+        knobName[1] = "SIZE";
+        snprintf(line1, sizeof line1, "VERB");
+        snprintf(line2, sizeof line2, "REVERB");
+    }
+    const RGB16Color c = !audible || !on ? GRAY_35 : (selected ? kDeskAmber : ((column_ % 2) ? GRAY_75 : WHITE));
+
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(x, kImageLayerY[0] + 2, kDeskStep, 306);
+    lcd.setForeColor(GRAY_25);
+    lcd.drawVLine(x + kDeskWidth + 1, kImageLayerY[0] + 3, 304);
+    char text[16];
+
+    // 1. THE SCRIBBLE PLATE: filled amber for the selected strip, an outline for the others
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(LEFT);
+    if (selected) {
+        lcd.fillRect(x + 1, kDeskPlateY, kDeskWidth - 2, kDeskPlateHeight);
+        lcd.setBackColor(kDeskAmber);
+        lcd.setForeColor(BLACK);
+    } else {
+        lcd.setForeColor(GRAY_50);
+        lcd.drawRect(x + 1, kDeskPlateY, kDeskWidth - 2, kDeskPlateHeight);
+        lcd.setForeColor(c);
+    }
+    lcd.drawText(line1, static_cast<uint16_t>(strlen(line1)), x + 5, kDeskPlateY + 3);
+    lcd.drawText(line2, static_cast<uint16_t>(strlen(line2)), x + 5, kDeskPlateY + 11);
+    lcd.setBackColor(BLACK);
+
+    // 2. THE BUS SWITCH (layers) or the ON lamp (returns)
+    if (!isReturn) {
+        for (uint8_t k = 0; k < 2; k++) {
+            const bool lit = (bus == (k == 0 ? DUB_BUS_FILT : DUB_BUS_DIR));
+            const uint16_t cx = x + 1 + k * (kDeskBusCell + 1);
+            if (lit) {
+                lcd.setForeColor(audible ? GRAY_75 : GRAY_35);
+                lcd.fillRect(cx, kDeskBusY, kDeskBusCell, kDeskBusHeight);
+                lcd.setBackColor(audible ? GRAY_75 : GRAY_35);
+                lcd.setForeColor(BLACK);
+            } else {
+                lcd.setForeColor(GRAY_35);
+                lcd.drawRect(cx, kDeskBusY, kDeskBusCell, kDeskBusHeight);
+                lcd.setForeColor(GRAY_50);
+            }
+            const char* name = (k == 0) ? "FILT" : "DIR";
+            const uint16_t len = static_cast<uint16_t>(strlen(name));
+            lcd.drawText(name, len, cx + (kDeskBusCell - len * 7) / 2 + 1, kDeskBusY + 2);
+            lcd.setBackColor(BLACK);
+        }
+    } else {
+        lcd.setForeColor(on ? GRAY_75 : GRAY_35);
+        if (on) {
+            lcd.fillRect(x + 1, kDeskBusY, kDeskWidth - 2, kDeskBusHeight);
+            lcd.setBackColor(GRAY_75);
+            lcd.setForeColor(BLACK);
+        } else {
+            lcd.drawRect(x + 1, kDeskBusY, kDeskWidth - 2, kDeskBusHeight);
+        }
+        lcd.drawText(on ? "ON" : "OFF", on ? 2 : 3, x + (kDeskWidth - (on ? 14 : 21)) / 2 + 1, kDeskBusY + 2);
+        lcd.setBackColor(BLACK);
+    }
+
+    // 3. TWO KNOBS with their names and values
+    for (uint8_t k = 0; k < 2; k++) {
+        const uint16_t cx = x + kDeskKnobX[k];
+        lcd_drawDeskKnob(cx, kDeskKnobY, knob[k], (audible && on) ? GRAY_75 : GRAY_35);
+        const uint16_t len = static_cast<uint16_t>(strlen(knobName[k]));
+        lcd.setForeColor(GRAY_75);
+        lcd.drawText(knobName[k], len, cx - (len * 7) / 2 + 1, kDeskKnobLabelY);
+        snprintf(text, sizeof text, "%u%%", static_cast<unsigned>(knob[k]));
+        lcd.setForeColor((audible && on) ? WHITE : GRAY_50);
+        lcd.drawText(text, static_cast<uint16_t>(strlen(text)), cx - (static_cast<uint16_t>(strlen(text)) * 7) / 2 + 1, kDeskKnobValueY);
+    }
+
+    // 4. THE PAN BAR (layers): a slot with a centre notch and a marker, and its value
+    if (!isReturn) {
+        const uint16_t barX = x + 1, barW = 41;
+        lcd.setForeColor(panHeard ? GRAY_50 : GRAY_35);
+        lcd.drawRect(barX, kDeskPanY, barW, kDeskPanHeight);
+        lcd.drawVLine(barX + barW / 2, kDeskPanY - 2, kDeskPanHeight + 4);
+        lcd.setForeColor(panHeard ? c : GRAY_35);
+        lcd.fillRect(barX + 1 + deskPanX(pan, barW - 4), kDeskPanY + 1, 3, kDeskPanHeight - 2);
+        char label[8];
+        panLabel(label, sizeof label, pan);
+        lcd.setForeColor(panHeard ? WHITE : GRAY_50);
+        lcd.drawText(label, static_cast<uint16_t>(strlen(label)), barX + barW + 4, kDeskPanY);
+    }
+
+    // 5. THE FADER: scale, ticks, rail, cap, LED ladder and the level
+    lcd.setForeColor(GRAY_50);
+    lcd.drawText("10", 2, x + kDeskScaleX, kDeskFaderY - 3);
+    lcd.drawText("5", 1, x + kDeskScaleX + 7, kDeskFaderY + kDeskFaderHeight / 2 - 3);
+    lcd.drawText("0", 1, x + kDeskScaleX + 7, kDeskFaderY + kDeskFaderHeight - 5);
+    for (uint8_t k = 0; k <= 10; k++) {
+        const uint16_t ty = kDeskFaderY + kDeskCapHeight / 2 + (k * (kDeskFaderHeight - kDeskCapHeight)) / 10;
+        lcd.drawHLine(x + kDeskTickX + ((k % 5 == 0) ? 0 : 3), ty, (k % 5 == 0) ? 7 : 4);
+    }
+    lcd.setForeColor(GRAY_35);
+    lcd.drawVLine(x + kDeskRailX, kDeskFaderY, kDeskFaderHeight);
+    lcd.drawVLine(x + kDeskRailX + 1, kDeskFaderY, kDeskFaderHeight);
+    const uint16_t capY = deskCapY(level);
+    lcd.setForeColor(c);
+    lcd.fillRect(x + kDeskCapX, capY, kDeskCapWidth, kDeskCapHeight);
+    lcd.setForeColor(BLACK);
+    lcd.drawHLine(x + kDeskCapX, capY + kDeskCapHeight / 2, kDeskCapWidth);  // the groove across the cap
+    lcd_drawDeskSegments(column_, 0, true);
+    snprintf(text, sizeof text, "%u", static_cast<unsigned>(level));
+    lcd.setForeColor((audible && on) ? WHITE : GRAY_50);
+    lcd.drawText(text, static_cast<uint16_t>(strlen(text)), x + kDeskCapX + 10 - (static_cast<uint16_t>(strlen(text)) * 7) / 2, kDeskLevelY);
+
+    // 6. THE FOOT PLATE: the channel number and a lamp
+    lcd.setForeColor(GRAY_50);
+    lcd.drawRect(x + 1, kDeskFootY, kDeskWidth - 2, kDeskFootHeight);
+    lcd.setFont(FONT_10x14);
+    lcd.setForeColor(c);
+    if (!isReturn) {
+        lcd.drawText(kDataLayerNum[layer], 2, x + 8, kDeskFootY + 6);
+    } else {
+        lcd.drawText(column_ == kDubStrips ? "E" : "V", 1, x + 14, kDeskFootY + 6);
+    }
+    lcd.setFont(FONT_05x07);
+    const bool lamp = isReturn ? on : muted;
+    lcd.setForeColor(lamp ? (isReturn ? GREEN : RED) : GRAY_25);
+    lcd.fillRect(x + 46, kDeskFootY + 6, 18, 14);
+    lcd.setForeColor(GRAY_50);
+    lcd.drawText(isReturn ? "ON" : "MUTE", isReturn ? 2 : 4, x + 46 + (isReturn ? 2 : -3) + 1, kDeskFootY + 24);
+    lcd.setBackColor(BLACK);
+}
+
+void Controller::lcd_drawDubViewData() {
+    /// @brief Redraws the dub desk: twelve columns (the ten layers, ECHO, VERB) across the whole
+    /// lane area, like an old mixing console. A column is drawn again only when what it shows
+    /// changed; the LED ladders are drawn by lcd_drawDubMeters.
+    dubViewStateDrawn = dubViewState();
+    const Effect& echo = effect[0];
+    for (uint8_t col = 0; col < kDeskColumns; col++) {
+        uint32_t fp = 2166136261u;
+        auto mix = [&fp](uint32_t v) { fp = (fp ^ v) * 16777619u; };
+        if (col < kDubStrips) {
+            const DubStrip& st = dubMix.strip[col];
+            mix(st.bus);
+            mix(st.echo);
+            mix(st.verb);
+            mix(dubMix.pan[col]);
+            mix(layerPanActive(col) ? 1u : 0u);
+            mix(layerLibrary[col].level);
+            mix(layerAudible(col) ? 1u : 0u);
+            mix(layerLibrary[col].mute ? 1u : 0u);
+            mix((col == dubStripSel) ? 1u : 0u);
+            for (const char* c = layerLibrary[col].instLoadedData.nameShortL; *c; c++) mix(static_cast<uint8_t>(*c));
+        } else if (col == kDubStrips) {
+            mix(echo.active);
+            mix(echo.type);
+            mix(echo.subEffect[echo.type].fData);
+            mix(echo.subEffect[EF_DELAY].cData);
+            mix(echo.subEffect[EF_DELAY].dData);
+        } else {
+            mix(reverb.active);
+            mix(reverb.wet);
+            mix(reverb.decay);
+            mix(reverb.size);
+        }
+        if (fp == 0) fp = 1;
+        uint32_t& drawn = (col < kDubStrips) ? dubStripDrawn[col] : dubReturnDrawn[col - kDubStrips];
+        if (fp == drawn) continue;
+        drawn = fp;
+        if (col < kDubStrips) dubMeterDrawn[col] = 0xFFFF;  // the column is cleared, its ladder too
+        lcd_drawDeskColumn(col);
+    }
+}
+
+void Controller::lcd_drawDubMeters() {
+    /// @brief The LED ladder beside each strip's fader, from the lane meters' peaks (25 times a second).
+    for (uint8_t i = 0; i < kDubStrips; i++) {
+        const bool audible = layerAudible(i);
+        const uint8_t lit = audible ? deskMeterLit(meterShown[i], kMeterBarWidth) : 0;
+        if (lit == dubMeterDrawn[i]) continue;
+        dubMeterDrawn[i] = lit;
+        lcd_drawDeskSegments(i, lit, audible);
+    }
+}
+
+/* NOTE: the step edit screen (NoteView.h) ----------------------------------------*/
+
+static uint32_t* noteViewFingerprints() { return reinterpret_cast<uint32_t*>(RAM_VIEW_SCRATCH_ADDRESS + 3072); }  // [kBeatLibrarySize]
+static uint16_t* noteViewOldX() { return reinterpret_cast<uint16_t*>(RAM_VIEW_SCRATCH_ADDRESS + 3328); }          // [kBeatLibrarySize][2]: x and block width
+
+uint32_t Controller::noteViewState() const {
+    /// @brief A fingerprint of everything the step edit screen shows.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(static_cast<uint32_t>(selectedLayerNum + 1));
+    mix(static_cast<uint32_t>(selectedBeatNum + 2));
+    mix(activeSongBank);
+    mix(songInterval);
+    if (selectedLayerNum < 0) return h;
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    mix(static_cast<uint32_t>(bank.lastActiveBeatNum + 2));
+    for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) {
+        const Beat& beat = bank.beatLibrary[b];
+        if (!beat.getActive()) continue;
+        mix((static_cast<uint32_t>(beat.getStartInterval()) << 16) | beat.getEndInterval());
+        mix((static_cast<uint32_t>(beat.getFillType()) << 24) | (static_cast<uint32_t>(beat.getFillPattern()) << 16) | beat.getVelocity());
+        mix(beat.getNote());
+    }
+    return h;
+}
+
+void Controller::lcd_drawNoteViewBeat(uint8_t beatNum_, bool selected_) {
+    /// @brief One beat of the step edit screen: its block, condition dot, velocity bar and chance bar.
+    const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
+    const Beat& beat = bank.beatLibrary[beatNum_];
+    if (!beat.getActive()) return;
+    const bool fill = (beat.getFillType() != 0);
+    const uint16_t x = noteViewX(beat.getStartInterval(), songInterval);
+    const uint16_t bw = noteViewBlockWidth(fill, beat.getStartInterval(), beat.getEndInterval(), songInterval);
+    const RGB16Color c = selected_ ? MAGENTA : CYAN;
+    const bool muted = !fill && (beat.getFillPattern() == 2), ghost = !fill && (beat.getFillPattern() == 1);
+
+    // 1. THE BLOCK: muted = outline, ghost = half height
+    lcd.setForeColor(c);
+    if (muted) {
+        lcd.drawRect(x, kNoteViewBlockY, bw, kNoteViewBlockHeight);
+    } else if (ghost) {
+        lcd.fillRect(x, kNoteViewBlockY + kNoteViewBlockHeight / 2, bw, kNoteViewBlockHeight / 2);
+    } else {
+        lcd.fillRect(x, kNoteViewBlockY, bw, kNoteViewBlockHeight);
+    }
+    // 2. A CONDITION: a yellow dot under the block
+    if (noteCondCode(beat.getNote()) != 0) {
+        lcd.setForeColor(YELLOW);
+        lcd.fillRect(x + bw / 2 - 1, kNoteViewDotY, 3, 3);
+    }
+    // 3. VELOCITY AND CHANCE: bars centred on the block
+    const uint16_t bx = x + (bw > kNoteViewBarWidth ? (bw - kNoteViewBarWidth) / 2 : 0);
+    const uint16_t vh = noteViewVelHeight(note_effectiveVelocity(beat));
+    lcd.setForeColor(c);
+    if (vh > 0) lcd.fillRect(bx, kNoteViewVelBase - vh, kNoteViewBarWidth, vh);
+    const uint8_t chance = noteChancePercent(beat.getNote());
+    const uint16_t ch = noteViewChanceHeight(chance);
+    if (ch > 0) {
+        if (chance < 100) {
+            lcd.drawRect(bx, kNoteViewChanceBase - ch, kNoteViewBarWidth, ch);
+        } else {
+            lcd.setForeColor(selected_ ? MAGENTA : GRAY_75);
+            lcd.fillRect(bx, kNoteViewChanceBase - ch, kNoteViewBarWidth, ch);
+        }
+    }
+}
+
+void Controller::lcd_drawNoteViewData() {
+    /// @brief Redraws the step edit screen of the selected layer and bank: the beats across the full
+    /// width with their velocity and chance. When only a few beats changed (a knob turn, another beat
+    /// selected) just their columns are drawn again; a new layer, bank or beat count draws it all.
+    noteViewStateDrawn = noteViewState();
+    if (selectedLayerNum < 0) return;
+    const Layer& layer = layerLibrary[selectedLayerNum];
+    const Bank& bank = layer.bankLibrary[activeSongBank];
+    uint32_t* const fingerprint = noteViewFingerprints();
+    uint16_t* const oldX = noteViewOldX();
+    lcd.setBackColor(BLACK);
+
+    // 1. THE LAYOUT KEY: another layer, bank, loop length or beat count draws everything
+    uint32_t key = 2166136261u;
+    const uint32_t keyParts[6] = {static_cast<uint32_t>(selectedLayerNum + 1), activeSongBank, songInterval, barInterval, measureInterval, static_cast<uint32_t>(bank.lastActiveBeatNum + 2)};
+    for (uint8_t k = 0; k < 6; k++) key = (key ^ keyParts[k]) * 16777619u;
+    for (const char* c = layer.instLoadedData.nameShortL; *c; c++) key = (key ^ static_cast<uint8_t>(*c)) * 16777619u;
+    if (key == 0) key = 1;
+    bool full = (key != noteViewKey);
+
+    // 2. WHICH BEATS CHANGED (and where they were)
+    uint8_t changed[kBeatLibrarySize];
+    uint8_t changedCount = 0;
+    uint32_t now[kBeatLibrarySize];
+    for (int16_t b = 0; b < kBeatLibrarySize; b++) {
+        uint32_t fp = 0;
+        if ((b <= bank.lastActiveBeatNum) && bank.beatLibrary[b].getActive()) {
+            const Beat& beat = bank.beatLibrary[b];
+            fp = 2166136261u;
+            const uint32_t parts[6] = {beat.getStartInterval(), beat.getEndInterval(), (static_cast<uint32_t>(beat.getFillType()) << 8) | beat.getFillPattern(), beat.getVelocity(), beat.getNote(),
+                                       (b == selectedBeatNum) ? 1u : 0u};
+            for (uint8_t k = 0; k < 6; k++) fp = (fp ^ parts[k]) * 16777619u;
+            if (fp == 0) fp = 1;
+        }
+        now[b] = fp;
+        if (!full && (fp != fingerprint[b])) changed[changedCount++] = static_cast<uint8_t>(b);
+    }
+    if (changedCount > 8) full = true;
+
+    // 3. THE FRAME
+    if (full) {
+        noteViewKey = key;
+        lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
+        char title[48];
+        snprintf(title, sizeof title, "LAYER %.2s  %.12s   BANK %u", kDataLayerNum[selectedLayerNum], layer.instLoadedData.nameShortL, static_cast<unsigned>(activeSongBank + 1));
+        lcd.setFont(FONT_07x09);
+        lcd.setAlignment(LEFT);
+        lcd.setForeColor(CYAN);
+        lcd.drawText(title, static_cast<uint16_t>(strlen(title)), 30, kNoteViewTitleY);
+        lcd.setFont(FONT_05x07);
+        lcd.setForeColor(GRAY_75);
+        lcd.drawText("BEAT", 4, 30, kNoteViewBlockY + 8);
+        lcd.drawText("VEL", 3, 30, kNoteViewVelBase - 60);
+        lcd.drawText("CHANCE", 6, 30, kNoteViewChanceBase - 40);
+        lcd.setAlignment(RIGHT);
+        lcd.drawText("127", 3, kNoteViewX - 4, kNoteViewVelBase - kNoteViewVelHeight - 3);
+        lcd.drawText("100", 3, kNoteViewX - 4, kNoteViewChanceBase - kNoteViewChanceHeight - 3);
+        lcd.setAlignment(LEFT);
+        lcd.setForeColor(GRAY_50);
+        noteViewRuler(songInterval, barInterval, measureInterval, [this](uint16_t x, bool bar, uint16_t number) {
+            lcd.setForeColor(bar ? GRAY_75 : GRAY_50);
+            lcd.drawVLine(x, kNoteViewTickY, bar ? kNoteViewTickHeight + 3 : kNoteViewTickHeight);
+            if (bar) {
+                char n[8];
+                snprintf(n, sizeof n, "%u", static_cast<unsigned>(number));
+                lcd.setFont(FONT_05x07);
+                lcd.setForeColor(GRAY_75);
+                lcd.drawText(n, static_cast<uint16_t>(strlen(n)), x + 3, kNoteViewRulerY);
+            }
+        });
+        lcd.setForeColor(GRAY_50);
+        lcd.drawHLine(kNoteViewX - 2, kNoteViewVelBase + 1, kNoteViewWidth + 4);
+        lcd.drawHLine(kNoteViewX - 2, kNoteViewChanceBase + 1, kNoteViewWidth + 4);
+        for (int16_t b = 0; b < kBeatLibrarySize; b++) fingerprint[b] = 0;
+        changedCount = 0;
+        for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) changed[changedCount++] = static_cast<uint8_t>(b);
+    } else if (changedCount > 0) {
+        // Clear the columns of the changed beats, where they were and where they are, in the three lanes.
+        uint16_t from = 0xFFFF, to = 0;
+        for (uint8_t i = 0; i < changedCount; i++) {
+            const uint8_t b = changed[i];
+            uint16_t f, t;
+            if (fingerprint[b] != 0) {
+                noteViewSpan(oldX[2 * b], oldX[2 * b + 1], f, t);
+                if (f < from) from = f;
+                if (t > to) to = t;
+            }
+            if (now[b] != 0) {
+                const Beat& beat = bank.beatLibrary[b];
+                noteViewSpan(noteViewX(beat.getStartInterval(), songInterval),
+                             noteViewBlockWidth(beat.getFillType() != 0, beat.getStartInterval(), beat.getEndInterval(), songInterval), f, t);
+                if (f < from) from = f;
+                if (t > to) to = t;
+            }
+        }
+        lcd.clearRect(from, kNoteViewBlockY, to - from + 1, kNoteViewDotY + 4 - kNoteViewBlockY);
+        lcd.clearRect(from, kNoteViewVelBase - kNoteViewVelHeight, to - from + 1, kNoteViewVelHeight);
+        lcd.clearRect(from, kNoteViewChanceBase - kNoteViewChanceHeight, to - from + 1, kNoteViewChanceHeight);
+        // Every beat that touches the cleared strip is drawn again, not only the changed ones.
+        changedCount = 0;
+        for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) {
+            if (now[b] == 0) continue;
+            const Beat& beat = bank.beatLibrary[b];
+            uint16_t f, t;
+            noteViewSpan(noteViewX(beat.getStartInterval(), songInterval), noteViewBlockWidth(beat.getFillType() != 0, beat.getStartInterval(), beat.getEndInterval(), songInterval), f, t);
+            if ((t >= from) && (f <= to)) changed[changedCount++] = static_cast<uint8_t>(b);
+        }
+    }
+
+    // 4. THE BEATS
+    for (uint8_t i = 0; i < changedCount; i++) lcd_drawNoteViewBeat(changed[i], changed[i] == selectedBeatNum);
+    for (int16_t b = 0; b < kBeatLibrarySize; b++) {
+        fingerprint[b] = now[b];
+        if (now[b] != 0) {
+            const Beat& beat = bank.beatLibrary[b];
+            oldX[2 * b] = noteViewX(beat.getStartInterval(), songInterval);
+            oldX[2 * b + 1] = noteViewBlockWidth(beat.getFillType() != 0, beat.getStartInterval(), beat.getEndInterval(), songInterval);
+        }
+    }
+    // The lane baselines the clearing may have cut.
+    lcd.setForeColor(GRAY_50);
+    lcd.drawHLine(kNoteViewX - 2, kNoteViewVelBase + 1, kNoteViewWidth + 4);
+    lcd.drawHLine(kNoteViewX - 2, kNoteViewChanceBase + 1, kNoteViewWidth + 4);
+
+    // 5. THE SELECTED BEAT IN WORDS (top right)
+    char line[72];
+    int len = 0;
+    if (note_validSelection()) {
+        const Beat& beat = bank.beatLibrary[selectedBeatNum];
+        char position[32], cond[12];
+        beatListPosition(beat.getStartInterval(), barInterval, measureInterval, position, sizeof(position));
+        noteCondName(noteCondCode(beat.getNote()), cond, sizeof(cond));
+        const char* cn = cond;
+        while (*cn == ' ') cn++;
+        const int nudge = noteNudgePercent(beat.getNote());
+        len = snprintf(line, sizeof line, "NOTE %d OF %d  AT %s  VEL %u  %u%%  %s  NUDGE %+d", selectedBeatNum + 1, bank.lastActiveBeatNum + 1, position,
+                       static_cast<unsigned>(note_effectiveVelocity(beat)), static_cast<unsigned>(noteChancePercent(beat.getNote())), (*cn) ? cn : "-", nudge);
+    } else {
+        len = snprintf(line, sizeof line, "NO BEATS IN THIS BANK");
+    }
+    if (len < 0) len = 0;
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(RIGHT);
+    lcd.clearRect(kNoteViewX + 250, kNoteViewTitleY, 610, 9);
+    lcd.setForeColor(WHITE);
+    lcd.drawText(line, static_cast<uint16_t>(len), kNoteViewX + kNoteViewWidth, kNoteViewTitleY);
+}
+
+void Controller::dub_select() {
+    /// @brief Opens the DUB page (the second page of the MIXER key): the selected strip's LEVEL,
+    /// BUS and sends on the top row, the desk (MODE, FEEDBACK and the two returns) on the bottom.
+    if (menu == DUB_MENU) return;
+    preMenu = menu;
+    preMenuTab = menuTab;
+    menuTab = -1;  // every field has its own encoder
+    menu = DUB_MENU;
+    lcd_transitionMenu();
+    lcd_transitionSelect();
+    lcd_drawDubMenu();
+    encoder_update();
+}
+
+void Controller::lcd_drawDubMenu() {
+    /// @brief Draws the DUB page: icon, strip number and the eight fields.
+    lcd_drawMenuIcon(DUB_MENU);
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
+    for (uint8_t f = 0; f < 8; f++) {
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_DUB_LEVEL + f].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[f], kMenuHeaderY[f]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_DUB_LEVEL + f].sign, kMenuSignTextSize, kMenuSignBoxX[f], kMenuSignBoxY[f]);
+    }
+    lcd_drawDub_Data();
+}
+
+void Controller::lcd_drawDub_Data() {
+    /// @brief Draws the DUB values: the selected strip (top row) and the desk (bottom row).
+    const DubStrip& strip = dubMix.strip[dubStripSel];
+    char text[8][kMenuDataTextSize + 1];
+    snprintf(text[0], sizeof text[0], "%10u", static_cast<unsigned>(layerLibrary[dubStripSel].level));
+    snprintf(text[1], sizeof text[1], "%10s", (strip.bus == DUB_BUS_DIR) ? "DIR" : "FILT");
+    snprintf(text[2], sizeof text[2], "%10u", static_cast<unsigned>(strip.echo));
+    snprintf(text[3], sizeof text[3], "%10u", static_cast<unsigned>(strip.verb));
+    snprintf(text[4], sizeof text[4], "%10s", dubMix.on ? "DUB" : "CHAIN");
+    const Effect& echo = effect[0];
+    if (echo.type == EF_DELAY) {
+        snprintf(text[5], sizeof text[5], "%10u", static_cast<unsigned>(echo.subEffect[EF_DELAY].cData));
+    } else {
+        snprintf(text[5], sizeof text[5], "%10s", "NO DELAY");
+    }
+    snprintf(text[6], sizeof text[6], "%10u", static_cast<unsigned>(echo.subEffect[echo.type].fData));
+    snprintf(text[7], sizeof text[7], "%10u", static_cast<unsigned>(reverb.wet));
+    lcd_setMenuDataState(WHITE);
+    for (uint8_t f = 0; f < 8; f++) lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[f], kMenuDataY[f]);
+    // The strip number next to the icon.
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
+}
+
+void Controller::dub_step(EncoderFunc function_, bool up_) {
+    /// @brief Steps one DUB field: the selected strip's LEVEL, BUS, ECHO or VERB, or the desk's MODE,
+    /// echo FEEDBACK and the two returns (the echo's WET and the reverb's WET).
+    DubStrip& strip = dubMix.strip[dubStripSel];
+    auto stepSend = [up_](uint8_t& v) {
+        if (up_ && (v < kDubMaxSend)) v++;
+        if (!up_ && (v > 0)) v--;
+    };
+    switch (function_) {
+        case ENC_DUB_LEVEL: {
+            const uint8_t level = layerLibrary[dubStripSel].level;
+            layerInst_setLevel(dubStripSel, up_ ? (level < kMaxLayerLevel ? level + 1 : level) : (level > kMinLayerLevel ? level - 1 : level));
+            break;
+        }
+        case ENC_DUB_BUS:
+            strip.bus = (strip.bus == DUB_BUS_DIR) ? DUB_BUS_FILT : DUB_BUS_DIR;
+            break;
+        case ENC_DUB_ECHO:
+            stepSend(strip.echo);
+            break;
+        case ENC_DUB_VERB:
+            stepSend(strip.verb);
+            break;
+        case ENC_DUB_MODE:
+            dubMix.on = !dubMix.on;
+            if (dubMix.on) {
+                // The echo and the reverb are what the sends feed: Effect 1 is the delay, and both are
+                // on (effects start switched off, and a send into a switched-off effect is silent).
+                if (effect[0].type != EF_DELAY) effect_setType(0, EF_DELAY);
+                if (!effect[0].active) effect_setActive(0, true);
+                if (!reverb.active) reverb_setActive(true);
+            }
+            break;
+        case ENC_DUB_FEEDBACK:
+            if (effect[0].type == EF_DELAY) {
+                const uint8_t v = effect[0].subEffect[EF_DELAY].cData;
+                effect_setCData(0, EF_DELAY, up_ ? (v < kMaxDelayFeedback ? v + 1 : v) : (v > kMinDelayFeedback ? v - 1 : v));
+            }
+            break;
+        case ENC_DUB_ECHORTN: {
+            const SubEffect& sub = effect[0].subEffect[effect[0].type];
+            effect_setFData(0, effect[0].type, up_ ? (sub.fData < sub.kMaxFData ? sub.fData + 1 : sub.fData) : (sub.fData > sub.kMinFData ? sub.fData - 1 : sub.fData));
+            break;
+        }
+        case ENC_DUB_VERBRTN:
+            reverb_setWet(up_ ? (reverb.wet < kMaxReverbWet ? reverb.wet + 1 : reverb.wet) : (reverb.wet > kMinReverbWet ? reverb.wet - 1 : reverb.wet));
+            break;
+        default:
+            break;
+    }
+    lcd_drawDub_Data();
+    viewDirty = true;
 }
 
 /* NOTE page (BeatNote.h) ----------------------------------------------------*/
@@ -23065,6 +23942,31 @@ void Controller::layerInst_setFill(uint8_t layerNum_, bool fill_) {
     // 2. UI REFRESH
     // Redraw fill icon on layer tab.
     lcd_drawLayerTab_Fill(layerNum_);
+}
+
+void Controller::layerInst_setPan(uint8_t layerNum_, uint8_t pan_) {
+    /// @brief Sets a layer's PAN (Pan.h, 0 to 40, 20 = centre); the audio follows with a ramp.
+    if (pan_ > kPanMax) return;
+    dubMix.pan[layerNum_] = pan_;
+    if ((menu == LAYER_INST_2_MENU) && (selectedLayerNum == layerNum_)) lcd_drawLayerInst_PanData(layerNum_);
+    if (menu == DUB_MENU) viewDirty = true;
+}
+
+bool Controller::layerPanActive(uint8_t layerNum_) const {
+    /// @brief True when the layer's PAN is heard: since the stereo engine every layer is panned (the
+    /// effects and the reverb carry the pan of the dry signal; their own sound stays in the middle).
+    (void)layerNum_;
+    return true;
+}
+
+void Controller::lcd_drawLayerInst_PanData(uint8_t layerNum_) {
+    /// @brief Draws the PAN field (tab 6 of instrument page 3): C, L12, R 3; gray while the layer
+    /// goes through the chain, where it is not heard yet.
+    char label[8], text[kMenuDataTextSize + 1];
+    panLabel(label, sizeof label, dubMix.pan[layerNum_]);
+    snprintf(text, sizeof text, "%10s", label);
+    lcd_setMenuDataState(layerPanActive(layerNum_) ? WHITE : GRAY_50);
+    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
 }
 
 void Controller::layerInst_setStyle(uint8_t layerNum_, bool style_) {
@@ -24626,22 +25528,60 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
     if (menu != INIT_MENU) {
         // 2. SIGNAL GENERATION & INPUT ACQUISITION
         // Acquire line-in, metronome, and layer source buffers.
+#ifdef DSP_PROFILE
+        uint32_t profT = DWT_CYCCNT;
+#define PROF_LAP(stage_)                \
+    do {                                \
+        const uint32_t n_ = DWT_CYCCNT; \
+        profSum[stage_] += n_ - profT;  \
+        profT = n_;                     \
+    } while (0)
+#else
+#define PROF_LAP(stage_) \
+    do {                 \
+    } while (0)
+#endif
         processAudioReceive(inputBuffer_);
+        PROF_LAP(0);
 
         // Generate internal metronome click signal.
         processAudioMetronome();
+        PROF_LAP(1);
 
         // Process active layer sample playback.
         processAudioLayer();
+        PROF_LAP(2);
+
+        // Layer meters: the peak of each layer's block (read and reset by the main loop).
+        for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+            float peak = layerPeak[i];
+            const float* buf = audioLayer[i];
+            for (uint16_t j = 0; j < I2S_BLOCK_SIZE; j++) {
+                const float a = fabsf(buf[j]);
+                if (a > peak) peak = a;
+            }
+            layerPeak[i] = peak;
+        }
+        PROF_LAP(2);
 
         // 3. ROUTED DSP
         // Every source goes to its destination node, then the modules run in order
         // (EQ, Filter 1, Filter 2, FX 1, FX 2, Reverb), each passing its output on as set in routePatch.
+#ifdef DSP_PROFILE
+        const uint32_t routeStart = DWT_CYCCNT;
+        const uint32_t modulesBefore = profSum[3] + profSum[4] + profSum[5] + profSum[6] + profSum[7] + profSum[8];
+#endif
         processAudioRouting();
+#ifdef DSP_PROFILE
+        // The routing stage is what the modules did not take.
+        profSum[9] += (DWT_CYCCNT - routeStart) - ((profSum[3] + profSum[4] + profSum[5] + profSum[6] + profSum[7] + profSum[8]) - modulesBefore);
+        profT = DWT_CYCCNT;
+#endif
 
         // 4. FINAL OUTPUT PROCESSING
         // Apply final mix and write to I2S output buffer.
         processAudioSend(outputBuffer_);
+        PROF_LAP(10);
     }
 
     // 5. LOAD MEASUREMENT
@@ -24685,6 +25625,7 @@ void Controller::lcd_drawMonitor() {
         monitorCpuShown = monitorHold(monitorCpuShown, peak);
         if (peak > monitorCpuMax) monitorCpuMax = peak;
     }
+    reinterpret_cast<WdStage*>(WATCHDOG_STAGE_ADDRESS)->spare = monitorCpuShown;  // for the record a watchdog restart leaves
     lcd_drawMonitorBar(kMonitorCpuTextY, kMonitorCpuBarY, monitorCpuShown, monitorCpuDrawn);
 
     // 3. MEM
@@ -24706,7 +25647,95 @@ void Controller::lcd_drawMonitor() {
     lcd.setAlignment(CENTER);
     lcd.setFont(FONT_05x07);
     lcd.drawText(text, strlen(text), 480, 524);
+
+    // The cost of each stage as a share of the block time (average over the interval).
+    uint32_t stage[11];
+    __disable_irq();
+    for (uint8_t k = 0; k < 11; k++) {
+        stage[k] = profSum[k];
+        profSum[k] = 0;
+    }
+    __enable_irq();
+    static const char* const kName[11] = {"IN", "MET", "LAY", "EQ", "F1", "F2", "X1", "X2", "REV", "RTE", "OUT"};
+    char stages[120];
+    size_t used = 0;
+    for (uint8_t k = 0; k < 11 && used + 12 < sizeof stages; k++) {
+        const unsigned long v = loadPermille(stage[k] / load.blocks, budget);
+        const int n = snprintf(stages + used, sizeof stages - used, "%s %lu.%lu  ", kName[k], v / 10, v % 10);
+        if (n > 0) used += static_cast<size_t>(n);
+    }
+    lcd.drawText(stages, strlen(stages), 480, 532);
 #endif
+}
+
+void Controller::lcd_drawLayerMeters() {
+    /// @brief The level bar in each lane, 25 times a second: the layer's peak since the last time,
+    /// rising at once and falling slowly, with a red square for a block that reached full scale.
+    if ((menu == INIT_MENU) || (menu == TEST_MENU)) return;
+    const uint32_t now = HAL_GetTick();
+    if ((now - meterTick) < 40) return;
+    meterTick = now;
+    float peak[kLayerLibrarySize];
+    __disable_irq();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        peak[i] = layerPeak[i];
+        layerPeak[i] = 0.0f;
+    }
+    __enable_irq();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        meterShown[i] = meterHold(meterShown[i], meterPixels(peak[i]));
+        if (meterClip(peak[i])) meterClipUntil[i] = now + 600;
+        const bool clip = (meterClipUntil[i] != 0) && (static_cast<int32_t>(meterClipUntil[i] - now) > 0);
+        if (!clip) meterClipUntil[i] = 0;
+        const uint32_t state = (static_cast<uint32_t>(meterShown[i]) << 1) | (clip ? 1u : 0u);
+        if (laneViewHidden() || (state == meterDrawn[i])) continue;
+        meterDrawn[i] = state;
+        const uint16_t x = kMeterX, y = static_cast<uint16_t>(kImageLayerY[i] + kMeterY);
+        if (meterShown[i] > 0) {
+            lcd.setForeColor(layerAudible(i) ? GREEN : GRAY_50);
+            lcd.fillRect(x, y, meterShown[i], kMeterHeight);
+        }
+        if (meterShown[i] < kMeterBarWidth) {
+            lcd.setForeColor(GRAY_25);
+            lcd.fillRect(x + meterShown[i], y, kMeterBarWidth - meterShown[i], kMeterHeight);
+        }
+        lcd.setForeColor(clip ? RED : GRAY_25);
+        lcd.fillRect(x + kMeterBarWidth, y, kMeterWidth - kMeterBarWidth, kMeterHeight);
+    }
+    if ((menu == DUB_MENU) && (laneViewShown == DUB_MENU)) lcd_drawDubMeters();
+}
+
+void Controller::lcd_drawStatusLine() {
+    /// @brief The status line in the strip under the top menu: what the held modifier key does, or
+    /// the MIDI clock and the autosave. Drawn only when its text changes.
+    if ((menu == INIT_MENU) || (menu == TEST_MENU)) return;
+    const uint32_t now = HAL_GetTick();
+    if ((now - statusTick) < 100) return;
+    statusTick = now;
+    uint8_t held = 0;
+    if (keyboard.muteKeyPress) held |= HELD_MUTE;
+    if (keyboard.fillKeyPress) held |= HELD_FILL;
+    if (keyboard.styleKeyPress) held |= HELD_SOLO;
+    if (keyboard.layerInstKeyPress) held |= HELD_INST;
+    if (keyboard.layerSongKeyPress) held |= HELD_SONGP;
+    if (keyboard.bankKeyPress) held |= HELD_SONG;
+    char text[kStatusMaxChars + 1];
+    const char* hint = statusHint(held);
+    if (hint != nullptr) {
+        snprintf(text, sizeof text, "%s", hint);
+    } else {
+        const uint32_t tempo = (io.midi.clockLocked && (io.midi.clockLock.intervalUs > 0.0f)) ? statusCentiBpm(io.midi.clockLock.intervalUs) : 0;
+        const int age = (kAutosaveMinutes[autosaveTiming.interval] == 0) ? -1 : (autosaveWritten ? statusAgeMinutes(now, autosaveLastAt) : -2);
+        statusIdleText(text, sizeof text, tempo, age);
+    }
+    if (strcmp(text, statusDrawn) == 0) return;
+    snprintf(statusDrawn, sizeof statusDrawn, "%s", text);
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(kStatusClearX, kStatusY - 1, kStatusClearWidth, kStatusClearHeight);
+    lcd.setFont(FONT_05x07);
+    lcd.setAlignment(RIGHT);
+    lcd.setForeColor(hint != nullptr ? YELLOW : CYAN);
+    lcd.drawText(text, static_cast<uint16_t>(strlen(text)), kStatusRightX, kStatusY);
 }
 
 void Controller::lcd_drawMonitorBar(uint16_t textY_, uint16_t barY_, uint32_t permille_, uint32_t& drawn_) {
@@ -25076,30 +26105,50 @@ void Controller::processAudioLayer() {
     }
 }
 
+// Stereo work memory (right channels, route gains): DTCM RAM, zeroed in main().
+StereoDsp stereoDsp __attribute__((section(".dtcm")));
+
 void Controller::processAudioRouting() {
     /// @brief Routes every source to its destination node and runs the modules in order,
     ///        each passing its output to the nodes set in routePatch (see Routing.h).
 
     // 1. PATCH SNAPSHOT
     // The UI edits routePatch from the main loop; take one consistent copy per block.
-    const RoutePatch patch = routePatch;
+    const RoutePatch patch = dubMix.on ? kDubRoutePatch : routePatch;
+    fxDryScale = dubDryScale(dubMix.on);  // DUB mode: the effects get only the sends, so their dry is off
 
     // 2. SOURCES AND THEIR DESTINATIONS
     // Line-in and metronome run continuously and crossfade when re-routed. Layers use the
     // destination latched when their current note was triggered, so they switch at the next hit.
+    // Every layer is panned (Pan.h) and reaches every node as a left and a right signal.
     RouteSource sources[2 + kLayerLibrarySize];
     sources[0] = {audioReceive, routeMaskFromEntry(mixer.liMixerInMode), &lineInFade};
     sources[1] = {audioMetronome, routeMaskFromEntry(metroOut), &metroFade};
+    // DUB mode: a layer goes to every node with its own send gain (following its knob), not to the
+    // one destination latched at the note.
+    float dubGains[kDubStrips][kRouteNodeCount];
+    float panGain[kDubStrips][2];
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
-        sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr};
+        panGains(dubMix.pan[i], panGain[i][0], panGain[i][1]);
+        if (dubMix.on) {
+            dubNodeGains(dubMix.strip[i], 0, dubGains[i]);
+            sources[2 + i] = {audioLayer[i], 0, nullptr, dubGains[i], stereoDsp.srcGain[i], panGain[i][0], panGain[i][1]};
+        } else {
+            sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr, nullptr, stereoDsp.srcGain[i], panGain[i][0], panGain[i][1]};
+        }
     }
 
     // 3. NODE BUFFERS
-    // Each module processes its own input buffer in place; the reverb also fills the right channel.
-    const RouteBuffers buffers = {{audioEq, audioFilter[0], audioFilter[1], audioEffect[0], audioEffect[1], audioReverb_L}, audioReverb_R, audioSend_L, audioSend_R};
+    // Each module processes its own input buffers in place (left here, right in the DTCM RAM).
+    const RouteBuffers buffers = {{audioEq, audioFilter[0], audioFilter[1], audioEffect[0], audioEffect[1], audioReverb_L},
+                                  {stereoDsp.nodeR[0], stereoDsp.nodeR[1], stereoDsp.nodeR[2], stereoDsp.nodeR[3], stereoDsp.nodeR[4], audioReverb_R},
+                                  audioSend_L, audioSend_R};
 
     // 4. RUN
     routeBlock<I2S_BLOCK_SIZE>(patch, routeState, buffers, sources, 2 + kLayerLibrarySize, [this](uint8_t module_) {
+#ifdef DSP_PROFILE
+        const uint32_t moduleStart = DWT_CYCCNT;
+#endif
         switch (module_) {
             case NODE_EQ:
                 processAudioEq();
@@ -25121,6 +26170,19 @@ void Controller::processAudioRouting() {
                 break;
             default:
                 break;
+        }
+#ifdef DSP_PROFILE
+        profSum[3 + module_] += DWT_CYCCNT - moduleStart;
+#endif
+        // DUB mode: a send into an effect that is switched off is a send into nothing, not a dry copy.
+        if (dubMix.on) {
+            if (((module_ == NODE_FX1) && !effect[0].active && !effect[0].genTransition.active) || ((module_ == NODE_FX2) && !effect[1].active && !effect[1].genTransition.active)) {
+                memset((module_ == NODE_FX1) ? audioEffect[0] : audioEffect[1], 0, I2S_BLOCK_SIZE * sizeof(float));
+                memset((module_ == NODE_FX1) ? stereoDsp.nodeR[3] : stereoDsp.nodeR[4], 0, I2S_BLOCK_SIZE * sizeof(float));
+            } else if ((module_ == NODE_REV) && !reverb.active && !reverb.genTransition.active) {
+                memset(audioReverb_L, 0, I2S_BLOCK_SIZE * sizeof(float));
+                memset(audioReverb_R, 0, I2S_BLOCK_SIZE * sizeof(float));
+            }
         }
     });
 }
@@ -25161,6 +26223,17 @@ void Controller::processAudioEq() {
         } else {
             audioEq[i] = processed;
         }
+
+        // Right channel: the same bands, its own history
+        const float inputR = stereoDsp.nodeR[0][i];
+        float processedR = inputR;
+        processedR = processEqBiquadRight(eq.filterLowShelf, eq.right[0], processedR, activeLS);
+        processedR = processEqBiquadRight(eq.filterHighShelf, eq.right[1], processedR, activeHS);
+        processedR = processEqBiquadRight(eq.filterPeak[0], eq.right[2], processedR, activeP0);
+        processedR = processEqBiquadRight(eq.filterPeak[1], eq.right[3], processedR, activeP1);
+        processedR = processEqBiquadRight(eq.filterPeak[2], eq.right[4], processedR, activeP2);
+        processedR = processEqBiquadRight(eq.filterPeak[3], eq.right[5], processedR, activeP3);
+        stereoDsp.nodeR[0][i] = eq.genTransition.active ? ((processedR * eq.genTransition.activeWet) + (inputR * eq.genTransition.activeDry)) : processedR;
     }
 }
 
@@ -25170,10 +26243,31 @@ void Controller::processAudioFilter(uint8_t filterNum_) {
     Filter& filter_ = filter[filterNum_];
     if ((filter_.active) || (filter_.genTransition.active)) {
         float* buffer = audioFilter[filterNum_];
+        float* bufferR = stereoDsp.nodeR[1 + filterNum_];
         for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            buffer[i] = processAudioFilterHelper(filterNum_, buffer[i]);
+            buffer[i] = processAudioFilterHelper(filterNum_, 0, buffer[i]);
+            bufferR[i] = processAudioFilterHelper(filterNum_, 1, bufferR[i]);
         }
     }
+}
+
+float Controller::effectDryGain(uint8_t effectNum_) const {
+    /// @brief The share of the dry signal the effect puts in its output (DRY of the page, 0 in DUB mode).
+    const Effect& e = effect[effectNum_];
+    const uint8_t type = e.genTransition.active ? e.genTransition.activeType : e.type;
+    float dry;
+    switch (type) {
+        case EF_DELAY: dry = e.delay.eDry * 0.01f; break;
+        case EF_CHORUS: dry = e.chorus.eDry * 0.01f; break;
+        case EF_FLANGER: dry = e.flanger.eDry * 0.01f; break;
+        case EF_PHASER: dry = e.phaser.eDry * 0.01f; break;
+        case EF_OVERDRIVE: dry = e.overdrive.eDry * 0.01f; break;
+        case EF_DISTORTION: dry = e.distortion.eDry * 0.01f; break;
+        default: dry = e.dryFloat; break;
+    }
+    if (e.genTransition.active) dry *= e.genTransition.activeWet;
+    if (e.genTransition.active) dry += e.genTransition.activeDry;
+    return dry * fxDryScale;
 }
 
 void Controller::processAudioEffect(uint8_t effectNum_) {
@@ -25181,9 +26275,18 @@ void Controller::processAudioEffect(uint8_t effectNum_) {
     ///        An effect that is off leaves the buffer untouched, so it passes the signal through.
     Effect& effect_ = effect[effectNum_];
     if ((effect_.active) || (effect_.genTransition.active)) {
+        // The effect runs once on the mid signal (L+R)/2. What differs between the channels (the pan of
+        // the dry signal) is carried around it with the effect's dry level, so a centred signal (L = R)
+        // gives exactly the same output as the mono engine.
         float* buffer = audioEffect[effectNum_];
+        float* bufferR = stereoDsp.nodeR[3 + effectNum_];
+        const float dryGain = effectDryGain(effectNum_);
         for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            buffer[i] = processAudioEffectHelper(effectNum_, buffer[i]);
+            const float l = buffer[i], r = bufferR[i];
+            const float mid = 0.5f * (l + r), side = (l - r) * 0.5f * dryGain;
+            const float out = processAudioEffectHelper(effectNum_, mid);
+            buffer[i] = out + side;
+            bufferR[i] = out - side;
         }
     }
 }
@@ -25204,8 +26307,13 @@ void Controller::processAudioReverb() {
         // Pre-calculate scaler for comb filter inputs to prevent clipping
         const float kCombInputScale = 0.015f;
 
+        // The reverb runs once on the mid signal (L+R)/2; the difference between the channels (the pan
+        // of the dry signal) goes around it with the reverb's dry level (centred: no difference).
+        const float revDry = (reverb.genTransition.active ? ((reverb.dryFloat * reverb.genTransition.activeWet) + reverb.genTransition.activeDry) : reverb.dryFloat) * fxDryScale;
         for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-            float inputSample = audioReverb_L[i];
+            const float inL = audioReverb_L[i], inR = audioReverb_R[i];
+            float inputSample = 0.5f * (inL + inR);
+            const float side = 0.5f * (inL - inR) * revDry;
 
             // Apply anti-denormal noise to prevent CPU spikes on low signals
             inputSample += REVERB_ANTI_DENORMAL;
@@ -25244,7 +26352,7 @@ void Controller::processAudioReverb() {
             float outL, outR;
 
             // Apply manual wet/dry mix
-            float mixedSignal = (processedSignal * reverb.wetFloat) + (inputSample * reverb.dryFloat);
+            float mixedSignal = (processedSignal * reverb.wetFloat) + (inputSample * reverb.dryFloat * fxDryScale);
 
             // Handle Parameter Transitions
             if (reverb.genTransition.active) {
@@ -25270,8 +26378,8 @@ void Controller::processAudioReverb() {
             if (++reverb.surround_recordInterval >= reverb.kSurroundBufferSize) reverb.surround_recordInterval = 0;
 
             // Final block output write
-            audioReverb_L[i] = outL;
-            audioReverb_R[i] = outR;
+            audioReverb_L[i] = outL + side;
+            audioReverb_R[i] = outR - side;
         }
     } else {
         // Bypass mode: Effect is inactive, copy mono accumulation to stereo output
@@ -25339,13 +26447,14 @@ void Controller::processAudioSend(uint32_t* outputBuffer) {
     }
 }
 
-float Controller::processAudioFilterHelper(uint8_t filterNum_, float audio_) {
+float Controller::processAudioFilterHelper(uint8_t filterNum_, uint8_t channel_, float audio_) {
     /// @brief Computes a biquad filter sample with input drive saturation, slope selection, and smooth parameter transitions.
 
     // 1. FILTER STATE RESOLUTION
     // Resolve filter reference and initialize local input/output values.
 
     Filter& filter_ = filter[filterNum_];
+    FilterState& st = filter_.state[channel_];
     float input = audio_;
     float output;
 
@@ -25364,25 +26473,25 @@ float Controller::processAudioFilterHelper(uint8_t filterNum_, float audio_) {
         // 3. BIQUAD CALCULATION
         // Compute filtered sample with anti-denormal protection.
 
-        float filteredSample = (filter_.b0 * input) + (filter_.b1 * filter_.x1) + (filter_.b2 * filter_.x2) - (filter_.a1 * filter_.y1) - (filter_.a2 * filter_.y2) + FILTER_ANTI_DENORMAL;
+        float filteredSample = (filter_.b0 * input) + (filter_.b1 * st.x1) + (filter_.b2 * st.x2) - (filter_.a1 * st.y1) - (filter_.a2 * st.y2) + FILTER_ANTI_DENORMAL;
 
         // 4. FILTER HISTORY UPDATE
         // Shift input/output delay-line history buffers.
 
-        filter_.x2 = filter_.x1;
-        filter_.x1 = input;
-        filter_.y2 = filter_.y1;
-        filter_.y1 = filteredSample;
+        st.x2 = st.x1;
+        st.x1 = input;
+        st.y2 = st.y1;
+        st.y1 = filteredSample;
 
         // 5. SECOND SECTION (24 dB slope)
         float finalFilterOut = filteredSample;
         if (filter_.stages == 2) {
             const BiquadCoef& c = filter_.stage2;
-            finalFilterOut = (c.b0 * filteredSample) + (c.b1 * filter_.u1) + (c.b2 * filter_.u2) - (c.a1 * filter_.v1) - (c.a2 * filter_.v2);
-            filter_.u2 = filter_.u1;
-            filter_.u1 = filteredSample;
-            filter_.v2 = filter_.v1;
-            filter_.v1 = finalFilterOut;
+            finalFilterOut = (c.b0 * filteredSample) + (c.b1 * st.u1) + (c.b2 * st.u2) - (c.a1 * st.v1) - (c.a2 * st.v2);
+            st.u2 = st.u1;
+            st.u1 = filteredSample;
+            st.v2 = st.v1;
+            st.v1 = finalFilterOut;
         }
 
         // Apply transition mix or standard wet/dry levels
@@ -25453,7 +26562,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // 3. OUTPUT MIXING
                 // mixData represents the "Wet" signal (the delay repeats).
                 // Using eDry and fWet for final balance.
-                float dryLevel = (float)delay_.eDry * kInv100;
+                float dryLevel = (float)delay_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)delay_.fWet * kInv100;
 
                 // Wet is the delayed sound, Dry is the pure input.
@@ -25536,7 +26645,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 3. OUTPUT MIXING
                 // Maps menu values (0-100) to linear dry/wet levels.
-                float dryLevel = (float)chorus_.eDry * kInv100;
+                float dryLevel = (float)chorus_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)chorus_.fWet * kInv100;
 
                 // Mix the modulated signal (Wet) with the pure original input (Dry).
@@ -25608,7 +26717,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 4. OUTPUT MIXING
                 // Correct dry/wet mapping: input is pure dry, dataFlanger is pure wet.
-                float dryLevel = (float)flanger_.eDry * kInv100;
+                float dryLevel = (float)flanger_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)flanger_.fWet * kInv100;
 
                 float mixData = (dataFlanger * wetLevel) + (input * dryLevel);
@@ -25710,7 +26819,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 7. OUTPUT MIXING & TRANSITION
                 // Mix Wet and Dry signals based on menu parameters (0-100 scale).
-                float dryLevel = (float)phaser_.eDry * kInv100;
+                float dryLevel = (float)phaser_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)phaser_.fWet * kInv100;
                 float mixData = (stage2Output * wetLevel) + (input * dryLevel);
 
@@ -25785,7 +26894,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 5. OUTPUT MIX & TRANSITION
                 // Apply attenuation, mix wet/dry path, and handle transitions.
-                mixData = (input * attenuation * effect_.wetFloat) + (input * effect_.dryFloat);
+                mixData = (input * attenuation * effect_.wetFloat) + (input * effect_.dryFloat * fxDryScale);
                 if (effect_.genTransition.active) {
                     output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
                 } else {
@@ -25861,7 +26970,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 5. OUTPUT MIX & TRANSITION
                 // Apply gain change, mix wet/dry path, and handle transitions.
-                mixData = (input * attenuation * effect_.wetFloat) + (input * effect_.dryFloat);
+                mixData = (input * attenuation * effect_.wetFloat) + (input * effect_.dryFloat * fxDryScale);
                 if (effect_.genTransition.active) {
                     output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
                 } else {
@@ -25919,7 +27028,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 ov_.lp_y1 = y0;
 
                 // 5. OUTPUT MIXING & TRANSITION
-                float dryLevel = (float)ov_.eDry * kInv100;
+                float dryLevel = (float)ov_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)ov_.fWet * kInv100;
 
                 // Combine processed (Wet) and original (Dry) signals
@@ -25983,7 +27092,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 4. OUTPUT MIXING
                 // Maps menu values (0-100) to linear dry/wet levels.
-                float dryLevel = (float)dist_.eDry * kInv100;
+                float dryLevel = (float)dist_.eDry * kInv100 * fxDryScale;
                 float wetLevel = (float)dist_.fWet * kInv100;
 
                 // Combine the processed (Wet) signal with the original (Dry) input.
@@ -26068,7 +27177,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 4. FINAL OUTPUT MIXING
                 // Mix the processed (Wet) signal with the original (Dry) input.
-                float mixData = (filteredSample * effect_.wetFloat) + (input * effect_.dryFloat);
+                float mixData = (filteredSample * effect_.wetFloat) + (input * effect_.dryFloat * fxDryScale);
 
                 // Apply global transition blend if a preset/effect change is active.
                 if (effect_.genTransition.active) {

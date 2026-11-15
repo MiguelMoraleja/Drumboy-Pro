@@ -30,7 +30,14 @@ extern __attribute__((section(".RAM_D3"))) uint8_t i2c4_txData[2];
 
 /* Sync And Midi Buffers ----------------------------------------- */
 
-extern "C" uint8_t midiRxData;
+// The byte the MIDI-in DMA writes: alone in its own 32-byte cache line (the data cache build
+// invalidates that line before the byte is read).
+struct MidiRxBox {
+    uint8_t value;
+    uint8_t pad[31];
+} __attribute__((aligned(32)));
+extern "C" MidiRxBox midiRxBox;
+#define midiRxData midiRxBox.value
 
 /* Peripheral Handles -------------------------------------------- */
 
@@ -101,6 +108,24 @@ class Controller {
     RouteFade lineInFade;                                               // line-in route fade (audio interrupt only)
     RouteFade metroFade;                                                // metronome route fade (audio interrupt only)
     // CPU and MEM monitor (LoadMeter.h): the audio engine's load, measured in every build.
+    // Layer meters and the status line (StatusLine.h).
+    volatile float layerPeak[kLayerLibrarySize] = {0};                  // peak since the last readout (audio interrupt)
+    uint16_t meterShown[kLayerLibrarySize] = {0};                       // level on the bar, in pixels
+    uint32_t meterClipUntil[kLayerLibrarySize] = {0};                   // the clip square stays until then
+    uint32_t meterDrawn[kLayerLibrarySize];                             // what the screen shows (pixels, clip), 0xFFFFFFFF = nothing
+    uint32_t meterTick = 0;
+    char statusDrawn[kStatusMaxChars + 1] = "";                         // the text on the status line
+    uint32_t statusTick = 0;
+    uint32_t autosaveLastAt = 0;                                        // when the last autosave was written
+    bool autosaveWritten = false;
+    void lcd_drawLayerMeters();
+    void lcd_drawStatusLine();
+#ifdef DSP_PROFILE
+    // Per-stage audio cost (make PROFILE=1): cycles summed since the last readout. Stages: 0 line-in,
+    // 1 metronome, 2 layers, 3 EQ, 4 Filter 1, 5 Filter 2, 6 Effect 1, 7 Effect 2, 8 reverb,
+    // 9 routing (sources scattered into the nodes), 10 output stage.
+    volatile uint32_t profSum[11] = {0};
+#endif
     LoadMeter dspLoad;                                                  // filled by processAudioBlock
     bool monitorFull = true;                                            // draw the labels (first time)
     uint32_t monitorTick = 0;
@@ -346,6 +371,42 @@ class Controller {
     uint32_t eqViewState() const;
     void lcd_drawCurveAxes(float topDb_, float bottomDb_, bool labels_);
     void lcd_drawEqViewData();
+    uint32_t sampleViewKey = 0;             // which sample the peak columns belong to (0 = none)
+    uint32_t sampleViewStateDrawn = 0;      // the settings the view was drawn from
+    uint8_t sampleViewStart = 0, sampleViewEnd = 100;  // the handles as drawn
+    uint32_t sampleViewState() const;
+    void lcd_drawSampleViewData();
+    void lcd_drawSampleColumns(uint16_t from_, uint16_t to_, uint8_t start_, uint8_t end_);
+    void lcd_drawSampleHandles(uint8_t start_, uint8_t end_, bool clear_);
+
+    // DUB mode (DubMix.h)
+    DubMix dubMix;                                          // the strips; on = DUB mode (a song setting)
+    float fxDryScale = 1.0f;                                // 0 in DUB mode: effects and reverb run without their DRY
+    uint8_t dubStripSel = 0;                                // the strip the DUB page edits (a pad press selects it)
+    uint32_t dubStripDrawn[kDubStrips] = {0};               // the desk: what each strip shows (a fingerprint), 0 = nothing
+    uint32_t dubReturnDrawn[2] = {0, 0};
+    uint16_t dubMeterDrawn[kDubStrips];                     // the desk's meter heights as drawn (0xFFFF = nothing)
+    uint32_t dubViewStateDrawn = 0;
+    uint32_t dubViewState() const;
+    void lcd_drawDubViewData();
+    void lcd_drawDubMeters();
+    void lcd_drawDeskKnob(uint16_t cx_, uint16_t cy_, uint8_t percent_, RGB16Color color_);
+    void lcd_drawDeskColumn(uint8_t column_);
+    void lcd_drawDeskSegments(uint8_t column_, uint8_t lit_, bool audible_);
+    uint32_t noteViewKey = 0;               // the step edit screen: which layer, bank and layout it was drawn for
+    int16_t noteViewDrawnLast = -1;         // lastActiveBeatNum when it was drawn
+    uint32_t noteViewStateDrawn = 0;
+    uint32_t noteViewState() const;
+    void lcd_drawNoteViewData();
+    void lcd_drawNoteViewBeat(uint8_t beatNum_, bool selected_);
+    void layerInst_setPan(uint8_t layerNum_, uint8_t pan_);
+    bool layerPanActive(uint8_t layerNum_) const;
+    void lcd_drawLayerInst_PanData(uint8_t layerNum_);
+    void dub_select();
+    void dub_step(EncoderFunc function_, bool up_);
+    void lcd_drawDubMenu();
+    void lcd_drawDub_Data();
+    uint32_t file_dubCrc(uint32_t crc_);
     void layerInst_setSolo(uint8_t layerNum_, bool solo_);
     void layerInst_clearSolo();
     void lcd_drawLayerInst_StyleData(uint8_t layerNum_);
@@ -1248,7 +1309,8 @@ class Controller {
     void processAudioReverb();
     void processAudioSend(uint32_t* outputBuffer);
 
-    float processAudioFilterHelper(uint8_t filterNum_, float audio_);
+    float processAudioFilterHelper(uint8_t filterNum_, uint8_t channel_, float audio_);
+    float effectDryGain(uint8_t effectNum_) const;
     float processAudioEffectHelper(uint8_t effectNum_, float audio_);
     float processAudioLpfHelper(uint8_t lpfNum_, float audio_);
 

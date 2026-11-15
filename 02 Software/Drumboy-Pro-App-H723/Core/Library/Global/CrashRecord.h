@@ -15,7 +15,7 @@
 // A stall that is not a fault (a wait that never ends) is caught by the watchdog (kind 7): the
 // main loop feeds the hardware watchdog every pass and writes what it is doing (a stage number,
 // WdStage below) into DTCM RAM; if the loop stops for WATCHDOG_SECONDS the device restarts, and at
-// start-up the record says "CRASH 7 AT 0000sssm": sss = the stage the loop was in, m = the page.
+// start-up the record says "CRASH 7 S06 P18 L98": S = the stage the loop was in, P = the page (hex), L = the audio load in percent (LOV from 99 %).
 #ifndef __CRASHRECORD_H
 #define __CRASHRECORD_H
 
@@ -73,6 +73,18 @@ static inline void crashClear(CrashRecord* r_) {
 
 // The alert on screen: "CRASH 1 AT 0801A2B4" (19 characters).
 static inline void crashAlertText(const CrashRecord* r_, char* out_, size_t size_) {
+    if (r_->kind == CRASH_WATCHDOG) {
+        // "CRASH 7 S06 P18 L98": S = the stage, P = the page (hex), L = the audio load in percent
+        // (LOV when it was at or over 99 %: the audio engine starved the main loop). Shown on the
+        // screen so the card need not be read.
+        const unsigned long stage = (r_->pc >> 8) & 0xFF, page = r_->pc & 0xFF, load = r_->sp / 10;
+        if (load >= 99) {
+            snprintf(out_, size_, "CRASH 7 S%02lu P%02lX LOV", stage, page);
+        } else {
+            snprintf(out_, size_, "CRASH 7 S%02lu P%02lX L%02lu", stage, page, load);
+        }
+        return;
+    }
     snprintf(out_, size_, "CRASH %lu AT %08lX", (unsigned long)r_->kind, (unsigned long)r_->pc);
 }
 
@@ -100,13 +112,20 @@ enum WdStageCode {
     WD_STAGE_MIDI = 8,
     WD_STAGE_TEST = 9,
     WD_STAGE_FILE = 10,      // loading or saving a file
+    WD_STAGE_PRESET = 11,    // saving the system or encoder preset to the SD card
+    WD_STAGE_CLIPBOARD = 12, // copy, paste and reset of LFOs, instruments and songs
+    WD_STAGE_NAV = 13,       // long key navigation
+    WD_STAGE_MIDITX = 14,    // MIDI out
+    WD_STAGE_MIDIRX = 15,    // MIDI notes in
+    WD_STAGE_TRANSPORT = 16, // MIDI transport and clock in
+    WD_STAGE_SYNC = 17,      // sync in
 };
 
 typedef struct {
     uint32_t stage;  // WdStageCode
     uint32_t menu;   // page being shown
     uint32_t loops;  // main loop passes since power-on
-    uint32_t spare;
+    uint32_t spare;  // the audio load (the CPU bar) in tenths of a percent, as last shown
 } WdStage;
 
 // The record a watchdog restart leaves: pc = (stage << 8) | menu so the screen shows it.
@@ -116,7 +135,7 @@ static inline void crashFromWatchdog(CrashRecord* r_, const WdStage* w_, uint32_
     r_->pc = ((w_->stage & 0xFFFFu) << 8) | (w_->menu & 0xFFu);
     r_->lr = w_->loops;
     r_->psr = 0;
-    r_->sp = 0;
+    r_->sp = w_->spare;  // the audio load when it stopped: near 1000 means the audio starved the loop
     r_->cfsr = 0;
     r_->hfsr = 0;
     r_->bfar = 0;

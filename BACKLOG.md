@@ -86,7 +86,7 @@ Sizes are rough: S = a day, M = a few days, L = a week or more, including hardwa
 4. ✅ Autosave, part A: checksum-based change detection, AUTOSAVE OFF/2/5/10/20 min, two alternating reserved files written via rename, `RESTORE AUTOSAVE?` at power-on, autosave before LOAD over unsaved work. [32](#32-autosave). (M)
 5. ✅ Hardware test with Loopy Pro → Scarlett: 30 minutes at a fractional tempo in time, no runaway with a MIDI loop set up on purpose, overrun counter at 0 with clock and dense notes, power pulled mid-session restores the autosave. Then package, app (MIDI and autosave explained in their tabs), release.
 
-*V1.14 "Notes"* (built, waiting for the hardware test). Also in V1.14, asked by the owner: undo/redo ([28](#28-undo-for-bank-edits-lxr)), SONG + pads never turn the chain off, and the left S key (STYLE) became SOLO, with STYLE moved to a field on instrument page 3. After a freeze on the owner's device (cause not found yet): the clock lock no longer speeds up the sequencer timer while stopped, autosave shows SAVE / SDERR and its duration, and a crash now restarts the firmware and leaves a record (`CrashRecord.h`, `System/Crash.log`). The watchdog for stalls that are not faults is built too (6 s, `CRASH 7`, see the status of the crash record). First UX items, also in V1.14: per-note marks and dimmed lanes on the main screen ([38](#38-per-note-settings-and-layer-state-visible-in-the-lanes)) and the Euclid rings view over the lane area ([45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)). The Song timeline and Routing views followed, and the CPU and MEM monitor. The Filter and EQ curves followed too, and the filters got a 24 dB slope and a real 6 dB one ([50](#50-filter-slopes-24-db-and-a-real-6-db)). Next view: the sample view or the dub mixer.
+*V1.14 "Notes"* (done, tested on hardware, released as v1.14). Also in V1.14, asked by the owner: undo/redo ([28](#28-undo-for-bank-edits-lxr)), SONG + pads never turn the chain off, and the left S key (STYLE) became SOLO, with STYLE moved to a field on instrument page 3. After a freeze on the owner's device (cause not found yet): the clock lock no longer speeds up the sequencer timer while stopped, autosave shows SAVE / SDERR and its duration, and a crash now restarts the firmware and leaves a record (`CrashRecord.h`, `System/Crash.log`). The watchdog for stalls that are not faults is built too (6 s, `CRASH 7`, see the status of the crash record). First UX items, also in V1.14: per-note marks and dimmed lanes on the main screen ([38](#38-per-note-settings-and-layer-state-visible-in-the-lanes)) and the Euclid rings view over the lane area ([45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)). The Song timeline and Routing views followed, and the CPU and MEM monitor. The Filter and EQ curves followed too, and the filters got a 24 dB slope and a real 6 dB one ([50](#50-filter-slopes-24-db-and-a-real-6-db)). Next view: the sample view or the dub mixer.
 6. ✅ Per-beat data block after EOF (`BTX`, 4 bytes per beat with room for PITCH), carried through move, rebuild, copy/paste, the bank clipboard, Euclid and record; old songs load at FLAT/100%. [33](#33-per-note-editing-velocity-probability-and-more). (M)
 7. ✅ NOTE page with VEL and PROB (plus undo/redo of beat and bank edits, [28](#28-undo-for-bank-edits-lxr)); MIDI recording stores the incoming velocity; ADD + turn changes the whole bank. (S–M)
 8. ✅ COND (`A:B`, `!A:B`, `1ST`, `PRE`, `FILL` and negations) with the FILL performance key. (M)
@@ -216,7 +216,7 @@ Kit and song files have a signature but no format version. Several items above c
 - **Releases:** the Release workflow only runs for tags starting with lowercase `v` (`v1.10`). The `V1.04` release has no build attached for that reason.
 - ~~**Reproducible release builds**~~ (done in V1.10): the v1.09 release file differed from the local build by 4 bytes of `.data`. Same toolchain packages; the cause was link order, because the Makefile listed sources with `find`, whose order depends on the file system. The lists are now sorted. Rebuilding the v1.09 commit locally gives exactly the file tested on hardware.
 - **Vendor warnings:** two GCC warnings remain in FatFs (`ff.c`), both known false positives. Our code is held at zero (`make WERROR=1` in CI).
-- **Bootloader:** it ignores update files whose name is 32+ characters (FatFs `_MAX_LFN`). `package_firmware.py` enforces ≤ 31.
+- **Bootloader:** it ignores update files with a long name (FatFs `_MAX_LFN` 32 says 32+, but a 31-character name was ignored on the owner's device on 2026-11-14), so `package_firmware.py` now enforces ≤ 28. It also takes only the first file it finds: copy one package at a time. (The "cache runs fine" report of that day may have been the old firmware: the 31-character `_dcache` file was ignored, so the cache build is tested again as `_dc`.)
 - **Upstream:** offer the fixes and the routing work to Randomwaves/Drumboy-Pro as a pull request from the fork.
 
 ---
@@ -563,7 +563,7 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 
 ---
 
-## UX and signal path (items 37–50)
+## UX and signal path (items 37–53)
 
 From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-path-analysis.md), which has the facts about the screen (960×540, 16-bit colour, drawn directly, no frame buffer), the layout, the cost estimates and the reasoning. The codes in brackets (U1, E2, S1…) are that document's. Mockups of the proposed screens, drawn with the device's own fonts and frame, are in the app's **Screen ideas** tab. Nothing here was measured on the device: item 37 comes first.
 
@@ -590,7 +590,7 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 **Done when.** On the main screen you can tell loud from soft beats, see which beats are uncertain or conditional, and see at a glance which layers sound.
 
-**Status: built in V1.14, waiting for the hardware test** (`LaneView.h`, `test_laneview`). Height = velocity (FLAT 9 px, GHOST 6 px, velocity 1 = 2 px), hollow = chance below 100%, a yellow dot above = condition; a layer that is muted or silenced by a solo is drawn in dark gray (number, name, beats). A beat without note settings looks as before. Open: drawing a beat at its nudged position (a nudge is at most 2 px on a 32-step loop).
+**Status: built in V1.14, tested on hardware, released in V1.14** (`LaneView.h`, `test_laneview`). Height = velocity (FLAT 9 px, GHOST 6 px, velocity 1 = 2 px), hollow = chance below 100%, a yellow dot above = condition; a layer that is muted or silenced by a solo is drawn in dark gray (number, name, beats). A beat without note settings looks as before. Open: drawing a beat at its nudged position (a nudge is at most 2 px on a 32-step loop).
 
 ### 39. Graphic overviews: NOTE, EUCLID, SONG, ROUTING
 
@@ -617,7 +617,7 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 **Done when.** Turning CUTOFF or an EQ gain moves the curve as you turn, also while playing, with no audio glitches.
 
-**Status: the filter curve is built in V1.14 as a full-area view** (see [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)), waiting for the hardware test. The EQ curve is built too. Open: cursors on the effect and reverb pages.
+**Status: the filter curve is built in V1.14 as a full-area view** (see [45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)), tested on hardware, released in V1.14. The EQ curve is built too. Open: cursors on the effect and reverb pages.
 
 ### 41. Live feedback: layer meters and status indicators
 
@@ -628,6 +628,8 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 - **Indicators** in the strip between the top menu and the lanes: MIDI in / out / clock (locked or free, tempo with decimals, error count), unsaved-changes dot and time since the last autosave, undo depth.
 
 **Done when.** Each layer's level is visible while it plays, and the strip shows MIDI, save and undo state without opening a page.
+
+**Status: layer meters and part of the strip built in V1.15, waiting for the hardware test** (`StatusLine.h`, `test_statusline`): a peak tap per layer in the audio interrupt (one compare per sample), a 22 x 4 px bar in each lane, 25 times a second; the strip shows the MIDI clock tempo and the autosave age. Open: the compressor and limiter gain reduction, the unsaved-changes dot and the undo depth.
 
 **Status: a first indicator is built in V1.14** (asked by the owner with a picture of it): CPU and MEM bars in the top-right box of every page (`lcd_drawMonitor`). MEM is the loaded samples as a share of the ten sample slots. The rest is open.
 
@@ -641,6 +643,8 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 - **Value popup** while a knob turns: name, value, unit and a bar for the range.
 
 **Done when.** Holding any modifier shows its combinations for the current page, and every action confirms itself in words.
+
+**Status: key hints built in V1.15, waiting for the hardware test.** While M, F, the left S, I, the right S or SONG is held, the status line (right aligned, 5x7 font, in the strip) says what the other keys do with it. The hints are the same on every page; a table per page is open. Not built: the line replacing the 5-character spot (UNDO, COPY, FULL stay there), page dots, the value popup.
 
 ### 43. Fonts with lowercase and symbols; colour roles
 
@@ -678,9 +682,9 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 **Order.** Euclid rings and Song timeline first (the data exists, no new engine work), then Routing and the Filter curve, then MIX with 46, then the editors.
 
-**Status: Euclid rings built in V1.14, waiting for the hardware test** (`LaneView.h`, `lcd_drawEuclidView`). While the EUCLID page is open the lane area shows the ten layers as rings (layer 1 outside, one turn = one loop from the top, the selected layer cyan with its grid as ticks, larger dots for louder beats) and every layer's beats as a row with its count. The playhead is a marker that orbits outside the rings and one above the rows, not a clock hand: a hand would have to be erased and redrawn across all the dots. Everything that draws into a lane is held back while the view is shown (`laneViewHidden()`) and asks for a refresh of the view instead, at most every 80 ms; leaving the page redraws the lane frames, measure marks and lanes (`lcd_restoreLanes`). The mechanism is now general (`lcd_drawLaneView`, `lcd_updateLaneView`): a page names its view, the view redraws only what changed. To check on the device: how long the view takes to open and to refresh while a knob turns, and whether pads still feel immediate meanwhile.
+**Status: Euclid rings built in V1.14, tested on hardware, released in V1.14** (`LaneView.h`, `lcd_drawEuclidView`). While the EUCLID page is open the lane area shows the ten layers as rings (layer 1 outside, one turn = one loop from the top, the selected layer cyan with its grid as ticks, larger dots for louder beats) and every layer's beats as a row with its count. The playhead is a marker that orbits outside the rings and one above the rows, not a clock hand: a hand would have to be erased and redrawn across all the dots. Everything that draws into a lane is held back while the view is shown (`laneViewHidden()`) and asks for a refresh of the view instead, at most every 80 ms; leaving the page redraws the lane frames, measure marks and lanes (`lcd_restoreLanes`). The mechanism is now general (`lcd_drawLaneView`, `lcd_updateLaneView`): a page names its view, the view redraws only what changed. To check on the device: how long the view takes to open and to refresh while a knob turns, and whether pads still feel immediate meanwhile.
 
-**Also built in V1.14, waiting for the hardware test:**
+**Also built in V1.14, tested on hardware, released in V1.14:**
 - **Song timeline** (`lcd_drawSongViewData`): the chain as boxes as wide as their repeats (the selected step cyan), a bar in the playing loop that fills in yellow, a line back to the start for LOOP or a stop mark, a status line (step, loop, what comes next, also a detour), and the five banks as thumbnails. A thumbnail is redrawn only when its beats or its colour change (a fingerprint per bank), so a bank change at a loop end redraws two thumbnails, not five.
 - **Routing** (`lcd_drawRoutingViewData`): the six modules and the master as boxes joined as patched (next module: a line between the boxes; further: over them, each module at its own height), unfed modules dimmed, and one row per source (ten layers, metronome, line-in) with a mark under the module it enters. With sends ([49](#49-dub-mixer-page-dub-mode)) the marks become level bars.
 
@@ -688,7 +692,11 @@ From the analysis in [`docs/ux-and-signal-path-analysis.md`](docs/ux-and-signal-
 
 - **EQ curve** (`lcd_drawEqViewData`): on the EQ page, the six bands in series as one curve (+24 to -36 dB) with a handle per band at its frequency and gain and its name above the plot (LO, 1-4, HI); gray while the EQ is off.
 
-Open from this item: Sample, MIX (as the dub mixer, [49](#49-dub-mixer-page-dub-mode)), Note editor, Performance view.
+- **Sample** (V1.15, waiting for the hardware test; `SampleView.h`, `test_sampleview`, `lcd_drawSampleViewData`): on instrument page 2 (START, END) the sample at full width: 840 columns, each the peak of its stretch (read from the sample's SDRAM sector, at most 64 reads per column, computed again only when the sample changes), cyan between START and END and gray outside, yellow handles with their values, title and length of the played part. Moving START or END redraws only the columns the handle crossed. Not built: a play cursor, zoom, slices; instrument pages 1 and 3 do not use the view.
+
+- **Step edit screen** (V1.15, waiting for the hardware test; `NoteView.h`, `test_noteview`, `lcd_drawNoteViewData`): the NOTE page's view. The layer's beats across the full width (852 px; 1/32 steps of a two-bar loop still get 13 px each): blocks (a fill as long as it lasts, a muted beat an outline, a ghost half height), a velocity lane and a chance lane under them (a hollow bar below 100 %), a yellow dot for a condition, a ruler with a tick per beat and the bar numbers, the selected beat in magenta and its details at the top right. A knob turn or another selected beat draws only the changed columns (a fingerprint per beat, kept in the SDRAM scratch); ADD + turn, a new layer or bank draws everything. Selecting and editing still use the NOTE fields (beat, velocity, chance, condition, nudge). Not built: placing and moving beats from this screen, pad entry and a play cursor.
+
+Open from this item: MIX (as the dub mixer, [49](#49-dub-mixer-page-dub-mode)), Note editor, Performance view.
 
 ### 46. Sends: a level per layer into the shared effects (SENDS mode)
 
@@ -732,7 +740,9 @@ Asked by the owner on 2026-11-13: the mixer page in the fashion of a dub desk, w
 - **Gestures:** drop (MUTE + pad; tails ring on), throw (EFFECT 1 + pad or REVERB + pad opens that send fully while held, also on a muted strip), feedback past 100 % with a soft clipper, the dub filter in steps.
 - **Stereo** (owner: yes, if the processing room allows): everything is mono until the reverb today. The design adds pan on strips that go straight to the master (DIR) and a ping-pong echo (the repeats alternate left and right, from a second read point in the same delay buffer, ECHO WIDTH 0–100 %). Estimated under 1 % of the audio block together; to confirm with [37](#37-measure-first-drawing-speed-loop-time-audio-load).
 - **Phases:** D1 mode, sends, returns, page, file block; D2 throws, feedback past 100 %, dotted echo times, echo into reverb, ping-pong echo; D3 channel filter and drive, pan on DIR strips ([36](#36-per-layer-panning) A), page 2; D4 meters ([41](#41-live-feedback-layer-meters-and-status-indicators)) and the line-in strip; D5 a stereo FILT bus and a filter over the whole mix ([36](#36-per-layer-panning), [48](#48-master-eq-stage-stereo-returns-a-third-send-effect)).
-- **Open decisions** (section 6 of the design): whether filters are also send destinations with a level; the throw keys; whether a throw pad plays the sound; the big knob on the bus or over the whole mix; page order; the role of Effect 2.
+- **Decided by the owner (2026-11-13, "yours on all of them"):** a filter per strip plus a BUS switch (FILT or DIR); throws with EFFECT 1 + pad and REVERB + pad; a throw pad does not play the sound; the big knob acts on the FILT bus only; Effect 2 is a third send; page order MIXER, DUB, ROUTING. Details in section 6 of the design. Phase D1 starts after the owner has tested V1.15.
+
+**Status: D1 first step built in V1.15, waiting for the hardware test** (`DubMix.h`, `test_dubmix`; page `DUB_MENU`). MIXER, then DUB, then ROUTING. DUB mode per song with the fixed patch (`kDubRoutePatch`: EQ to Filter 1 to the master, Filter 2 to Effect 1 to the master, Effect 2 and the reverb to the master). Per layer: BUS (FILT or DIR), ECHO and VERB send levels (FX send exists in the engine and file, no field yet), applied as gains that follow the knob with a ramp per block (`routeScatterGains`). In DUB mode the effects and the reverb run without their DRY (`fxDryScale`) and a switched-off effect returns silence; turning MODE to DUB therefore makes Effect 1 a delay if it is another type and switches Effect 1 and the reverb on (found in the first hardware test: effects start off, so the echo was silent). FEEDBACK shows NO DELAY while Effect 1 is not a delay. Fields: top LEVEL, BUS, ECHO, VERB (the strip a pad press selects); bottom MODE, FEEDBACK (the delay's, up to 80), ECHO RTN (Effect 1's WET), VERB RTN (the reverb's WET). File: a `DUB` block after the notes. Line-in and the metronome keep their entry points. The desk view is built too, and redesigned on 2026-11-14 at the owner's request in the style of an old mixing console: twelve columns of 76 px fill the whole lane area (before, ten strips of 60 px took about two thirds), a fader of 128 px instead of 208 to make room for the sends (two knobs with names and values per column), scribble plates, a FILT | DIR switch, a pan bar, a scale and an LED ladder per fader, and foot plates with a mute lamp. Geometry in `DubView.h`, drawing in `lcd_drawDeskColumn`. Earlier version: ten strips (number, name, ECHO and VERB bars, a LEVEL fader with a live meter, the bus) and the ECHO and VERB returns in the lane area, each strip drawn again only when its fingerprint changes. Not built yet: the FL row, the line-in strip, the dub filter dial and master meters of the mockup, throws, feedback past 100 %, ping-pong and the dotted times, the dub filter steps, the channel filter, pan, page 2, the line-in strip, meters on the strips.
 
 **Done when (D1 + D2).** With a pattern playing, the snare is thrown into the echo for one hit, FEEDBACK is ridden until the echo builds and pulled back, and the dub filter thins the drums while a kick on DIR keeps its weight. A V1.14 song loads as CHAIN and sounds identical.
 
@@ -742,7 +752,7 @@ Asked by the owner on 2026-11-13: "a 24 would be nice, actually the 6 is more EQ
 
 **Before:** SLOPE 12 was one biquad; SLOPE 06 was that same biquad mixed half and half with the unfiltered signal, so it never took off more than 6 dB.
 
-**Status: built in V1.14, waiting for the hardware test** (`filterDesign` in `FilterCurve.h`, `test_filtercurve`). The design moved out of `Global.h` into a hardware-free function that the audio code and the curve share.
+**Status: built in V1.14, tested on hardware, released in V1.14** (`filterDesign` in `FilterCurve.h`, `test_filtercurve`). The design moved out of `Global.h` into a hardware-free function that the audio code and the curve share.
 - **24:** two sections in series. Low- and high-pass: the first at Q 0.54, the second at 1.85 x the RESONANCE's Q, which is a Butterworth response at the lowest RESONANCE and one peak of about Q above it. Band-pass and band-stop: the same section twice. Costs one more biquad per sample for that filter.
 - **06:** low- and high-pass are a first-order filter (6 dB per octave, RESONANCE has no effect); band-pass and band-stop use one section at half the Q, a wide band. **A song that used 06 sounds different.**
 - **12:** unchanged.
@@ -752,5 +762,46 @@ To judge on the device: whether 24 dB with high RESONANCE is too loud at the pea
 
 ### 51. Watchdog for stalls
 
-**Status: built in V1.14, waiting for the hardware test.** The independent watchdog (IWDG1) starts when start-up ends (start-up, with its animation and SD scan, is not watched) and is fed once per main-loop pass; 6 seconds without a feed restarts the device. The loop writes a stage number and the page into DTCM RAM as it goes (`WdStage` in `CrashRecord.h`), which survives the restart, so at start-up the record reads `CRASH 7 AT 0000sssm` (stage, page) and goes to `System/Crash.log` like a fault. Stages: 1 keys, 2 screen, 3 full-area view, 4 SD, 5 rhythm, 6 mixer, 7 autosave, 9 test page. It cannot name the exact function, only the part of the loop. Unverified: that the bootloader leaves the reset flag (RCC_RSR) alone; if a freeze restarts the device but shows no CRASH 7, that is why. Open: feeding it inside very long operations if a legitimate one ever exceeds 6 s (autosave, loading a song).
+**Status: built in V1.14, tested on hardware, released in V1.14.** The independent watchdog (IWDG1) starts when start-up ends (start-up, with its animation and SD scan, is not watched) and is fed once per main-loop pass; 6 seconds without a feed restarts the device. The loop writes a stage number and the page into DTCM RAM as it goes (`WdStage` in `CrashRecord.h`), which survives the restart, so at start-up the record reads `CRASH 7 S06 P18 L98` since V1.15 (stage, page in hex, audio load; before: `CRASH 7 AT 0000sssm`) and goes to `System/Crash.log` like a fault. Stages: 1 keys, 2 screen, 3 full-area view, 4 SD, 5 rhythm, 6 mixer, 7 autosave, 9 test page, and (V1.15) 11 presets, 12 clipboards, 13 navigation, 14 MIDI out, 15 MIDI notes in, 16 MIDI transport, 17 sync. The log line carries `lr` = loop passes since power-on and `sp` = the audio load (the CPU bar, tenths of a percent) as last shown, to tell a blocked loop from an audio engine that starved it. **First real catch (owner, 2026-11-13): `CRASH 7 AT 00000618` while testing the dub mixer: stage 6, page DUB (0x18).** Stage 6 covered the whole tail of the loop then, so the cause is not found yet; the finer stages and the load figure are there to find it. It cannot name the exact function, only the part of the loop. Unverified: that the bootloader leaves the reset flag (RCC_RSR) alone; if a freeze restarts the device but shows no CRASH 7, that is why. Open: feeding it inside very long operations if a legitimate one ever exceeds 6 s (autosave, loading a song).
+
+### 52. Bug: fills do not appear in the new views
+
+Reported by the owner (2026-11-13) while testing V1.15: fills are not drawn on the step edit screen ([45](#45-full-area-views-mix-note-editor-sample-editor-patchbay-performance)), and the owner says they do not appear in the other views either ("neither"). Not investigated yet. To check first, on a layer with a fill: the step edit screen (NOTE page), the Euclid rings and rows, the Song thumbnails, and the main lanes, to see which of them show it. The views take a fill from `getFillType() != 0` with its end from `getEndInterval()`; if fills are stored another way (for example as a beat with a fill pattern and a time, as the lane code reads them), that is the first place to look. Left in the backlog by the owner's choice.
+
+### 53. Stereo engine: pan per channel through the whole path
+
+**Asked by the owner (2026-11-13):** panning by channel is what is missed most, and sound quality comes first: never sacrifice it, and specialized firmwares are fine if the engine needs them (rule recorded in `CLAUDE.md`). This is [36](#36-per-layer-panning) B, made the main plan: A alone (pan only for a layer that goes straight to the master) would do nothing in the default chain, where every layer goes through the EQ.
+
+**Law.** Constant power with 0 dB at the centre (left = √2 cos a, right = √2 sin a): a centred layer is exactly as it is today, so old songs sound the same, and a hard-panned one is as loud as a centred one. Smoothed per block, no zipper noise.
+
+**Phases, each a test build:**
+1. **Pan on the direct path and the DUB DIR strips:** a PAN field per layer (0-40, centre 20; the song block, shared with 3, 24, 35), applied to what goes straight to the master. Cheap, and the first thing to hear and judge the law. Layers that go through the chain stay centred and the field says so.
+2. **Stereo buses:** EQ, Filter 1 and Filter 2 process left and right (the same coefficients, a second set of states): twice the cost of those three, no change in the sound of a centred signal. Pan then survives the chain up to the effects.
+3. **Stereo effects:** the reverb already makes stereo from a mono input and stays so. Delay, chorus, flanger, phaser, overdrive, distortion, bitcrusher and the dynamics get a right channel. The cost is the memory, not the processor: a second 384 KB delay line per delay (about 650 KB of SDRAM is free, so two stereo delays need the undo history or a sample slot, a choice for the owner) and a second chorus buffer. Until then an effect's wet is mono and its dry stays stereo, which keeps the pan of the dry signal but not of the repeats.
+4. **The whole mix in stereo:** the DUB mixer's FILT bus, dub filter and returns in stereo ([49](#49-dub-mixer-page-dub-mode) D5, [48](#48-master-eq-stage-stereo-returns-a-third-send-effect)).
+
+**Status of the headroom work: the data cache is on by default since V1.15, and it works.** Owner's measurement with the PROFILE build on the same song (CHAIN, ten layers, reverb page open), per stage as a share of the audio block:
+
+| Stage | no cache | cache |
+|---|---|---|
+| Layers | 9.8 | 3.5 |
+| Reverb | 8.9 | 2.7 |
+| Routing | 8.2 | 2.8 |
+| EQ | 4.4 | 1.1 |
+| Effect 1 / Effect 2 | 3.0 / 3.0 | 0.9 / 1.0 |
+| Filter 1 / Filter 2 | 2.5 / 2.6 | 0.8 / 0.8 |
+| Output | 2.4 | 1.1 |
+| **Total (average, peak)** | **45.0, 46.4** | **14.8, 16.6** |
+
+No underruns or overruns in either. About a third of the cost everywhere: the audio code was waiting for memory (the SDRAM, uncached at about 100 MHz, and the state in the main RAM), not computing. The sound is the same: the same code and data, only cached. (The first "saves little" report of that day came from the old firmware: the 31-character `_dcache` file was ignored by the bootloader.)
+
+How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate; only the CPU uses it); RAM_D3 (the I2C DMA buffers) is not cacheable; the DMA buffers in the AXI RAM are cleaned and invalidated by address (the I2S halves around each audio block, the MIDI-in byte alone in its 32-byte line, the MIDI-out buffer); the SD driver's cache maintenance and aligned scratch buffer are on. `make DCACHE=0` builds without it. The Makefile does not see a change of DCACHE or PROFILE: use a clean build directory after changing them. To keep watching while testing: sample loading, song save and load, MIDI in and out, keys and LEDs (a missed DMA buffer shows up as odd data, not a crash).
+
+**Headroom first, now mostly done.** Stereo EQ and filters, and then effects, add to a load that the owner's heavy dub test (several effects, 24 dB filters, reverb) took to a watchdog restart before the cache (`CRASH 7`, [51](#51-watchdog-for-stalls)). So the order is: read the load figure of the next restart, [37](#37-measure-first-drawing-speed-loop-time-audio-load) measurements, then room: the data cache (off today; the audio, SD and MIDI DMA buffers need cache-safe placement), faster inner loops that sound the same, and a specialized build for heavy use if all that is not enough. No thinning of the sound.
+
+**Status: step 1 built in V1.15, waiting for the hardware test** (`Pan.h`, `test_pan`; the router's master pan in `Routing.h`). PAN on instrument page 3 (tab 6, next to STYLE; ADD + turn moves all layers), 0 to 40 with 20 the centre, constant power with 0 dB at the centre (the centre is exactly 1 on both sides, tested), gains ramped per block. Stored in the DUB block (version 2, 55 bytes; version 1 still reads, everything centred), in CHAIN and in DUB.
+
+**Step 2 built in V1.15, waiting for the hardware test:** the router, the EQ, Filter 1 and Filter 2 run left and right (same coefficients, their own history: `EqState`, `FilterState`), so PAN is heard for every layer in CHAIN and DUB and the field is never gray. The right channels and the route/pan gain memory sit in the DTCM RAM (`StereoDsp`, section `.dtcm`, 1,216 bytes, zeroed in `main`, linker assert below the crash record), which also freed the RAM_D1 slack. Effects and reverb run once on the mid signal (L+R)/2 and carry the dry difference around it with their own DRY level (`effectDryGain`), so a centred signal is bit-identical to the mono engine (host test: centred stereo chain equals V1.04, worst difference 1.4e-6) and a panned layer keeps its pan in the dry part; the effects' own wet stays centred until step 3. Sound rule: the stereo path does not thin any filter, effect or bit depth; it costs a second run of EQ and filters (to measure with the PROFILE build). Also fixed: distortion and bitcrusher DRY ignored the DUB dry-off.
+
+**Done when (1).** A hat panned left and a shaker panned right, both on DIR, are heard on their sides; a centred layer and a song from V1.14 sound identical. **(2)** The same through the EQ and filters.
 

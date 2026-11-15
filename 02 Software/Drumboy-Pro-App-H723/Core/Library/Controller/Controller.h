@@ -557,6 +557,7 @@ class Controller {
     bool enqueueMidiTx(const uint8_t* data, uint8_t len);
     void serviceMidiTx();
     void receiveMidiCommand();
+    void midi_thru(uint8_t byte_);
     void midi_receiveClock(uint32_t nowCycles_);
     void midi_clockEngage(bool fromMidi_);
     void midi_clockRelease();

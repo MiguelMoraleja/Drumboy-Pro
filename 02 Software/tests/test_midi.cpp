@@ -275,6 +275,17 @@ static void testClockStartAndGap() {
 }
 
 int main() {
+    // MIDI thru of clock and transport: both sides must have the matching flag.
+    CHECK(midiThruForwards(0xF8, true, true, true, true), "clock passes with SYNC on both sides");
+    CHECK(!midiThruForwards(0xF8, true, true, false, false), "no clock out, no clock thru");
+    CHECK(!midiThruForwards(0xF8, false, false, true, true), "no clock in, nothing to pass");
+    for (uint8_t b : {0xFA, 0xFB, 0xFC, 0xFF}) {
+        CHECK(midiThruForwards(b, true, true, true, true), "transport byte %02X passes", b);
+        CHECK(!midiThruForwards(b, true, false, true, true), "transport byte %02X: transport in off", b);
+        CHECK(!midiThruForwards(b, true, true, true, false), "transport byte %02X: transport out off", b);
+    }
+    CHECK(!midiThruForwards(0xFE, true, true, true, true) && !midiThruForwards(0x90, true, true, true, true), "only clock and transport are passed");
+
     testParser();
     testQueue();
     testVelocity();

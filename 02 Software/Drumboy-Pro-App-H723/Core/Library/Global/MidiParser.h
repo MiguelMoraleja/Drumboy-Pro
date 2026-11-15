@@ -175,4 +175,23 @@ inline uint8_t midiMultiplierToVelocity(float multiplier_) {
     return midiLevelToVelocity(static_cast<uint8_t>(level));
 }
 
+// MIDI thru of the real-time bytes: with SYNC on both MIDI IN and MIDI OUT, the Drumboy passes the
+// incoming clock and transport on to MIDI OUT. While it follows an incoming clock it sends none of its
+// own (see midi_txTransportOn and interruptMidiTxClock), so the receiver sees exactly one clock.
+// Clock (0xF8) needs the clock flags on both sides, start, continue, stop and reset (0xFA, 0xFB,
+// 0xFC, 0xFF) the transport flags.
+inline bool midiThruForwards(uint8_t byte_, bool rxClock_, bool rxTransport_, bool txClock_, bool txTransport_) {
+    switch (byte_) {
+        case 0xF8:
+            return rxClock_ && txClock_;
+        case 0xFA:
+        case 0xFB:
+        case 0xFC:
+        case 0xFF:
+            return rxTransport_ && txTransport_;
+        default:
+            return false;
+    }
+}
+
 #endif

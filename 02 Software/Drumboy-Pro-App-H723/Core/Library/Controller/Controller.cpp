@@ -1233,6 +1233,7 @@ void Controller::receiveMidiCommand() {
                     io.midi.rxTransportRunning = true;
                     io.midi.rxClockPhaseValid = true;
                     midi_clockEngage(true);
+                    midi_thru(event.data1);
                     if (event.data1 == 0xFA) {
                         io.midi.rxStartFlag = true;
                         io.midi.rxPlayFlag = true;
@@ -1249,6 +1250,7 @@ void Controller::receiveMidiCommand() {
                     io.midi.rxClockPhaseValid = false;
                     // The clock stops with the transport: the Drumboy runs free to its stop point.
                     midi_clockRelease();
+                    midi_thru(event.data1);
                     if (event.data1 == 0xFC)
                         io.midi.rxStopFlag = true;
                     else
@@ -1263,6 +1265,14 @@ void Controller::receiveMidiCommand() {
         default:
             break;
     }
+}
+
+void Controller::midi_thru(uint8_t byte_) {
+    /// @brief Passes an incoming real-time byte on to MIDI OUT (MIDI IN and OUT both on SYNC; see
+    /// midiThruForwards). Called from the UART receive interrupt; the ring buffer is interrupt-safe.
+    if (!io.midi.txActive) return;
+    if (!midiThruForwards(byte_, io.midi.rxClock, io.midi.rxTransport, io.midi.txClock, io.midi.txTransport)) return;
+    enqueueMidiTx(&byte_, 1);
 }
 
 void Controller::midi_receiveClock(uint32_t nowCycles_) {
@@ -1286,6 +1296,7 @@ void Controller::midi_receiveClock(uint32_t nowCycles_) {
     const ClockTickResult result = clockLockTick(lock, nowCycles_);
     if (result == CLOCK_REJECTED) return;
     io.midi.rxClockTickPhase = nextPhase;
+    midi_thru(0xF8);     // MIDI OUT passes the clock on (a tick the lock rejected is not passed)
     syncOutClockTick();  // the sync output jack follows the incoming clock
 
     // Only while playing. Locked but stopped (a START the Drumboy didn't follow because it wasn't

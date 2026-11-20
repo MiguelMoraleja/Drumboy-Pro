@@ -938,3 +938,22 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 **Not changed:** the settings are per layer, not per bank (the same set applies to whichever song bank is active when the layer is edited). Per bank would be 10 sets per bank; say if you want it.
 
 **Done when.** Layer 1 with ACC 2 and layer 2 with ACC 4 keep their own values when moving between the pages; saving and loading the song keeps them; an older song loads with the defaults.
+
+### 64. Check of the DUB reverb and the line-in (2026-11-20)
+
+**Asked by the owner:** does the reverb of the dub machine work; does the audio input work (not tested on the device yet). Checked by reading the code and with host tests (`test_dubmix`: the reverb send and every line-in entry point through the DUB patch); not heard on the device.
+
+**DUB reverb: the path is right, one leak fixed.**
+- A strip's VERB send feeds the REV node at its own gain (a throw opens it fully); the node's stereo output goes to the master (`kDubRoutePatch`); VERB RTN is the reverb's WET; MODE to DUB switches the reverb on; the reverb's DRY is off in DUB (`fxDryScale`) and a switched-off reverb returns silence. A DIR strip is heard dry plus its send through the reverb (host-tested: dry 0.5, send 40 % gives 0.5 x (1 + 0.4 x the reverb's gain) at the master).
+- **Fixed:** the dry part of a *transition* (switching the reverb or an effect on or off, changing its type, its damping, its surround) ignored `fxDryScale`, so for the length of the fade the raw send leaked to the master in DUB mode. All ten places multiply it now (the CHAIN sound is unchanged: the factor is 1).
+- Known and left: VERB RTN turns are ignored while a previous mix change is still ramping (`reverb_setWet` refuses during `mixTransition`), so a fast turn can feel sticky; the reverb's DRY is lowered when WET goes above 25 (the DRY+WET limit of 125), so a reverb used in DUB comes back with less DRY in CHAIN; ECHO > VERB (the echo return into the reverb) is not built (design D2).
+
+**Line-in: the chain looks right, with three things to know before the test.**
+- It is **muted at start-up** (`kInitialMixerLiMute`): on the MIXER page, LI-VOL tab, hold ADD to unmute (it powers the codec's ADC, about half a second), hold CLEAR to mute. The codec setup was checked against the SGTL5000's registers: ADC and I2S output powered, line-in selected, stereo, unity gain (the source comment says the earlier measurement at +4.5 dB hit full scale).
+- The signal is the **mono sum** of left and right, high-passed at 5 Hz, then goes through the line-in's own **low-pass (one pole, about 7 kHz)** and a **downward expander** (closes below -62 dBFS to -18 dB, opens at -56 dBFS, 50 ms hold) before the LI-VOL level (`processAudioReceive`).
+- **In DUB mode line-in has no strip** (design D4): its MIXER IN entry point picks a single path: EQ (through the dub filter, dry), FILTER 2 or EFFECT 1 (into the echo, with no dry), REVERB (only the reverb), SEND (straight to the master). So line-in cannot be heard dry and with an echo send at the same time yet (host-tested for every entry point).
+- **Sound-quality note (the owner's rule):** the 7 kHz low-pass and the expander are there for the codec's noise, but they darken the input and eat quiet passages (reverb tails and fades of the source). They are fixed in the source (`LINE_IN_LPF_ENABLE`, `LINE_IN_GATE_ENABLE`). If the test shows they hurt, make them settings (or off by default) and judge the noise by ear.
+
+**To test on the device.**
+1. Reverb: MIXER to DUB, MODE DUB; raise VERB on a strip and VERB RTN; hits should ring into a tail; MUTE the strip: the tail keeps ringing (a drop); a reverb throw (REVERB + pad) opens the send; with VERB 0 nothing reaches the reverb; turn the reverb off on its own page: silence, with no burst of the dry send.
+2. Line-in: unmute on the LI-VOL tab, play a source into the input: the meter/level should move, check the tone and the quiet passages; try MIXER IN = EQ, FILTER 2 (echo) and REVERB while in DUB.

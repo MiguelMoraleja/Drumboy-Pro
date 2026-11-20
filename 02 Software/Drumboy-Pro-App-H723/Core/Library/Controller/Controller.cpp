@@ -26854,7 +26854,7 @@ void Controller::processAudioReverb() {
 
             // Handle Parameter Transitions
             if (reverb.genTransition.active) {
-                finalReverb = (mixedSignal * reverb.genTransition.activeWet) + (inputSample * reverb.genTransition.activeDry);
+                finalReverb = (mixedSignal * reverb.genTransition.activeWet) + (inputSample * reverb.genTransition.activeDry * fxDryScale);  // the dry of a transition is off in DUB too
                 reverb.surroundBuffer[reverb.surround_recordInterval] = finalReverb;
 
                 if ((reverb.genTransition.mode == REV_MODE_ACTIVE) || (reverb.genTransition.mode == REV_MODE_SURROUND)) {
@@ -27076,7 +27076,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // 4. TRANSITION & STORE
                 if (effect_.genTransition.active) {
-                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
+                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry * fxDryScale);
                     effectDelta = (width > 0.0f) ? ((rightSample - delayedSample) * wetLevel * effect_.genTransition.activeWet) : 0.0f;
                 } else {
                     output = mixData;
@@ -27160,7 +27160,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 float mixData = (dataChorusAccum * wetLevel) + (input * dryLevel);
 
                 if (effect_.genTransition.active) {
-                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
+                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry * fxDryScale);
                 } else {
                     output = mixData;
                 }
@@ -27232,7 +27232,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // Apply global crossfade transition logic
                 if (effect_.genTransition.active) {
-                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
+                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry * fxDryScale);
                 } else {
                     output = mixData;
                 }
@@ -27333,7 +27333,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // Apply global transition logic
                 if (effect_.genTransition.active) {
-                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
+                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry * fxDryScale);
                 } else {
                     output = mixData;
                 }
@@ -27404,7 +27404,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // Apply attenuation, mix wet/dry path, and handle transitions.
                 mixData = (input * attenuation * effect_.wetFloat) + (input * effect_.dryFloat * fxDryScale);
                 if (effect_.genTransition.active) {
-                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
+                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry * fxDryScale);
                 } else {
                     output = mixData;
                 }
@@ -27480,7 +27480,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // Apply gain change, mix wet/dry path, and handle transitions.
                 mixData = (input * attenuation * effect_.wetFloat) + (input * effect_.dryFloat * fxDryScale);
                 if (effect_.genTransition.active) {
-                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
+                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry * fxDryScale);
                 } else {
                     output = mixData;
                 }
@@ -27532,7 +27532,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // Apply global crossfade transition logic
                 if (effect_.genTransition.active) {
-                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
+                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry * fxDryScale);
                 } else {
                     output = mixData;
                 }
@@ -27597,7 +27597,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // 5. GLOBAL TRANSITION
                 // Handle smooth crossfades between different effect presets or bypass states.
                 if (effect_.genTransition.active) {
-                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
+                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry * fxDryScale);
                 } else {
                     output = mixData;
                 }
@@ -27660,7 +27660,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // Apply global transition blend if a preset/effect change is active.
                 if (effect_.genTransition.active) {
-                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry);
+                    output = (mixData * effect_.genTransition.activeWet) + (input * effect_.genTransition.activeDry * fxDryScale);
                 } else {
                     output = mixData;
                 }

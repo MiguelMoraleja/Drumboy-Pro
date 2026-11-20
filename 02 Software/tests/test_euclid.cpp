@@ -225,7 +225,92 @@ static void testAccents() {
     CHECK(flat && out.lastActiveBeatNum == 9, "without accents every hit is FLAT");
 }
 
+static void testSettings() {
+    // Defaults, as the page started before.
+    EuclidSettings d;
+    CHECK(d.steps == 16 && d.hits == 4 && d.rotate == 0 && d.grid == 2 && d.merge == 0 && d.accents == 0, "defaults");
+
+    // Clamping brings every field into range.
+    EuclidSettings w;
+    w.steps = 0;
+    w.hits = 9;
+    w.rotate = 9;
+    w.accents = 9;
+    w.grid = 200;
+    w.merge = 7;
+    EuclidSettings c = euclidSettingsClamp(w, 7, 2);
+    CHECK(c.steps == 1 && c.hits == 1 && c.rotate == 0 && c.accents == 1 && c.grid == 2 && c.merge == 1, "clamped: %u %u %u %u %u %u", c.steps, c.hits, c.rotate, c.accents, c.grid, c.merge);
+    w = EuclidSettings();
+    w.steps = 99;
+    w.hits = 99;
+    c = euclidSettingsClamp(w, 7, 2);
+    CHECK(c.steps == kEuclidMaxSteps && c.hits == kEuclidMaxSteps, "steps and hits capped at %u", kEuclidMaxSteps);
+    w = EuclidSettings();
+    w.steps = 8;
+    w.hits = 5;
+    w.rotate = 7;
+    w.accents = 3;
+    w.grid = 6;
+    w.merge = 1;
+    c = euclidSettingsClamp(w, 7, 2);
+    CHECK(c.steps == 8 && c.hits == 5 && c.rotate == 7 && c.accents == 3 && c.grid == 6 && c.merge == 1, "a valid set is unchanged");
+
+    // A different accent count per layer survives a round trip through the block.
+    EuclidSettings sets[kEuclidFileLayers];
+    for (uint8_t i = 0; i < kEuclidFileLayers; i++) {
+        sets[i].steps = static_cast<uint8_t>(8 + i);
+        sets[i].hits = static_cast<uint8_t>(3 + i % 4);
+        sets[i].rotate = static_cast<uint8_t>(i % 3);
+        sets[i].accents = static_cast<uint8_t>(i % 3);
+        sets[i].grid = static_cast<uint8_t>(i % 7);
+        sets[i].merge = static_cast<uint8_t>(i & 1);
+    }
+    uint8_t block[kEuclidFileSize];
+    euclidWriteBlock(sets, block);
+    CHECK(kEuclidFileSize == 64 && block[0] == 'E' && block[1] == 'U' && block[2] == 'C' && block[3] == 1, "block header and size");
+    EuclidSettings back[kEuclidFileLayers];
+    CHECK(euclidReadBlock(back, block, kEuclidFileSize, 7, 2), "block reads");
+    bool same = true;
+    for (uint8_t i = 0; i < kEuclidFileLayers; i++) same = same && back[i].steps == sets[i].steps && back[i].hits == sets[i].hits && back[i].rotate == sets[i].rotate && back[i].accents == sets[i].accents && back[i].grid == sets[i].grid && back[i].merge == sets[i].merge;
+    CHECK(same, "every layer keeps its own set");
+    CHECK(back[0].accents != back[1].accents && back[1].accents != back[2].accents, "the accents differ by layer");
+
+    // Bad or missing blocks leave the sets alone.
+    EuclidSettings keep[kEuclidFileLayers];
+    keep[3].steps = 12;
+    uint8_t bad[kEuclidFileSize];
+    memcpy(bad, block, sizeof bad);
+    bad[0] = 'X';
+    CHECK(!euclidReadBlock(keep, bad, kEuclidFileSize, 7, 2) && keep[3].steps == 12, "wrong marker");
+    memcpy(bad, block, sizeof bad);
+    bad[3] = 2;
+    CHECK(!euclidReadBlock(keep, bad, kEuclidFileSize, 7, 2) && keep[3].steps == 12, "unknown version");
+    CHECK(!euclidReadBlock(keep, block, kEuclidFileSize - 1, 7, 2) && keep[3].steps == 12, "short block");
+    CHECK(!euclidReadBlock(keep, block, 0, 7, 2), "no block");
+    // Out-of-range bytes in a block are clamped, not trusted.
+    memcpy(bad, block, sizeof bad);
+    bad[4] = 200;
+    bad[5] = 200;
+    bad[6] = 200;
+    bad[7] = 200;
+    bad[8] = 200;
+    bad[9] = 200;
+    CHECK(euclidReadBlock(keep, bad, kEuclidFileSize, 7, 2) && keep[0].steps == kEuclidMaxSteps && keep[0].hits == kEuclidMaxSteps && keep[0].rotate == 0 && keep[0].grid == 2 && keep[0].accents == kEuclidMaxSteps && keep[0].merge == 1, "values from a file are clamped");
+
+    // The same pattern with different accents gives different beats on two layers.
+    Bank base, a, b;
+    beatListClear(base);
+    const uint32_t p = euclidPattern(8, 5, 0);
+    euclidApply(a, base, false, p, 8, 200, 1600, euclidAccents(8, 5, 0, 2));
+    euclidApply(b, base, false, p, 8, 200, 1600, euclidAccents(8, 5, 0, 4));
+    int ghostA = 0, ghostB = 0;
+    for (int16_t i = 0; i <= a.lastActiveBeatNum; i++) ghostA += (a.beatLibrary[i].getFillPattern() == 1);
+    for (int16_t i = 0; i <= b.lastActiveBeatNum; i++) ghostB += (b.beatLibrary[i].getFillPattern() == 1);
+    CHECK(ghostA == 3 && ghostB == 1, "2 accents leave 3 ghosts, 4 accents leave 1: %d %d", ghostA, ghostB);
+}
+
 int main() {
+    testSettings();
     testKnown();
     testProperties();
     testApply();

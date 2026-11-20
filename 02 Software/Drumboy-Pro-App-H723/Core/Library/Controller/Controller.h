@@ -294,6 +294,12 @@ class Controller {
     bool layerModKeyUsed;    // a layer pad was pressed while L, I or S was held (so its release is not a tap)
 
     // EUCLID page (settings kept while powered; the layer's beats from before are in euclidSnapshot)
+    // The page works on this copy; every layer keeps its own set in euclidSet (loaded when the page opens, stored
+    // on every turn, saved in the song file).
+    EuclidSettings euclidSet[kLayerLibrarySize];
+    void euclid_loadSettings();
+    void euclid_storeSettings();
+    void euclid_resetSettings();
     uint8_t euclidSteps = 16;
     uint8_t euclidHits = 4;
     uint8_t euclidRotate = 0;

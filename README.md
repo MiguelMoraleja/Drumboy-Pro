@@ -36,6 +36,7 @@ The MCU sits at the center of six subsystems: an NT35510 display driven over a 1
 - **Sequencer** with 5 song banks per layer, 64 beats per bank, and algorithmic complex-fill generation (timing alignment × level curve templates)
 - **Layer pages** (V1.10): hold I or S (right side, L I S row) and press a layer pad to open that layer's instrument or song page; tap I or S on its own to step through the current layer's pages (instrument 1 → 2 → 3, song ↔ EUCLID) or to switch between its instrument and song pages
 - **Beat editing** on the Layer Song page (V1.10): MOVE a beat past its neighbours while keeping its fill (position shown as bar.beat.16th), SHIFT ALL to rotate a whole layer, and a short ADD press to insert a beat
+- **EUCLID settings per layer** (V1.17): each layer keeps its own STEPS, HITS, ROTATE, GRID, MODE and ACCENTS (saved in the song file), so accents can differ by channel.
 - **EUCLID page** (V1.10, the song page's second page): Euclidean rhythms with steps, hits, rotation and grid, applied live, REPLACE or MERGE with the layer's beats, CLEAR to undo; ACCENTS (V1.11) keeps some hits loud and makes the rest ghost notes
 - **Pitch in semitones** (V1.11): −24 to +24, a fast turn jumps by octaves; kits from older firmware keep their exact pitch until you change it
 - **Song mode** (V1.12): chain the 5 banks, each for 1–16 loops, up to 16 steps, looping or stopping at the end; tap the SONG key on its own for the SONG page; there, a long COPY / PASTE copies a whole bank (all 10 layers) to another

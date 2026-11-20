@@ -926,3 +926,15 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 - **Performance:** the pitched layer path reads each sample three times through a volatile lambda; the distortion's `2.0f / M_PI` is a double.
 
 **If it crashes again:** the alert text and `System/Crash.log` tell the stage and page; `SdErrorCount` (driver) and `audioFaultCount` (I2S) are new counters for a later diagnostics line.
+
+### 63. EUCLID settings per layer (owner's report, 2026-11-20)
+
+**Reported by the owner:** there is one set of EUCLID settings (and so one ACCENTS count) for all layers; changing it on one layer changes it for all, so there is no accent logic per channel.
+
+**Cause.** The page's STEPS, HITS, ROTATE, GRID, MODE and ACCENTS were single variables of the machine. Applying them rebuilt only the selected layer's beats, but opening the page on another layer showed the settings of the layer edited last, and the next turn of any field applied that whole set (including its accents) to the new layer.
+
+**Built in V1.17, waiting for the hardware test** (`EuclidSettings` in `Euclid.h`, `test_euclid`): each layer has its own set. Opening the page on a layer loads that layer's set; every turn stores the set back for that layer. The sets are saved in the song file as an "EUC" block (64 bytes: marker, version 1, six bytes per layer) after the DUB block; older firmware never reads that far, and a song without the block (older songs, a new song) starts every layer at the defaults (16 steps, 4 hits, no rotation, the default grid, REPLACE, accents off). Values from a file are clamped. The autosave notices a change of the settings. Note: what is stored is the layer's settings, not the beats: the beats are in the song as before; the settings are what the page shows and edits for that layer.
+
+**Not changed:** the settings are per layer, not per bank (the same set applies to whichever song bank is active when the layer is edited). Per bank would be 10 sets per bank; say if you want it.
+
+**Done when.** Layer 1 with ACC 2 and layer 2 with ACC 4 keep their own values when moving between the pages; saving and loading the song keeps them; an older song loads with the defaults.

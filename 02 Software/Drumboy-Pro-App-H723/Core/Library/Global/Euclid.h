@@ -124,4 +124,71 @@ inline uint16_t euclidApply(Bank& out_, const Bank& base_, bool merge_, uint32_t
     return dropped;
 }
 
+// --- The settings of the EUCLID page, one set per layer ---------------------------------------
+// Until V1.17 there was a single set for the whole machine: opening the page on another layer showed
+// (and the next turn applied) the settings of the layer edited last, so STEPS, HITS, ROTATE, GRID, MODE
+// and ACCENTS could not differ between layers. Each layer keeps its own now, and the sets are saved in
+// the song file as an "EUC" block after the DUB block (older firmware never reads that far).
+struct EuclidSettings {
+    uint8_t steps = 16;
+    uint8_t hits = 4;
+    uint8_t rotate = 0;
+    uint8_t grid = 2;       // index into the quantize table (kInitialQuantize)
+    uint8_t merge = 0;      // 0 = REPLACE, 1 = MERGE
+    uint8_t accents = 0;    // 0 = off; else that many accents, the other hits GHOST
+};
+
+// Brings a set into range: 1 to 32 steps, hits up to the steps, rotate inside the steps, accents up to the
+// hits, a grid that exists, MODE 0 or 1. Used on every set that comes from a file.
+inline EuclidSettings euclidSettingsClamp(EuclidSettings s_, uint8_t gridCount_, uint8_t defaultGrid_) {
+    if (s_.steps < 1) s_.steps = 1;
+    if (s_.steps > kEuclidMaxSteps) s_.steps = kEuclidMaxSteps;
+    if (s_.hits > s_.steps) s_.hits = s_.steps;
+    if (s_.rotate >= s_.steps) s_.rotate = 0;
+    if (s_.accents > s_.hits) s_.accents = s_.hits;
+    if (s_.grid >= gridCount_) s_.grid = (defaultGrid_ < gridCount_) ? defaultGrid_ : 0;
+    s_.merge = s_.merge ? 1 : 0;
+    return s_;
+}
+
+// The file block: "EUC", a version byte (1), then 6 bytes per layer.
+const uint8_t kEuclidFileLayers = 10;
+const uint16_t kEuclidFileSize = 3 + 1 + kEuclidFileLayers * 6;  // 64
+
+inline void euclidWriteBlock(const EuclidSettings* sets_, uint8_t* out_) {
+    out_[0] = 'E';
+    out_[1] = 'U';
+    out_[2] = 'C';
+    out_[3] = 1;
+    for (uint8_t i = 0; i < kEuclidFileLayers; i++) {
+        uint8_t* p = out_ + 4 + 6 * i;
+        p[0] = sets_[i].steps;
+        p[1] = sets_[i].hits;
+        p[2] = sets_[i].rotate;
+        p[3] = sets_[i].grid;
+        p[4] = sets_[i].merge;
+        p[5] = sets_[i].accents;
+    }
+}
+
+// Reads the block into sets_ (clamped). False, with sets_ untouched, when the block is missing, short or of
+// another version.
+inline bool euclidReadBlock(EuclidSettings* sets_, const uint8_t* in_, uint16_t size_, uint8_t gridCount_, uint8_t defaultGrid_) {
+    if ((size_ < kEuclidFileSize) || (in_[0] != 'E') || (in_[1] != 'U') || (in_[2] != 'C') || (in_[3] != 1)) return false;
+    EuclidSettings read[kEuclidFileLayers];
+    for (uint8_t i = 0; i < kEuclidFileLayers; i++) {
+        const uint8_t* p = in_ + 4 + 6 * i;
+        EuclidSettings s;
+        s.steps = p[0];
+        s.hits = p[1];
+        s.rotate = p[2];
+        s.grid = p[3];
+        s.merge = p[4];
+        s.accents = p[5];
+        read[i] = euclidSettingsClamp(s, gridCount_, defaultGrid_);
+    }
+    for (uint8_t i = 0; i < kEuclidFileLayers; i++) sets_[i] = read[i];
+    return true;
+}
+
 #endif

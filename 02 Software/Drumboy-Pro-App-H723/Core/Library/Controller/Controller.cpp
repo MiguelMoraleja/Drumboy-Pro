@@ -6905,6 +6905,7 @@ void Controller::file_readNotes(const char* fileName_) {
     /// entry by layer, bank and start (as the loader quantized it). No block = all default.
     f_close(&sd.file);
     dubClear(dubMix);  // a song without a DUB block plays as CHAIN
+    euclid_resetSettings();  // and without an EUC block every layer has the default EUCLID settings
     if (f_open(&sd.file, fileName_, FA_READ) != FR_OK) return;
     uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
     UINT got = 0;
@@ -6931,7 +6932,14 @@ void Controller::file_readNotes(const char* fileName_) {
         if (remaining == 0) {
             uint8_t dubData[kDubFileSize] = {0};
             UINT dubGot = 0;
-            if (f_read(&sd.file, dubData, kDubFileSize, &dubGot) == FR_OK) dubRead(dubMix, dubData, static_cast<uint16_t>(dubGot));
+            if ((f_read(&sd.file, dubData, kDubFileSize, &dubGot) == FR_OK) && dubRead(dubMix, dubData, static_cast<uint16_t>(dubGot))) {
+                // The EUC block follows the DUB block: each layer's EUCLID settings.
+                uint8_t eucData[kEuclidFileSize] = {0};
+                UINT eucGot = 0;
+                if (f_read(&sd.file, eucData, kEuclidFileSize, &eucGot) == FR_OK) {
+                    euclidReadBlock(euclidSet, eucData, static_cast<uint16_t>(eucGot), static_cast<uint8_t>(sizeof(kQuantizeInterval) / sizeof(kQuantizeInterval[0])), kInitialQuantize);
+                }
+            }
         }
     }
     f_close(&sd.file);
@@ -6941,7 +6949,9 @@ uint32_t Controller::file_dubCrc(uint32_t crc_) {
     /// @brief Feeds the DUB block (as written) into a CRC, so autosave sees mixer edits.
     uint8_t dubData[kDubFileSize];
     dubWrite(dubMix, dubData);
-    return autosaveCrc32(crc_, dubData, kDubFileSize);
+    uint8_t eucData[kEuclidFileSize];
+    euclidWriteBlock(euclidSet, eucData);
+    return autosaveCrc32(autosaveCrc32(crc_, dubData, kDubFileSize), eucData, kEuclidFileSize);
 }
 
 SdResult Controller::sd_saveFile(uint8_t fileNum_) {
@@ -7033,7 +7043,12 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
                             // The DUB block after the notes (DubMix.h).
                             uint8_t dubData[kDubFileSize];
                             dubWrite(dubMix, dubData);
-                            if (f_write(&sd.file, dubData, kDubFileSize, &sd.byteswritten) == FR_OK) result = SD_OK;
+                            if (f_write(&sd.file, dubData, kDubFileSize, &sd.byteswritten) == FR_OK) {
+                                // The EUC block after the DUB block (Euclid.h): each layer's EUCLID settings.
+                                uint8_t eucData[kEuclidFileSize];
+                                euclidWriteBlock(euclidSet, eucData);
+                                if ((f_write(&sd.file, eucData, kEuclidFileSize, &sd.byteswritten) == FR_OK) && (sd.byteswritten == kEuclidFileSize)) result = SD_OK;
+                            }
                         }
                     }
                 }
@@ -14292,6 +14307,7 @@ void Controller::file_newAction() {
     reset();
     chainClear(songChain);
     dubClear(dubMix);
+    euclid_resetSettings();
     chainRestart(songChain, chainPlay);
     songStepSel = 0;
 
@@ -22394,6 +22410,7 @@ void Controller::euclid_select() {
     /// page). Nothing changes until a field is turned.
 
     if ((menu == EUCLID_MENU) || (selectedLayerNum == -1)) return;
+    euclid_loadSettings();  // this layer's own STEPS, HITS, ROTATE, GRID, MODE and ACCENTS
     euclidSnapshot = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
     euclidBank = activeSongBank;
     euclidApplied = false;
@@ -22409,6 +22426,35 @@ void Controller::euclid_select() {
     lcd_drawEuclidMenu();
     lcd_drawLaneView();  // the lane area shows the rings while this page is open
     encoder_update();
+}
+
+void Controller::euclid_loadSettings() {
+    /// @brief Takes the selected layer's EUCLID settings as the ones the page shows and edits.
+    if ((selectedLayerNum < 0) || (selectedLayerNum >= kLayerLibrarySize)) return;
+    const EuclidSettings s = euclidSettingsClamp(euclidSet[selectedLayerNum], static_cast<uint8_t>(sizeof(kQuantizeInterval) / sizeof(kQuantizeInterval[0])), kInitialQuantize);
+    euclidSteps = s.steps;
+    euclidHits = s.hits;
+    euclidRotate = s.rotate;
+    euclidGrid = s.grid;
+    euclidMerge = (s.merge != 0);
+    euclidAccentCount = s.accents;
+}
+
+void Controller::euclid_storeSettings() {
+    /// @brief Keeps the settings the page shows as the selected layer's own.
+    if ((selectedLayerNum < 0) || (selectedLayerNum >= kLayerLibrarySize)) return;
+    EuclidSettings& s = euclidSet[selectedLayerNum];
+    s.steps = euclidSteps;
+    s.hits = euclidHits;
+    s.rotate = euclidRotate;
+    s.grid = euclidGrid;
+    s.merge = euclidMerge ? 1 : 0;
+    s.accents = euclidAccentCount;
+}
+
+void Controller::euclid_resetSettings() {
+    /// @brief Every layer back to the default set (a new song, or a file without the EUC block).
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) euclidSet[i] = EuclidSettings();
 }
 
 void Controller::euclid_apply() {
@@ -22475,6 +22521,7 @@ void Controller::euclid_step(EncoderFunc function_, bool up_) {
         default:
             return;
     }
+    euclid_storeSettings();  // they belong to this layer
     lcd_drawEuclid_Data();
     euclid_apply();
 }

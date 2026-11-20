@@ -29,7 +29,7 @@ ARCH = -mcpu=cortex-m7 -mthumb -mfpu=fpv5-d16 -mfloat-abi=hard
 # The data cache is on (V1.15: the audio load of a typical song fell from 45% to about 15%, same sound);
 # make DCACHE=0 builds without it.
 DCACHE ?= 1
-DEFS = -DDEBUG -DUSE_PWR_LDO_SUPPLY -DUSE_HAL_DRIVER -DSTM32H723xx $(if $(PROFILE),-DDSP_PROFILE) $(if $(filter 1,$(DCACHE)),-DENABLE_DCACHE)
+DEFS = -DSDMMC_SWDATATIMEOUT=1000U -DDEBUG -DUSE_PWR_LDO_SUPPLY -DUSE_HAL_DRIVER -DSTM32H723xx $(if $(PROFILE),-DDSP_PROFILE) $(if $(filter 1,$(DCACHE)),-DENABLE_DCACHE)
 INCS = \
 	-ICore/Inc \
 	-IFATFS/Target \

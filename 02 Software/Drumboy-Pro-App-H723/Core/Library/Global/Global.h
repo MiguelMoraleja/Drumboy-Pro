@@ -91,24 +91,7 @@ ALWAYSINLINE float softClip(float x) {
     return x * (1.5f - 0.5f * x * x);
 }
 
-ALWAYSINLINE float softKneeClip(float x) {
-    // Threshold where saturation begins (66% of scale)
-    const float kThreshold = 0.6666666667f;
-    float absX = fabsf(x);
-    if (absX <= kThreshold) {
-        return x;
-    }
-
-    // Non-linear saturation curve for the "knee"
-    if (absX > 1.25f) {
-        return (x > 0) ? 1.0f : -1.0f;
-    }
-
-    // Polynomial approximation to smoothly compress 0.66 -> 1.0
-    float saturated = (absX - kThreshold) / (1.25f - kThreshold);
-    float val = kThreshold + (1.25f - kThreshold) * (saturated - 0.3333333333f * saturated * saturated * saturated);
-    return (x > 0) ? val : -val;
-}
+// softKneeClip, finiteOrZero, quantize24, foldSignal and overdriveShape are in DspMath.h.
 
 template <typename T, int N>
 int size(T (&a)[N]) {
@@ -123,6 +106,7 @@ void swap(T& a, T& b) {
 }
 
 #include "Util.h"     // clamp()
+#include "DspMath.h"  // soft clip, bit depth reduction, wavefolder, overdrive curve
 #include "PingPong.h"  // ping-pong echo
 #include "SamplePool.h"  // the sample memory pool (up to 20 s per sample)
 #include "Routing.h"  // RouteNode, routing helpers
@@ -542,6 +526,9 @@ struct Sd {
     volatile bool detect                            = false;
     volatile bool ready                             = false;
     volatile bool getLibrary                        = false;
+    volatile bool removedFlag                       = false;  // the detect line stayed high: the main loop closes the file, unmounts and re-initialises
+    volatile uint8_t lostCount                      = 0;      // consecutive checks of the detect line that found no card (debounce)
+    volatile uint32_t lostMs                        = 0;      // HAL_GetTick() when the card was lost, or the driver gave up on it
     char label[32]                                  = "";
     DWORD serial                                    = 0;
     DWORD serialTemp                                = 0;
@@ -3836,9 +3823,12 @@ struct Flanger {
 
         // The LFO range is limited by the width parameter and buffer size constraints.
         shiftMax = (width * (float)lag);
-        
-        // Ensure shiftMax doesn't exceed buffer limits
-        if (shiftMax > (float)(kFlangerBufferSize - 2)) shiftMax = (float)(kFlangerBufferSize - 2);
+
+        // The delay is lag + shift, so the shift has only what the buffer holds beyond the lag (it was
+        // limited to the whole buffer: at TIME 5 ms and WIDTH 100 the read head ran past it and wrapped).
+        float room = (float)(kFlangerBufferSize - 2) - (float)lag;
+        if (room < 0.0f) room = 0.0f;
+        if (shiftMax > room) shiftMax = room;
         
         shiftInc = (shiftMax * shiftFreq) / (float)AUDIO_SAMPLE_RATE;
     }

@@ -38,7 +38,15 @@
  * in case of errors in either BSP_SD_ReadCpltCallback() or BSP_SD_WriteCpltCallback()
  * the value by default is as defined in the BSP platform driver otherwise 30 secs
  */
-#define SD_TIMEOUT 30 * 1000
+#define SD_TIMEOUT 800
+
+/*
+ * A transfer, or the card getting ready again after one, takes milliseconds. The 30 s this was set to
+ * blocked the main loop for much longer than the 6 s watchdog whenever the card did not answer (a CRC
+ * error or a timeout on the bus never reaches the completion callbacks): the device restarted with
+ * CRASH 7 in whatever stage was reading. Now an error ends the wait at once, a silent card after 2 s,
+ * and the transfer is aborted so the bus is free for the next attempt.
+ */
 
 #define SD_DEFAULT_BLOCK_SIZE 512
 
@@ -89,6 +97,30 @@ __ALIGN_BEGIN static uint8_t scratch[BLOCKSIZE] __ALIGN_END;
 static volatile DSTATUS Stat = STA_NOINIT;
 
 static volatile  UINT  WriteStatus = 0, ReadStatus = 0;
+static volatile  UINT  SdError = 0;      /* set by the error and abort callbacks: the wait ends at once */
+volatile UINT  SdBad = 0;                /* a transfer failed or timed out: every call fails at once until the card is initialised again */
+volatile uint32_t SdErrorCount = 0;      /* transfers that failed or timed out since start-up (diagnostics) */
+
+extern SD_HandleTypeDef hsd2;
+
+static void SD_AbortTransfer(void)
+{
+  /*
+   * Not HAL_SD_Abort(): it sends CMD12 and then waits for the card without a bound that matters (the
+   * software data timeout was 0xFFFFFFFF ms), which is what must not happen here. The data path and the
+   * internal DMA are switched off by hand, the card is left alone and the disk is marked as failed; the
+   * application initialises the card again (SD_initialize clears the mark).
+   */
+  SdErrorCount++;
+  SdBad = 1;
+  hsd2.Instance->IDMACTRL = 0;
+  hsd2.Instance->DCTRL = 0;
+  __HAL_SD_DISABLE_IT(&hsd2, SDMMC_IT_DATAEND | SDMMC_IT_DCRCFAIL | SDMMC_IT_DTIMEOUT | SDMMC_IT_TXUNDERR | SDMMC_IT_RXOVERR);
+  __HAL_SD_CLEAR_FLAG(&hsd2, SDMMC_STATIC_DATA_FLAGS);
+  hsd2.State = HAL_SD_STATE_READY;
+  hsd2.Context = SD_CONTEXT_NONE;
+}
+
 /* Private function prototypes -----------------------------------------------*/
 static DSTATUS SD_CheckStatus(BYTE lun);
 DSTATUS SD_initialize (BYTE);
@@ -140,7 +172,7 @@ static DSTATUS SD_CheckStatus(BYTE lun)
 {
   Stat = STA_NOINIT;
 
-  if(BSP_SD_GetCardState() == MSD_OK)
+  if((!SdBad) && (BSP_SD_GetCardState() == MSD_OK))
   {
     Stat &= ~STA_NOINIT;
   }
@@ -158,9 +190,15 @@ DSTATUS SD_initialize(BYTE lun)
 
 #if !defined(DISABLE_SD_INIT)
 
+  SdBad = 0;
+  SdError = 0;
   if(BSP_SD_Init() == MSD_OK)
   {
     Stat = SD_CheckStatus(lun);
+  }
+  else
+  {
+    Stat = STA_NOINIT;
   }
 
 #else
@@ -177,7 +215,13 @@ DSTATUS SD_initialize(BYTE lun)
   */
 DSTATUS SD_status(BYTE lun)
 {
-  return SD_CheckStatus(lun);
+  /*
+   * Asked by FatFs before every read and write. A card that is busy programming is not "not initialised"
+   * (the old check said so and made f_close fail in the middle of a save), and asking the card each time
+   * cost a command each; the mark is only set by initialisation and by a failed transfer.
+   */
+  if (SdBad) Stat |= STA_NOINIT;
+  return Stat;
 }
 
 /* USER CODE BEGIN beforeReadSection */
@@ -207,8 +251,10 @@ DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
   * ensure the SDCard is ready for a new operation
   */
 
+  if (SdBad) return RES_NOTRDY;
   if (SD_CheckStatusWithTimeout(SD_TIMEOUT) < 0)
   {
+    SD_AbortTransfer();
     return res;
   }
 
@@ -223,19 +269,21 @@ DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
     */
     SCB_CleanInvalidateDCache_by_Addr((uint32_t*)((uint32_t)buff & ~0x1F), count*BLOCKSIZE + ((uint32_t)buff - ((uint32_t)buff & ~0x1F)));
 #endif
+    SdError = 0;
+    ReadStatus = 0;  /* before the launch: the completion interrupt may come at once */
     if(BSP_SD_ReadBlocks_DMA((uint32_t*)buff,
                              (uint32_t) (sector),
                              count) == MSD_OK)
     {
-      ReadStatus = 0;
       /* Wait that the reading process is completed or a timeout occurs */
       timeout = HAL_GetTick();
-      while((ReadStatus == 0) && ((HAL_GetTick() - timeout) < SD_TIMEOUT))
+      while((ReadStatus == 0) && (SdError == 0) && ((HAL_GetTick() - timeout) < SD_TIMEOUT))
       {
       }
-      /* in case of a timeout return error */
+      /* in case of a timeout or an error return error */
       if (ReadStatus == 0)
       {
+        SD_AbortTransfer();
         res = RES_ERROR;
       }
       else
@@ -269,16 +317,19 @@ DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
       int i;
 
       for (i = 0; i < count; i++) {
+        SdError = 0;
+        ReadStatus = 0;  /* before the launch */
         ret = BSP_SD_ReadBlocks_DMA((uint32_t*)scratch, (uint32_t)sector++, 1);
         if (ret == MSD_OK) {
           /* wait until the read is successful or a timeout occurs */
 
           timeout = HAL_GetTick();
-          while((ReadStatus == 0) && ((HAL_GetTick() - timeout) < SD_TIMEOUT))
+          while((ReadStatus == 0) && (SdError == 0) && ((HAL_GetTick() - timeout) < SD_TIMEOUT))
           {
           }
           if (ReadStatus == 0)
           {
+            SD_AbortTransfer();
             res = RES_ERROR;
             break;
           }
@@ -335,8 +386,10 @@ DRESULT SD_write(BYTE lun, const BYTE *buff, DWORD sector, UINT count)
   uint32_t alignedAddr;
 #endif
 
+  if (SdBad) return RES_NOTRDY;
   if (SD_CheckStatusWithTimeout(SD_TIMEOUT) < 0)
   {
+    SD_AbortTransfer();
     return res;
   }
 
@@ -354,6 +407,7 @@ DRESULT SD_write(BYTE lun, const BYTE *buff, DWORD sector, UINT count)
     SCB_CleanDCache_by_Addr((uint32_t*)alignedAddr, count*BLOCKSIZE + ((uint32_t)buff - alignedAddr));
 #endif
 
+    SdError = 0;
     if(BSP_SD_WriteBlocks_DMA((uint32_t*)buff,
                               (uint32_t)(sector),
                               count) == MSD_OK)
@@ -361,12 +415,13 @@ DRESULT SD_write(BYTE lun, const BYTE *buff, DWORD sector, UINT count)
       /* Wait that writing process is completed or a timeout occurs */
 
       timeout = HAL_GetTick();
-      while((WriteStatus == 0) && ((HAL_GetTick() - timeout) < SD_TIMEOUT))
+      while((WriteStatus == 0) && (SdError == 0) && ((HAL_GetTick() - timeout) < SD_TIMEOUT))
       {
       }
-      /* in case of a timeout return error */
+      /* in case of a timeout or an error return error */
       if (WriteStatus == 0)
       {
+        SD_AbortTransfer();
         res = RES_ERROR;
       }
       else
@@ -410,15 +465,24 @@ DRESULT SD_write(BYTE lun, const BYTE *buff, DWORD sector, UINT count)
         SCB_CleanDCache_by_Addr((uint32_t*)scratch, BLOCKSIZE);
 #endif
 
+        SdError = 0;
         ret = BSP_SD_WriteBlocks_DMA((uint32_t*)scratch, (uint32_t)sector++, 1);
         if (ret == MSD_OK) {
           /* wait for a message from the queue or a timeout */
           timeout = HAL_GetTick();
-          while((WriteStatus == 0) && ((HAL_GetTick() - timeout) < SD_TIMEOUT))
+          while((WriteStatus == 0) && (SdError == 0) && ((HAL_GetTick() - timeout) < SD_TIMEOUT))
           {
           }
           if (WriteStatus == 0)
           {
+            SD_AbortTransfer();
+            break;
+          }
+          /* the card is programming the sector: wait for it before the next one and before returning */
+          if (SD_CheckStatusWithTimeout(SD_TIMEOUT) < 0)
+          {
+            SD_AbortTransfer();
+            ret = MSD_ERROR;
             break;
           }
 
@@ -458,7 +522,16 @@ DRESULT SD_ioctl(BYTE lun, BYTE cmd, void *buff)
   {
   /* Make sure that no pending write process */
   case CTRL_SYNC :
-    res = RES_OK;
+    /* the data is on the card only when it has finished programming: f_close and f_sync report success after this */
+    if (SD_CheckStatusWithTimeout(SD_TIMEOUT) < 0)
+    {
+      SD_AbortTransfer();
+      res = RES_ERROR;
+    }
+    else
+    {
+      res = RES_OK;
+    }
     break;
 
   /* Get number of sectors on the disk (DWORD) */
@@ -524,14 +597,16 @@ void BSP_SD_ReadCpltCallback(void)
   depending on the SD_HAL_Driver version, either the HAL_SD_ErrorCallback() or HAL_SD_AbortCallback()
   or both could be defined, activate the callbacks below when suitable and needed
 ==============================================================================================
+*/
 void BSP_SD_AbortCallback(void)
 {
+  SdError = 1;
 }
 
 void BSP_SD_ErrorCallback(void)
 {
+  SdError = 1;
 }
-*/
 /* USER CODE END ErrorAbortCallbacks */
 
 /* USER CODE BEGIN lastSection */

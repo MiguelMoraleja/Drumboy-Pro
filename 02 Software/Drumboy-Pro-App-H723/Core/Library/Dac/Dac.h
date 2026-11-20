@@ -23,6 +23,7 @@ class Dac {
     uint16_t readRegisterMask(uint16_t reg_, uint16_t mask_, uint16_t shift_);
     void writeRegisterMask(uint16_t reg_, uint16_t mask, uint16_t shift_, uint16_t input_);
     HAL_StatusTypeDef i2cWaitReady(uint32_t timeout_);
+    bool codecRead(const uint8_t* addr_, uint8_t* out_);  // one register read, finite timeouts; false on failure
 
     /* Line-In Non-Blocking Enable State Machine ----------------- */
 

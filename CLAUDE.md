@@ -16,6 +16,8 @@ The owner's standing rule (2026-11-13): never trade sound quality for speed, mem
 
 SD writes with the data cache on need a cache clean before every DMA (`FATFS/Target/sd_diskio.c`): a missing clean in the scratch-buffer path corrupted two cards (backlog 56). Any new DMA from a cacheable buffer needs the same.
 
+The SD driver must never wait long: the HAL's error callbacks are connected in `FATFS/Target`, a transfer is bounded to 0.8 s, and the vendored HAL has shorter command timeouts (`SDMMC_CMDTIMEOUT` and `SDMMC_STOPTRANSFERTIMEOUT` 200 ms in `stm32h7xx_ll_sdmmc.h`; re-apply after a CubeMX regeneration; backlog 62). Anything that can take longer than a second in the main loop must feed the watchdog (`IWDG1->KR = 0xAAAA`). The build uses `-Ofast -ffast-math`: a float compare does not catch NaN or infinity, use `finiteOrZero` (`DspMath.h`).
+
 The Makefile does not see a change of `DCACHE` or `PROFILE` (the data cache is on by default since V1.15; `DCACHE=0` turns it off): use a clean or another `BUILD` directory after changing them, and build the update package with a clean `build/`. Update file names stay within 28 characters (the bootloader ignored a 31-character name).
 
 ## Crash reports

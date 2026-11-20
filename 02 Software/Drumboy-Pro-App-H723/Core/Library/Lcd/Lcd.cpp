@@ -1050,9 +1050,11 @@ void Lcd::drawRect(uint16_t x, uint16_t y, uint32_t w, uint32_t h) {
 
     // 1. RECTANGLE OUTLINE DRAW
     // Draw rectangle border using four line primitives.
-    if ((x < width) && (y < height)) {
-        if ((x + w - 1) >= width) w = width - x;
-        if ((y + h - 1) >= height) h = height - y;
+    // An empty or oversized size is cut to the screen (a negative width passed as unsigned is huge: the
+    // old test x + w - 1 wrapped past the screen, nothing was clamped, and the fill ran for minutes).
+    if ((x < width) && (y < height) && (w > 0) && (h > 0)) {
+        if (w > static_cast<uint32_t>(width - x)) w = width - x;
+        if (h > static_cast<uint32_t>(height - y)) h = height - y;
         drawHLine(x, y, w);
         drawHLine(x, y + h - 1, w);
         drawVLine(x, y, h);
@@ -1065,9 +1067,9 @@ void Lcd::fillRect(uint16_t x, uint16_t y, uint32_t w, uint32_t h) {
 
     // 1. RECTANGLE AREA FILL
     // Fill rectangle interior with foreground color.
-    if ((x < width) && (y < height)) {
-        if ((x + w - 1) >= width) w = width - x;
-        if ((y + h - 1) >= height) h = height - y;
+    if ((x < width) && (y < height) && (w > 0) && (h > 0)) {
+        if (w > static_cast<uint32_t>(width - x)) w = width - x;
+        if (h > static_cast<uint32_t>(height - y)) h = height - y;
         setAddressWindow(x, y, x + w - 1, y + h - 1);
         LCD_RS_HIGH;
         fastFill(foreColor, w * h);
@@ -1544,9 +1546,9 @@ void Lcd::clearRect(uint16_t x, uint16_t y, uint32_t w, uint32_t h) {
 
     // 1. RECTANGLE CLEAR
     // Clear rectangle region with background color.
-    if ((x < width) && (y < height)) {
-        if ((x + w - 1) >= width) w = width - x;
-        if ((y + h - 1) >= height) h = height - y;
+    if ((x < width) && (y < height) && (w > 0) && (h > 0)) {
+        if (w > static_cast<uint32_t>(width - x)) w = width - x;
+        if (h > static_cast<uint32_t>(height - y)) h = height - y;
         setAddressWindow(x, y, x + w - 1, y + h - 1);
         LCD_RS_HIGH;
         fastFill(backColor, w * h);

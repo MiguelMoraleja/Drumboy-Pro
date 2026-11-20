@@ -358,6 +358,8 @@ void Controller::initialize() {
     }
 }
 
+extern "C" volatile UINT SdBad;  // sd_diskio.c: a transfer failed or timed out, the disk is marked as failed
+
 void Controller::watchdog_start() {
     /// @brief Starts the independent watchdog (it cannot be stopped again). The main loop feeds it
     /// every pass; WATCHDOG_SECONDS without a feed restarts the device (see CrashRecord.h).
@@ -424,6 +426,19 @@ void Controller::update() {
         watchdog_stage(WD_STAGE_SD);
         // 4. FILESYSTEM MAINTENANCE
         // Recover SD subsystem if media access is lost.
+        if (sd.removedFlag) {
+            // The card is gone (interruptSd found it twice in a row): close, unmount and tell the user.
+            sd.removedFlag = false;
+            f_close(&sd.file);
+            sd_unmount();
+            lcd_drawSdAlert(SD_ERROR_DETECT);
+        } else if (sd.ready && SdBad) {
+            // The driver gave up on a transfer (an error on the bus or a card that stopped answering):
+            // mount again, as after a removal, without the full rescan (the card is the same).
+            sd.lostMs = HAL_GetTick();
+            sd.ready = false;
+            f_close(&sd.file);
+        }
         if (!sd.ready) {
             sd_reinitialize();
         }
@@ -452,6 +467,12 @@ void Controller::update() {
                 lcd_drawRhythm_BarData();
                 lcd_drawRhythm_QuantizeData();
             }
+        }
+
+        // The long press of the beat key (interruptLongKeyRead) asks for a beat; it is generated here.
+        if (layerBeatActionFlag) {
+            layerBeatActionFlag = false;
+            layerSong_generateBeat(layerBeatActionStage);
         }
 
         watchdog_stage(WD_STAGE_MIXER);
@@ -5270,11 +5291,13 @@ SdResult Controller::sd_reinitialize() {
 
             if (sdResult == SD_ERROR_DETECT) {
                 while (sd_detect() != SD_OK) {
-                    lcd_update();  // Keep the UI responsive while waiting for card
+                    IWDG1->KR = 0xAAAA;  // waiting for the user is not a freeze
+                    lcd_update();        // Keep the UI responsive while waiting for card
                 }
             } else {
                 sd_unmount();
                 while (sd_detect() == SD_OK) {
+                    IWDG1->KR = 0xAAAA;
                     lcd_update();  // Wait for user to remove the "wrong" card
                 }
             }
@@ -5284,9 +5307,29 @@ SdResult Controller::sd_reinitialize() {
 
     // 5. POST-RECOVERY LIBRARY REBUILD
     // Card is valid again; rebuild project/drumkit/sample library caches.
-    lcd_drawSdAlert(SD_ANALYZE);
-    sd_getLibraries();
-    lcd_clearSdAlert();
+    // After a short loss (a glitch of the detect line, a failed transfer) the card is the same and the
+    // libraries are still right: no rescan (it took longer than the watchdog and its scratch memory is the
+    // start of the sample pool). After a real removal the card may have been changed on a computer:
+    // release the pool, rescan, and load the samples again.
+    const bool shortLoss = (sd.lostMs != 0) && ((HAL_GetTick() - sd.lostMs) < 4000u);
+    if (!shortLoss) {
+        lcd_drawSdAlert(SD_ANALYZE);
+        samplePool_releaseAll();
+        sd_getLibraries();
+        lcd_clearSdAlert();
+        for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+            Layer& l = layerLibrary[i];
+            if ((l.instLoaded == -1) || (l.sampleLoaded == -1)) continue;
+            const int16_t sample = l.sampleLoaded;
+            layerInst_setInstSelected(i, l.instLoaded);
+            layerInst_setSampleSelected(i, sample);
+            layerInst_setSampleLoaded(i);
+        }
+    } else {
+        lcd_clearSdAlert();
+    }
+    sd.lostMs = 0;
+    sd.lostCount = 0;
 
     // 6. UI STATE RESTORATION
     // Clear alert mode and return to normal global screen flow.
@@ -5509,6 +5552,7 @@ SdResult Controller::sd_getFileLibrary() {
     // 2. SLOT SCANNING LOOP
     // Iterate through all possible file slots defined by the kFileLibrarySize constant.
     for (uint8_t i = 0; i < kFileLibrarySize; i++) {
+        IWDG1->KR = 0xAAAA;  // a rescan of a big card takes longer than the watchdog
         char fileName[50];
         char fileNum[16];
 
@@ -5565,6 +5609,7 @@ SdResult Controller::sd_getDrumkitLibrary() {
     // 2. SLOT-BASED SCANNING LOOP
     // Iterate through all possible drumkit slots defined by kDrumkitLibrarySize.
     for (uint8_t i = 0; i < kDrumkitLibrarySize; i++) {
+IWDG1->KR = 0xAAAA;  // a rescan of a big card takes longer than the watchdog
         char fileName[50];
         char fileNum[16];
 
@@ -5628,6 +5673,7 @@ void Controller::sd_getInstLibrary() {
     // Open Sample root and collect valid instrument folders into SDRAM.
     if (f_opendir(&sd.dir, "/Sample") == FR_OK) {
         while (instLibrarySize < kInstLibraryMaxSize) {
+IWDG1->KR = 0xAAAA;  // a rescan of a big card takes longer than the watchdog
             // 2.1 ENTRY READING
             // Fetch the next directory item; exit if end of folder or error.
             if (f_readdir(&sd.dir, &sd.fileInfo) != FR_OK || sd.fileInfo.fname[0] == 0) {
@@ -5676,6 +5722,7 @@ void Controller::sd_getInstLibrary() {
         // 10. DMA-SAFE BUFFERED DATA WRITE
         // Loop through sorted pointers, copying to aligned SRAM before writing to SD.
         for (uint16_t i = 0; i < instLibrarySize; i++) {
+            IWDG1->KR = 0xAAAA;  // a rescan of a big card takes longer than the watchdog
             char* sourcePtr = sortArray[i];
             if (sourcePtr == nullptr) continue;
 
@@ -5727,6 +5774,7 @@ void Controller::sd_getSampleLibrary() {
         // 4. INSTRUMENT ITERATION
         // Process each indexed instrument folder discovered during the previous scan.
         for (uint16_t i = 0; i < instLibrarySize; i++) {
+            IWDG1->KR = 0xAAAA;  // a rescan of a big card takes longer than the watchdog
             UINT bytesRead;
             if (f_read(&readFil, instName, kFileNameSize, &bytesRead) != FR_OK || bytesRead < kFileNameSize) {
                 break;
@@ -5741,6 +5789,7 @@ void Controller::sd_getSampleLibrary() {
             snprintf(pathBuffer, sizeof(pathBuffer), "Sample/%s", instName);
             if (f_opendir(&sd.dir, pathBuffer) == FR_OK) {
                 while (sampleLibrarySize[i] < kInstSampleLibraryMaxSize) {
+IWDG1->KR = 0xAAAA;  // a rescan of a big card takes longer than the watchdog
                     if (f_readdir(&sd.dir, &sd.fileInfo) != FR_OK || sd.fileInfo.fname[0] == 0) {
                         break;
                     }
@@ -5784,6 +5833,7 @@ void Controller::sd_getSampleLibrary() {
                 // 11. DMA-SAFE DATA BUFFERING
                 // Copy data from SDRAM to aligned SRAM before the SDMMC write to ensure stability.
                 for (uint16_t j = 0; j < sampleLibrarySize[i]; j++) {
+IWDG1->KR = 0xAAAA;  // a rescan of a big card takes longer than the watchdog
                     char* sourcePtr = sortArray[j];
                     if (sourcePtr == nullptr) continue;
 
@@ -5806,6 +5856,18 @@ void Controller::sd_getSampleLibrary() {
     lcd.setForeColor(BLACK);
     lcd.drawText("2", 1, 50, 50);
     keyboard_enable();
+}
+
+// A slot file is complete when it holds its header, its body and the "EOF" marker the save writes last.
+// A file cut short (power lost during a save, a full card) is not: it is treated as an empty slot instead
+// of being loaded as zeros (every level 0, an empty song) over the user's current work. f_ is open.
+static bool slotFileComplete(FIL* f_, uint32_t headerBytes_, uint32_t bodyBytes_) {
+    const uint32_t eofAt = headerBytes_ + bodyBytes_;
+    if (f_size(f_) < eofAt + 3u) return false;
+    char tail[3] = {0, 0, 0};
+    UINT got = 0;
+    if ((f_lseek(f_, eofAt) != FR_OK) || (f_read(f_, tail, 3, &got) != FR_OK) || (got != 3)) return false;
+    return (tail[0] == 'E') && (tail[1] == 'O') && (tail[2] == 'F');
 }
 
 SdResult Controller::sd_checkFile(uint8_t fileNum_) {
@@ -5838,6 +5900,7 @@ SdResult Controller::sd_checkFile(uint8_t fileNum_) {
                 // If the signature matches, read the status byte. '*' denotes a saved project.
                 f_read(&sd.file, &data, 1, &sd.bytesread);
                 (data == '*') ? fileStatus = FILE_ACTIVE : fileStatus = FILE_INACTIVE;
+                if ((fileStatus == FILE_ACTIVE) && !slotFileComplete(&sd.file, strlen(kFileRef), kFileByteSize)) fileStatus = FILE_INACTIVE;
             } else {
                 // 5. COMPATIBILITY HANDLING
                 // The file exists but the header is unrecognized or from an older version.
@@ -5891,14 +5954,14 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
     strcat(fileName, kFileEnd);
     if (fileNameOverride) snprintf(fileName, sizeof fileName, "%s", fileNameOverride);  // autosave files
 
-    char instName[kLayerLibrarySize][kFileNameSize + 1];
-    uint16_t instNum[kLayerLibrarySize];
-    bool instActive[kLayerLibrarySize];
-    bool instMissing[kLayerLibrarySize];
-    char sampleName[kLayerLibrarySize][kFileNameSize + 1];
-    uint16_t sampleNum[kLayerLibrarySize];
-    bool sampleActive[kLayerLibrarySize];
-    bool sampleMissing[kLayerLibrarySize];
+    char instName[kLayerLibrarySize][kFileNameSize + 1] = {};
+    uint16_t instNum[kLayerLibrarySize] = {};
+    bool instActive[kLayerLibrarySize] = {};
+    bool instMissing[kLayerLibrarySize] = {};
+    char sampleName[kLayerLibrarySize][kFileNameSize + 1] = {};
+    uint16_t sampleNum[kLayerLibrarySize] = {};
+    bool sampleActive[kLayerLibrarySize] = {};
+    bool sampleMissing[kLayerLibrarySize] = {};
     bool phaseCheck[2] = {false};
 
     // 2. INPUT PROTECTION
@@ -7105,6 +7168,7 @@ SdResult Controller::sd_checkDrumkit(uint8_t kitNum_) {
                 // If the signature matches, read the status byte. '*' denotes a saved drumkit.
                 f_read(&sd.file, &data, 1, &sd.bytesread);
                 (data == '*') ? drumkitStatus = FILE_ACTIVE : drumkitStatus = FILE_INACTIVE;
+                if ((drumkitStatus == FILE_ACTIVE) && !slotFileComplete(&sd.file, strlen(kDrumkitRef), kDrumkitByteSize)) drumkitStatus = FILE_INACTIVE;
             } else {
                 // 5. COMPATIBILITY HANDLING
                 // The file exists but the header is unrecognized or from an older version.
@@ -7310,14 +7374,14 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
 
                     // 5.4 ASSET REFERENCE EXTRACTION
                     // Extract instrument/sample names and activation markers per layer.
-                    char instName[kLayerLibrarySize][kFileNameSize + 1];
-                    uint16_t instNum[kLayerLibrarySize];
-                    bool instActive[kLayerLibrarySize];
-                    bool instMissing[kLayerLibrarySize] = {false};
-                    char sampleName[kLayerLibrarySize][kFileNameSize + 1];
-                    uint16_t sampleNum[kLayerLibrarySize];
-                    bool sampleActive[kLayerLibrarySize];
-                    bool sampleMissing[kLayerLibrarySize];
+                    char instName[kLayerLibrarySize][kFileNameSize + 1] = {};
+                    uint16_t instNum[kLayerLibrarySize] = {};
+                    bool instActive[kLayerLibrarySize] = {};
+                    bool instMissing[kLayerLibrarySize] = {};
+                    char sampleName[kLayerLibrarySize][kFileNameSize + 1] = {};
+                    uint16_t sampleNum[kLayerLibrarySize] = {};
+                    bool sampleActive[kLayerLibrarySize] = {};
+                    bool sampleMissing[kLayerLibrarySize] = {};
                     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
                         uint16_t offset = 500 + (i * 100);
                         (data[offset] == 'x') ? instActive[i] = true : instActive[i] = false;
@@ -13782,14 +13846,18 @@ void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatN
             uint16_t xStart = kSongX + (startInterval * kSongWidth / songInterval);
             uint16_t xEnd = kSongX + (endInterval * kSongWidth / songInterval) - 2;
             uint16_t yStart = kImageLayerY[layerNum_] + kSongOffsetY;
+            // Two beats in one pixel column, or a short fill, make the end fall before the start: the
+            // width is at least one pixel (a negative width, unsigned, filled billions of pixels).
+            const int32_t cellWidth = (static_cast<int32_t>(xEnd) >= static_cast<int32_t>(xStart)) ? (static_cast<int32_t>(xEnd) - static_cast<int32_t>(xStart) + 1) : 1;
+            const int32_t fillWidth = (cellWidth > 1) ? (cellWidth - 1) : 1;
 
             // Draw beat shape based on fill type
             // Per-note settings made visible (LaneView.h): height = velocity, hollow = a chance
             // below 100%, a dot above = a condition. A beat without them looks as before V1.14.
             const uint16_t note = beat.getNote();
-            lcd.clearRect(xStart, yStart - kLaneDotRise, xEnd - xStart + 1, kLaneDotRise);
+            lcd.clearRect(xStart, yStart - kLaneDotRise, cellWidth, kLaneDotRise);
             if ((fillType == 0) && (fillPattern < 2)) {
-                lcd.clearRect(xStart, yStart, xEnd - xStart + 1, kSongHeight);
+                lcd.clearRect(xStart, yStart, cellWidth, kSongHeight);
                 const uint8_t h = laneMarkHeight(beat.getVelocity(), (fillPattern == 0) ? 100 : 50);
                 if (laneMarkHollow(note) && (h >= 3)) {
                     lcd.drawRect(xStart, yStart + kSongHeight - h, 3, h);
@@ -13797,16 +13865,16 @@ void Controller::lcd_drawBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beatN
                     lcd.fillRect(xStart, yStart + kSongHeight - h, 2, h);
                 }
             } else if ((fillType == 0) && (fillPattern == 2)) {
-                lcd.clearRect(xStart, yStart, xEnd - xStart + 1, kSongHeight);
+                lcd.clearRect(xStart, yStart, cellWidth, kSongHeight);
                 for (uint8_t i = 0; i < 4; i++) {
                     lcd.drawPixel(xStart, yStart + (i * 3));
                 }
             } else if (laneMarkHollow(note) && (xEnd > xStart + 2)) {
                 // A fill that may not play: its outline.
-                lcd.clearRect(xStart, yStart, xEnd - xStart + 1, kSongHeight);
-                lcd.drawRect(xStart, yStart, xEnd - xStart, kSongHeight);
+                lcd.clearRect(xStart, yStart, cellWidth, kSongHeight);
+                lcd.drawRect(xStart, yStart, fillWidth, kSongHeight);
             } else {
-                lcd.fillRect(xStart, yStart, xEnd - xStart, kSongHeight);
+                lcd.fillRect(xStart, yStart, fillWidth, kSongHeight);
             }
             if (laneMarkDot(note)) {
                 lcd.setForeColor(selected_ ? kBeatSelectedColor : YELLOW);
@@ -13842,7 +13910,7 @@ void Controller::lcd_clearBeat(uint8_t layerNum_, uint8_t bankNum_, uint8_t beat
         // 3. REGION CLEAR
         // Clear beat rectangle to background color.
         lcd.setBackColor(BLACK);
-        lcd.clearRect(xStart, yStart - kLaneDotRise, xEnd - xStart, (kSongHeight + 1 + kLaneDotRise));
+        lcd.clearRect(xStart, yStart - kLaneDotRise, (xEnd > xStart) ? (xEnd - xStart) : 1, (kSongHeight + 1 + kLaneDotRise));
     }
 }
 
@@ -13915,7 +13983,7 @@ void Controller::lcd_clearInterval(uint8_t layerNum_, uint8_t bankNum_, uint16_t
         // 3. SEGMENT CLEAR
         // Clear requested sub-region in lane.
         lcd.setBackColor(BLACK);
-        lcd.clearRect(xStart, yStart - kLaneDotRise, xEnd - xStart, kSongHeight + 1 + kLaneDotRise);
+        lcd.clearRect(xStart, yStart - kLaneDotRise, (xEnd > xStart) ? (xEnd - xStart) : 1, kSongHeight + 1 + kLaneDotRise);
     }
 }
 
@@ -17276,6 +17344,7 @@ void Controller::filter_setActive(uint8_t filterNum_, bool active_) {
 
 void Controller::filter_setType(uint8_t filterNum_, uint8_t type_) {
     /// @brief Sets filter type and applies transition path when filter is active.
+    if (type_ > kMaxFilterType) return;  // a value from a damaged or newer file would index the coefficient tables
 
     Filter& filter_ = filter[filterNum_];
 
@@ -17833,6 +17902,7 @@ void Controller::effect_setActive(uint8_t effectNum_, bool active_) {
 
 void Controller::effect_setType(uint8_t effectNum_, uint8_t type_) {
     /// @brief Sets effect type and applies transition path when effect is active.
+    if (type_ > kMaxEffectType) return;  // a value from a damaged or newer file would index the effect tables
 
     Effect& effect_ = effect[effectNum_];
 
@@ -19536,6 +19606,7 @@ void Controller::lfo_select(uint8_t lfoNum_) {
 
 void Controller::lfo_reset(uint8_t lfoNum_) {
     /// @brief Restores LFO parameters to default values.
+    if (lfoNum_ >= kLfoLibrarySize) return;
     /// Applies defaults through setter path to keep UI/runtime state synchronized.
 
     // 1. PARAMETER RESET
@@ -19691,6 +19762,7 @@ void Controller::lfo_menuDown() {
 
 void Controller::lfo_setActive(uint8_t lfoNum_, uint8_t active_) {
     /// @brief Sets LFO active state and refreshes dependent UI/global state.
+    if (lfoNum_ >= kLfoLibrarySize) return;
 
     // 1. DATA UPDATE
     // Apply active state to target LFO slot.
@@ -19706,6 +19778,7 @@ void Controller::lfo_setActive(uint8_t lfoNum_, uint8_t active_) {
 
 void Controller::lfo_setType(uint8_t lfoNum_, uint8_t type_) {
     /// @brief Sets LFO waveform type and refreshes dependent UI/global state.
+    if ((lfoNum_ >= kLfoLibrarySize) || (type_ > kMaxLfoType)) return;  // the type indexes the waveform tables
 
     // 1. DATA UPDATE
     // Apply waveform type to target LFO slot.
@@ -19721,6 +19794,7 @@ void Controller::lfo_setType(uint8_t lfoNum_, uint8_t type_) {
 
 void Controller::lfo_setRate(uint8_t lfoNum_, uint8_t rate_) {
     /// @brief Sets LFO rate and recalculates sample increment.
+    if ((lfoNum_ >= kLfoLibrarySize) || (rate_ > kMaxLfoRate)) return;  // a value from a file indexes the LFO tables
 
     // 1. DATA UPDATE
     // Store selected rate index for target LFO slot.
@@ -19740,6 +19814,7 @@ void Controller::lfo_setRate(uint8_t lfoNum_, uint8_t rate_) {
 
 void Controller::lfo_setPhase(uint8_t lfoNum_, uint8_t phase_) {
     /// @brief Sets LFO phase and compensates sample cursor continuity.
+    if ((lfoNum_ >= kLfoLibrarySize) || (phase_ > kMaxLfoPhase)) return;  // a value from a file indexes the LFO tables
 
     // 1. DATA UPDATE
     // Store phase index and calculate phase-based sample offset.
@@ -19753,7 +19828,7 @@ void Controller::lfo_setPhase(uint8_t lfoNum_, uint8_t phase_) {
 
     // 2. COUNTER NORMALIZATION
     // Keep sample counter inside valid wavetable bounds.
-    if (lfoLibrary[lfoNum_].sampleCounter < 0) lfoLibrary[lfoNum_].sampleCounter = kLfoSampleSize - lfoLibrary[lfoNum_].sampleCounter;
+    if (lfoLibrary[lfoNum_].sampleCounter < 0) lfoLibrary[lfoNum_].sampleCounter = kLfoSampleSize + lfoLibrary[lfoNum_].sampleCounter;  // wrap below zero: size minus the overshoot (it added it)
     if (lfoLibrary[lfoNum_].sampleCounter > (kLfoSampleSize - 1)) lfoLibrary[lfoNum_].sampleCounter = lfoLibrary[lfoNum_].sampleCounter - kLfoSampleSize;
 
     // 3. UI REFRESH
@@ -19766,6 +19841,7 @@ void Controller::lfo_setPhase(uint8_t lfoNum_, uint8_t phase_) {
 
 void Controller::lfo_setInvert(uint8_t lfoNum_, bool invert_) {
     /// @brief Sets LFO invert mode and refreshes dependent UI/global state.
+    if (lfoNum_ >= kLfoLibrarySize) return;
 
     // 1. DATA UPDATE
     // Apply invert mode to target LFO slot.
@@ -19781,6 +19857,7 @@ void Controller::lfo_setInvert(uint8_t lfoNum_, bool invert_) {
 
 void Controller::lfo_setDepth(uint8_t lfoNum_, uint8_t depth_) {
     /// @brief Sets LFO depth and refreshes dependent UI/global state.
+    if ((lfoNum_ >= kLfoLibrarySize) || (depth_ > kMaxLfoDepth)) return;  // a value from a file indexes the LFO tables
 
     // 1. DATA UPDATE
     // Apply depth value to target LFO slot.
@@ -19839,7 +19916,13 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
     // Resolve layer, play-state buffers, and temporary beat structures.
     Layer& layer = layerLibrary[layerNum_];
     LayerPlayData& lD = layerPlayData[layerNum_];
-    BeatPlayData& tBD = lD.tempBeatPlayData;
+    // The beat is built apart and published in one step: this function runs from the main loop (pad,
+    // MIDI) and from the sequencer's timer interrupt, which can land in the middle of the other call, and
+    // the audio interrupt copies lD.tempBeatPlayData while a new beat is pending. Building in place let a
+    // call that was interrupted publish a half-built or zeroed beat, and the layer fell silent.
+    BeatPlayData built;
+    memset(&built, 0, sizeof(built));
+    BeatPlayData& tBD = built;
     BeatPlayData& aBD = lD.activeBeatPlayData;
 
     // 2. PLAYBACK GATE
@@ -19867,7 +19950,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     nProbability = layer.probability;
                 }
                 threshold = kNumberDataLibrary[nProbability].stdMultiplier * 10000.0f;
-                if (random > threshold) probability = false;
+                if (random >= threshold) probability = false;  // 0 % never plays (with > it played once in 10,000)
             }
             if (probability) {
                 // MIDI out sends the velocity this hit plays with.
@@ -19941,10 +20024,12 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                         nEnd = layer.end;
                     }
                     if (nStart >= nEnd) {
-                        if (nStart > 0)
+                        if (nEnd > 0) {
                             nStart = nEnd - 1;
-                        else
-                            nEnd = nStart + 1;
+                        } else {
+                            nStart = 0;  // END reached 0 (an LFO on END): nStart - 1 would index before the table
+                            nEnd = 1;
+                        }
                     }
                     tBD.counterStart = kNumberDataLibrary[nStart].stdMultiplier * tBD.counterMax;
                     tBD.counterEnd = kNumberDataLibrary[nEnd].stdMultiplier * tBD.counterMax;
@@ -20036,6 +20121,14 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                 }
                 tBD.newBeatFlag = false;
 
+                // publish the finished beat at once
+                {
+                    uint32_t primaskPublish = __get_PRIMASK();
+                    __disable_irq();
+                    memcpy(&lD.tempBeatPlayData, &built, sizeof(BeatPlayData));
+                    __set_PRIMASK(primaskPublish);
+                }
+
                 // activate beat if no delay
                 if (!lD.tempBeatTimingFlag) {
                     // aBD is read every audio block by processAudioLayer(), which runs from the
@@ -20050,8 +20143,8 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                         aBD.counterFade = 0;
                         aBD.newBeatFlag = true;
                     } else {
-                        memcpy(&aBD, &tBD, sizeof(BeatPlayData));
-                        memset(&tBD, 0, sizeof(BeatPlayData));
+                        memcpy(&aBD, &lD.tempBeatPlayData, sizeof(BeatPlayData));
+                        memset(&lD.tempBeatPlayData, 0, sizeof(BeatPlayData));
                     }
                     __set_PRIMASK(primaskBeat);
                 }
@@ -20565,6 +20658,33 @@ void Controller::layerInst_setInstLoaded(uint8_t layerNum_) {
     }
 }
 
+// The offset of the chunk with id_ in a WAV file, or 0xFFFFFFFF. Walks the chunk list (8-byte header,
+// size, pad byte to an even size) from byte 12, at most 64 chunks and never past limit_, so a file with
+// a huge metadata chunk or a wrong RIFF size cannot keep the main loop busy. A file whose chunks do not
+// add up is searched byte by byte in its first 4 KB, as before for small headers.
+static uint32_t wavFindChunk(FIL* file_, uint32_t id_, uint32_t limit_) {
+    uint32_t at = 12;
+    for (uint8_t n = 0; n < 64; n++) {
+        if ((at + 8 > limit_) || (at + 8 < at)) break;
+        uint32_t head[2] = {0, 0};
+        UINT got = 0;
+        if ((f_lseek(file_, at) != FR_OK) || (f_read(file_, head, 8, &got) != FR_OK) || (got != 8)) break;
+        if (head[0] == id_) return at;
+        const uint32_t size = head[1];
+        const uint32_t next = at + 8 + size + (size & 1u);
+        if ((next <= at) || (size > limit_)) break;
+        at = next;
+    }
+    const uint32_t scanEnd = (limit_ > 8) ? ((limit_ - 8 < 4096u) ? (limit_ - 8) : 4096u) : 0;
+    for (uint32_t i = 12; i < scanEnd; i++) {
+        uint32_t head[2] = {0, 0};
+        UINT got = 0;
+        if ((f_lseek(file_, i) != FR_OK) || (f_read(file_, head, 8, &got) != FR_OK) || (got != 8)) break;
+        if (head[0] == id_) return i;
+    }
+    return 0xFFFFFFFFu;
+}
+
 void Controller::layerInst_setSampleSelected(uint8_t layerNum_, int16_t sample_) {
     /// @brief Selects sample entry for target layer and parses WAV metadata.
     /// Validates RIFF/FMT/DATA chunks and computes playback-size coefficients.
@@ -20625,17 +20745,20 @@ void Controller::layerInst_setSampleSelected(uint8_t layerNum_, int16_t sample_)
                             // Cap chunkSize to actual file size to guard against corrupt RIFF headers
                             // that report an oversized value, which would cause the search loops to
                             // iterate far past EOF and read garbage or stall for a very long time.
+                            const uint32_t fileSize = f_size(&sd.file);
+                            // The RIFF size of a streamed or unfinished file is 0 or 0xFFFFFFFF (+8 wrapped): use the file's.
                             uint32_t chunkSize = layer.wavSelectedData.riff_chunk.chunkSize + 8;
-                            uint32_t fileSize = f_size(&sd.file);
-                            if (chunkSize > fileSize) chunkSize = fileSize;
+                            if ((layer.wavSelectedData.riff_chunk.chunkSize == 0) || (layer.wavSelectedData.riff_chunk.chunkSize > fileSize) || (chunkSize > fileSize)) chunkSize = fileSize;
 
-                                // Search for fmt chunk
-                            for (uint32_t i = 12; i < (chunkSize - 24); i++) {
-                                    f_lseek(&sd.file, i);
-                                    f_read(&sd.file, &layer.wavSelectedData.fmt_chunk, 24, &sd.bytesread);
-                                if (layer.wavSelectedData.fmt_chunk.chunkId == 0x20746D66) {
-                                    layer.wavSelectedData.fmt_chunk.chunkStartByte = i;
-                                    break;
+                            // Search for the fmt chunk: walk the chunk list (header, size, pad byte), at most 64 chunks.
+                            layer.wavSelectedData.fmt_chunk.chunkId = 0;
+                            {
+                                const uint32_t at = wavFindChunk(&sd.file, 0x20746D66, chunkSize);
+                                if ((at != 0xFFFFFFFFu) && (f_lseek(&sd.file, at) == FR_OK) &&
+                                    (f_read(&sd.file, &layer.wavSelectedData.fmt_chunk, 24, &sd.bytesread) == FR_OK) && (sd.bytesread == 24)) {
+                                    layer.wavSelectedData.fmt_chunk.chunkStartByte = at;
+                                } else {
+                                    layer.wavSelectedData.fmt_chunk.chunkId = 0;
                                 }
                             }
 
@@ -20647,13 +20770,15 @@ void Controller::layerInst_setSampleSelected(uint8_t layerNum_, int16_t sample_)
                                 ((layer.wavSelectedData.fmt_chunk.sampleRate == 8000) || (layer.wavSelectedData.fmt_chunk.sampleRate == 16000) || (layer.wavSelectedData.fmt_chunk.sampleRate == 48000) || (layer.wavSelectedData.fmt_chunk.sampleRate == 11025) || (layer.wavSelectedData.fmt_chunk.sampleRate == 22050) || (layer.wavSelectedData.fmt_chunk.sampleRate == 24000) || (layer.wavSelectedData.fmt_chunk.sampleRate == 44100) ||
                                  (layer.wavSelectedData.fmt_chunk.sampleRate == 48000) || (layer.wavSelectedData.fmt_chunk.sampleRate == 88200) || (layer.wavSelectedData.fmt_chunk.sampleRate == 96000) || (layer.wavSelectedData.fmt_chunk.sampleRate == 176400) || (layer.wavSelectedData.fmt_chunk.sampleRate == 192000)) &&
                                 ((layer.wavSelectedData.fmt_chunk.bitPerSample == 8) || (layer.wavSelectedData.fmt_chunk.bitPerSample == 16) || (layer.wavSelectedData.fmt_chunk.bitPerSample == 24) || (layer.wavSelectedData.fmt_chunk.bitPerSample == 32))) {
-                                // Search for data chunk
-                                for (uint32_t j = 12; j < (chunkSize - 8); j++) {
-                                    f_lseek(&sd.file, j);
-                                    f_read(&sd.file, &layer.wavSelectedData.data_chunk, 8, &sd.bytesread);
-                                    if (layer.wavSelectedData.data_chunk.chunkId == 0x61746164) {
-                                        layer.wavSelectedData.data_chunk.chunkStartByte = j;
-                                        break;
+                                // Search for the data chunk the same way
+                                layer.wavSelectedData.data_chunk.chunkId = 0;
+                                {
+                                    const uint32_t at = wavFindChunk(&sd.file, 0x61746164, chunkSize);
+                                    if ((at != 0xFFFFFFFFu) && (f_lseek(&sd.file, at) == FR_OK) &&
+                                        (f_read(&sd.file, &layer.wavSelectedData.data_chunk, 8, &sd.bytesread) == FR_OK) && (sd.bytesread == 8)) {
+                                        layer.wavSelectedData.data_chunk.chunkStartByte = at;
+                                    } else {
+                                        layer.wavSelectedData.data_chunk.chunkId = 0;
                                     }
                                 }
 
@@ -20759,6 +20884,7 @@ void Controller::layerInst_setSampleSelected(uint8_t layerNum_, int16_t sample_)
                                     uint32_t reportedDataByteSize = layer.wavSelectedData.data_chunk.chunkSize;
                                     layer.sampleSelectedData.sampleByteSize = (reportedDataByteSize <= actualDataByteSize) ? reportedDataByteSize : actualDataByteSize;
                                     layer.sampleSelectedData.sampleSize = layer.sampleSelectedData.sampleByteSize * layer.sampleSelectedData.coefSampleSize;
+                                    if (layer.sampleSelectedData.sampleSize == 0) sampleTypeError = true;  // an empty file: nothing to play (a size of 0 - 1 would run away)
 
                                     // Cap sample size
                                     // A sample over 20 s (kSampleMaxFrames) is ignored, not cut.
@@ -21031,7 +21157,7 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
                 sampleSectorLibrary[targetSector].address = poolAddress;
                 sampleSectorLibrary[targetSector].bytes = neededBytes;
                 sampleSectorLibrary[targetSector].planeBytes = stereoLoad ? samplePlaneBytes(layer.sampleLoadedData.sampleSize) : 0;
-                sampleSectorLibrary[targetSector].size = layer.sampleLoadedData.sampleSize - 1;
+                sampleSectorLibrary[targetSector].size = (layer.sampleLoadedData.sampleSize > 0) ? (layer.sampleLoadedData.sampleSize - 1) : 0;
                 sampleSectorLibrary[targetSector].stereo = stereoLoad;
                 sampleSectorLibrary[targetSector].playMode = false;
                 sampleSectorLibrary[targetSector].writeMode = true;
@@ -21077,7 +21203,14 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
                                         if (s24 & 0x800000) s24 |= 0xFF000000;
                                         v = (float)s24 / 8388607.0f;
                                     } else if (layer.wavLoadedData.fmt_chunk.bitPerSample == 32) {
-                                        memcpy(&v, &rawArray[at_], 4);
+                                        if (layer.wavLoadedData.fmt_chunk.audioFormat == 0x01) {
+                                            int32_t s32;  // 32-bit integer PCM
+                                            memcpy(&s32, &rawArray[at_], 4);
+                                            v = static_cast<float>(s32) * (1.0f / 2147483648.0f);
+                                        } else {
+                                            memcpy(&v, &rawArray[at_], 4);
+                                            v = finiteOrZero(v);  // NaN or infinity: silence (tested in the bits: a float compare does not catch it with -ffast-math)
+                                        }
                                     }
                                     return v;
                                 };
@@ -21904,6 +22037,7 @@ void Controller::preview_start(uint8_t layerNum_) {
     }
     previewFileOpen = true;
     previewFormat.bits = static_cast<uint8_t>(layer.wavSelectedData.fmt_chunk.bitPerSample);
+    if ((previewFormat.bits == 32) && (layer.wavSelectedData.fmt_chunk.audioFormat == 0x01)) previewFormat.bits = 33;  // 32-bit integer PCM, not float
     previewFormat.channels = static_cast<uint8_t>(layer.wavSelectedData.fmt_chunk.nbrChannels);
     previewFormat.rate = layer.wavSelectedData.fmt_chunk.sampleRate;
     previewBytesLeft = layer.sampleSelectedData.sampleByteSize;
@@ -21929,16 +22063,20 @@ void Controller::preview_service() {
     /// was not enough for it (the ring kept running dry and the preview fluttered).
     // 12288 bytes divides by every frame size (1, 2, 3, 4, 6, 8, 12, 16, 24 bytes), so chunks never
     // split a frame.
-    static uint8_t raw[12288];
+    static uint8_t raw[12288] __attribute__((aligned(32)));  // aligned: the SD driver then reads straight into it
     for (uint8_t pass = 0; (pass < 4) && previewFileOpen; pass++) {
         if ((pass > 0) && (previewRingCount(previewRing) >= (previewRing.mask + 1) / 2)) return;
         const uint32_t step = previewFrameBytes(previewFormat);
         const uint8_t repeat = previewRepeat(previewFormat);
+        // As many frames as the file has left, the raw buffer holds and the ring has room for (every frame
+        // is written `repeat` times: at 8 kHz that is 6, and a whole buffer of frames never fit the ring).
         uint32_t chunk = (step == 0) ? 0 : (sizeof(raw) / step) * step;
         if (step && (chunk > previewBytesLeft)) chunk = previewBytesLeft - (previewBytesLeft % step);
         bool done = (chunk == 0);
         if (!done) {
-            if (previewRingFree(previewRing) < (chunk / step) * repeat) return;  // not enough room yet
+            const uint32_t roomFrames = previewRingFree(previewRing) / repeat;
+            if (roomFrames == 0) return;  // no room yet
+            if ((chunk / step) > roomFrames) chunk = roomFrames * step;
             UINT got = 0;
             if ((f_read(&previewFile, raw, chunk, &got) != FR_OK) || (got == 0)) {
                 done = true;
@@ -24641,7 +24779,7 @@ uint16_t Controller::layerSong_quantizeInterval(uint16_t interval_) const {
     /// @brief Nearest grid position at the current QUANTIZE; the end of the song wraps to 0.
     const uint16_t quantizeInterval = kQuantizeInterval[rhythm.quantize];
     uint16_t startInterval = ((interval_ / quantizeInterval) + ((interval_ % quantizeInterval) / (quantizeInterval / 2))) * quantizeInterval;
-    if (startInterval == songInterval) startInterval = 0;
+    if (startInterval >= songInterval) startInterval = 0;  // the end of the song, or past it when the length is no multiple of the grid
     return startInterval;
 }
 
@@ -25090,7 +25228,7 @@ void Controller::layerSong_resetAllBeats(uint8_t layerNum_, uint8_t bankTab_) {
 
         // 3. CONDITIONAL UI REFRESH
         // Refresh beat widgets when target bank is currently visible.
-        if ((selectedLayerNum == layerNum_) && (activeSongBank == bankTab_) && (menu = LAYER_SONG_MENU)) {
+        if ((selectedLayerNum == layerNum_) && (activeSongBank == bankTab_) && (menu == LAYER_SONG_MENU)) {
             selectedBeatNum = -1;
             lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
             lcd_drawLayerSong_PositionData(selectedLayerNum);
@@ -25127,7 +25265,7 @@ void Controller::layerSong_quantizeActiveBeats(uint8_t layerNum_, uint8_t bankTa
                     if (endInterval > songInterval) {
                         endInterval = songInterval;
                     }
-                    if (startInterval != songInterval) {
+                    if (startInterval < songInterval) {
                         beat.setStartInterval(startInterval);
                         beat.setEndInterval(endInterval);
                         bank.setBeatFill(j, 0, 0, 0, 0);
@@ -25201,7 +25339,7 @@ void Controller::layerSong_calculatePlayBeatNum(uint8_t layerNum_, uint8_t bankT
 
                 // Simple beat processing.
                 if ((fillType == 0) && (fillPattern <= 2)) {
-                    if ((beat.getActive()) && (beat.getStartInterval() >= playInterval)) {
+                    if ((beat.getActive()) && (noteDueInterval(beat.getStartInterval(), beat.getNote(), songInterval) >= playInterval)) {  // when it plays: its start moved by the NUDGE
                         bank.playBeatNum = i;
                         bank.playBeatMicroNum = -1;
                         findFlag = true;
@@ -25246,7 +25384,7 @@ void Controller::layerSong_calculatePlayBeatNum(uint8_t layerNum_, uint8_t bankT
             bool findFlag = false;
             for (uint8_t i = 0; i <= bank.lastActiveBeatNum; i++) {
                 Beat& beat = bank.beatLibrary[i];
-                if ((beat.getActive()) && (beat.getStartInterval() >= playInterval)) {
+                if ((beat.getActive()) && (noteDueInterval(beat.getStartInterval(), beat.getNote(), songInterval) >= playInterval)) {  // when it plays: its start moved by the NUDGE
                     bank.playBeatNum = i;
                     bank.playBeatMicroNum = -1;
                     findFlag = true;
@@ -26189,8 +26327,6 @@ void Controller::processAudioLayer() {
 
     // 1. CONSTANT INITIALIZATION
     // Prepare constants for 24-bit conversion and bit-depth operations.
-    const float kScale24 = 16777215.0f;
-    const float kInvScale24 = 1.0f / 16777215.0f;
 
     // 2. LAYER ITERATION
     // Process playback pipeline for each layer independently.
@@ -26259,18 +26395,8 @@ void Controller::processAudioLayer() {
 
                 // Apply Bitcrush effect if the resolution coefficient is modified
                 if (bitCrushActive) {
-                    float valShifted = (sample + 1.0f) * 0.5f;
-                    uint32_t tempUnsigned = (uint32_t)(valShifted * kScale24);
-                    tempUnsigned &= aBD.resolutionCoef;
-                    float valBack = (float)tempUnsigned * kInvScale24;
-                    sample = (valBack * 2.0f) - 1.0f;
-                    if (stereo) {
-                        valShifted = (sampleR + 1.0f) * 0.5f;
-                        tempUnsigned = (uint32_t)(valShifted * kScale24);
-                        tempUnsigned &= aBD.resolutionCoef;
-                        valBack = (float)tempUnsigned * kInvScale24;
-                        sampleR = (valBack * 2.0f) - 1.0f;
-                    }
+                    sample = quantize24(sample, aBD.resolutionCoef);
+                    if (stereo) sampleR = quantize24(sampleR, aBD.resolutionCoef);
                 }
 
                 // Handle fade-in/fade-out logic
@@ -26315,13 +26441,7 @@ void Controller::processAudioLayer() {
                 // Helper lambda for reading RAM with integrated bitcrushing
                 auto getSample = [&](uint32_t addr) -> float {
                     float val = *(volatile float*)addr;
-                    if (aBD.resolutionCoef != 0x00FFFFFF) {
-                        float valShifted = (val + 1.0f) * 0.5f;
-                        uint32_t tempUnsigned = (uint32_t)(valShifted * kScale24);
-                        tempUnsigned &= aBD.resolutionCoef;
-                        float valBack = (float)tempUnsigned * kInvScale24;
-                        val = (valBack * 2.0f) - 1.0f;
-                    }
+                    if (aBD.resolutionCoef != 0x00FFFFFF) val = quantize24(val, aBD.resolutionCoef);
                     return val;
                 };
 
@@ -26341,7 +26461,9 @@ void Controller::processAudioLayer() {
                 // Handle Fading Triggers
                 if ((aBD.newBeatFlag) && (!aBD.fadeAction)) aBD.fadeAction = true;
                 if (!aBD.fadeAction) {
-                    bool fadeTrigger = (aBD.directionMode == 0) ? (aBD.fadeFlag && aBD.counter >= aBD.counterFadeStart) : (aBD.fadeFlag && aBD.counter <= aBD.counterFadeStart);
+                    // Forward (and the forward half of PONG) fades near the end, backward near the start.
+                    const bool movingForward = (aBD.directionMode == 0) || ((aBD.directionMode == 3) && (aBD.directionPhase == 1));
+                    bool fadeTrigger = movingForward ? (aBD.fadeFlag && aBD.counter >= aBD.counterFadeStart) : (aBD.fadeFlag && aBD.counter <= aBD.counterFadeStart);
                     if (fadeTrigger) aBD.fadeAction = true;
                 }
 
@@ -26375,7 +26497,7 @@ void Controller::processAudioLayer() {
                     case 2:  // Ping (Forward then Backward)
                         switch (aBD.directionPhase) {
                             case 0:  // Forward phase
-                                if (aBD.counter == 0.0f) io.midi.txTriggerNoteOn[i] = true;
+                                if (aBD.counter == aBD.counterStart) io.midi.txTriggerNoteOn[i] = true;
                                 aBD.counter += aBD.increment;
                                 if (aBD.counter > (aBD.counterEnd - 1.0f)) {
                                     aBD.counter = aBD.counterEnd - 1.0f;
@@ -26397,7 +26519,7 @@ void Controller::processAudioLayer() {
                                 if (aBD.counter == aBD.counterEnd - 1.0f) io.midi.txTriggerNoteOn[i] = true;
                                 aBD.counter -= aBD.increment;
                                 if (aBD.counter < aBD.counterStart) {
-                                    aBD.counter = 0.0f;
+                                    aBD.counter = aBD.counterStart;  // the forward half starts at START, not at the first frame
                                     aBD.directionPhase = 1;
                                     aBD.fadeFlag = true;
                                 }
@@ -26740,8 +26862,9 @@ void Controller::processAudioSend(uint32_t* outputBuffer) {
     previewRender(previewRing, previewVoice, previewBlock, I2S_BLOCK_SIZE, kLayerVolumeCoef * kNumberDataLibrary[(previewLevel <= 100) ? previewLevel : 100].powMultiplier);
 
     for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
-        float outL = audioSend_L[i] + previewBlock[i];
-        float outR = audioSend_R[i] + previewBlock[i];
+        // One NaN or infinity here would sit in the master low-pass for good and silence the output.
+        float outL = finiteOrZero(audioSend_L[i] + previewBlock[i]);
+        float outR = finiteOrZero(audioSend_R[i] + previewBlock[i]);
 
         // Apply master volume gains
         outL *= mixer.volumeLeftFloat;
@@ -27322,8 +27445,6 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 Overdrive& ov_ = effect_.overdrive;
 
                 // Constants for cubic waveshaping and mixing
-                const float kThird = 0.33333333f;      // 1/3
-                const float kTwoThirds = 0.66666667f;  // 2/3
                 const float kInv100 = 0.01f;           // 1/100 for percentage to linear conversion
 
                 // Cache Parameters
@@ -27342,17 +27463,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 float driveSignal = hp_output * gain;
                 float shapedSignal;
 
-                // Calculate threshold limits based on the cubic algorithm
-                float th_limit = kTwoThirds * threshold;
-
-                if (driveSignal < -threshold) {
-                    shapedSignal = -th_limit;
-                } else if (driveSignal > threshold) {
-                    shapedSignal = th_limit;
-                } else {
-                    // The core cubic function: x - (x^3 / 3)
-                    shapedSignal = driveSignal - ((driveSignal * driveSignal * driveSignal) * kThird);
-                }
+                shapedSignal = overdriveShape(driveSignal, threshold);  // continuous at the threshold (DspMath.h)
 
                 // 4. POST-FILTER (Tone Shaping)
                 // Direct Form II Biquad Filter.
@@ -27450,8 +27561,6 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // Access the bitcrusher instance and cache variables for performance.
                 Bitcrusher& bit_ = effect_.bitcrusher;
 
-                const float kScale24Bit = 16777215.0f;        // 0xFFFFFF
-                const float kInvScale24Bit = 5.96046448e-8f;  // 1.0 / 16777215.0
                 const float kGateThresh = 0.002f;             // Silence gate threshold
 
                 // Local cache for processing
@@ -27478,14 +27587,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                         if (bit_.mode == BIT_FOLD) {
                             // WAVEFOLDING: Reflects the signal back when it exceeds thresholds.
                             // Creates rich, complex harmonics compared to hard clipping.
-                            while (processed > limPos || processed < limNeg) {
-                                if (processed > limPos) {
-                                    processed = limPos - (processed - limPos);
-                                }
-                                if (processed < limNeg) {
-                                    processed = limNeg - (processed - limNeg);
-                                }
-                            }
+                            processed = foldSignal(processed, limNeg, limPos);  // constant time (DspMath.h)
                         } else {
                             // HARD CLIPPING: Simply clamps the signal at the thresholds.
                             if (processed > limPos)
@@ -27494,16 +27596,8 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                                 processed = limNeg;
                         }
 
-                        // --- BIT DEPTH REDUCTION (Quantization) ---
-                        // Normalize [-1.0, 1.0] to [0.0, 1.0] for integer masking.
-                        float normalized = (processed + 1.0f) * 0.5f;
-
-                        // Scale to 24-bit integer space and apply the bitmask.
-                        uint32_t scaled = (uint32_t)(normalized * kScale24Bit);
-                        scaled &= resMask;
-
-                        // Convert back to float and expand to audio range [-1.0, 1.0].
-                        currentSample = ((float)scaled * kInvScale24Bit * 2.0f) - 1.0f;
+                        // --- BIT DEPTH REDUCTION (Quantization), rounded: silence stays silence ---
+                        currentSample = quantize24(processed, resMask);
                     }
                 }
 
@@ -29106,31 +29200,39 @@ void Controller::interruptLongKeyRead() {
         // Cycle beat-generation presets on repeated long-press steps.
         else if (layerBeatKeyFlag) {
             keyboard.longKeyCounter = 0;
+            // This is a timer interrupt (priority 0, the audio's level): the beat generation (undo copy,
+            // bank edit, six widgets drawn on the LCD) takes milliseconds and skipped audio blocks. Only
+            // the stage is noted here; update() generates the beat.
             switch (layerBeatKeyStage) {
                 case 0:
-                    layerSong_generateBeat(0);
+                    layerBeatActionStage = 0;
+                    layerBeatActionFlag = true;
                     layerBeatKeyStage = 1;
                     break;
 
                 case 1:
-                    layerSong_generateBeat(1);
+                    layerBeatActionStage = 1;
+                    layerBeatActionFlag = true;
                     layerBeatKeyStage = 2;
                     break;
 
                 case 2:
-                    layerSong_generateBeat(2);
+                    layerBeatActionStage = 2;
+                    layerBeatActionFlag = true;
                     layerBeatKeyStage = 3;
                     break;
 
                 case 3:
                     // Apply BASIC_4 fill to all beats (4 hits per beat).
-                    layerSong_generateBeat(3);
+                    layerBeatActionStage = 3;
+                    layerBeatActionFlag = true;
                     layerBeatKeyStage = 4;
                     break;
 
                 case 4:
                     // Apply BASIC_8 fill to all beats (8 hits per beat).
-                    layerSong_generateBeat(4);
+                    layerBeatActionStage = 4;
+                    layerBeatActionFlag = true;
                     layerBeatKeyFlag = false;
                     stopLongKeyTimer();
                     keyboard.longKeyCounter = 0;
@@ -29176,21 +29278,20 @@ void Controller::interruptSd() {
 
     // 1. SD REMOVAL DETECTION
     // Detect unexpected SD card removal using hardware detect signal.
+    // The check runs every 0.5 s. One reading of "no card" can be a contact bouncing when the unit is bumped,
+    // so the card counts as lost only when two readings in a row say so. A full rescan after a glitch took
+    // longer than the watchdog and wiped the samples in memory.
     if ((sd.detect) && (sd_detect() == SD_ERROR)) {
-        // 2. FILE SYSTEM SHUTDOWN
-        // Close active file handle and unmount SD interface safely.
-        f_close(&sd.file);
-
-        // Detach the SD card driver from the system
-        sd_unmount();
-
-        // 3. STATE & UI ALERT UPDATE
-        // Reset SD flags and notify UI about removal condition.
-        sd.detect = false;
-        sd.ready = false;
-
-        // Display a critical error message on the LCD for the user
-        lcd_drawSdAlert(SD_ERROR_DETECT);
+        if (++sd.lostCount >= 2) {
+            // 2. Only the flags here: this is an interrupt, and closing the file, unmounting and drawing
+            // the alert use FatFs and the LCD, which the main loop may be using. update() does the rest.
+            sd.detect = false;
+            sd.ready = false;
+            sd.removedFlag = true;
+            sd.lostMs = HAL_GetTick();
+        }
+    } else {
+        sd.lostCount = 0;
     }
 }
 

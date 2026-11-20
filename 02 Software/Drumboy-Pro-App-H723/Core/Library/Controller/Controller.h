@@ -285,7 +285,9 @@ class Controller {
     bool transitionShowMenu, transitionClearMenu;
     bool transitionShowEncoder[kEncoderSize], transitionClearEncoder[kEncoderSize];
 
-    uint8_t layerBeatKeyStage;                                        
+    uint8_t layerBeatKeyStage;
+    volatile bool layerBeatActionFlag = false;   // the long press of the beat key (a timer interrupt) asks for a beat ...
+    volatile uint8_t layerBeatActionStage = 0;   // ... of this stage; update() generates it                                        
     bool layerSongAddArmed;  // ADD pressed on Layer Song: a short press inserts a beat
     bool layerSongAddUsed;   // another key or encoder was used while ADD was held
     int32_t layerSongShift;  // net SHIFT ALL since the page was opened, in intervals
@@ -542,6 +544,7 @@ class Controller {
 
     Io     getIo()    { return io; }                                    // Get MIDI/Sync state
     void   midi_countRxError() { io.midi.rxErrors = io.midi.rxErrors + 1; }  // MIDI IN UART error (diagnostics)
+    void   midi_txError() { io.midi.txBusy = false; startMidiTx(); }          // MIDI OUT UART error: release the transmitter and go on with the queue
     Mixer  getMixer() { return mixer; }                                 // Get Master audio levels
     Menu   getMenu()  { return menu; }                                  // Get currently active UI screen
 

@@ -19,7 +19,7 @@
 #include <string.h>
 
 struct PreviewFormat {
-    uint8_t bits;      // 8, 16, 24 or 32 (float)
+    uint8_t bits;      // 8, 16, 24, 32 (float) or 33 (32-bit integer PCM)
     uint8_t channels;  // 1 or 2
     uint32_t rate;     // Hz
 };
@@ -57,7 +57,14 @@ inline float previewDecode(const uint8_t* p_, uint8_t bits_) {
         case 32: {
             float v;
             memcpy(&v, p_, 4);
-            return v;
+            uint32_t bits;  // a NaN or an infinity in the file is silence (tested in the bits: -ffast-math folds a float compare)
+            memcpy(&bits, &v, 4);
+            return ((bits & 0x7F800000u) == 0x7F800000u) ? 0.0f : v;
+        }
+        case 33: {  // 32-bit integer PCM
+            int32_t s;
+            memcpy(&s, p_, 4);
+            return static_cast<float>(s) * (1.0f / 2147483648.0f);
         }
         default:
             return 0.0f;
@@ -80,7 +87,7 @@ inline uint32_t previewRingFree(const PreviewRing& r_) { return (r_.mask + 1) - 
 inline uint32_t previewConvert(PreviewRing& r_, const uint8_t* raw_, uint32_t bytes_, const PreviewFormat& f_) {
     const uint32_t step = previewFrameBytes(f_);
     const uint8_t repeat = previewRepeat(f_);
-    if ((step == 0) || ((f_.bits != 8) && (f_.bits != 16) && (f_.bits != 24) && (f_.bits != 32))) return bytes_;
+    if ((step == 0) || ((f_.bits != 8) && (f_.bits != 16) && (f_.bits != 24) && (f_.bits != 32) && (f_.bits != 33))) return bytes_;
     uint32_t used = 0;
     uint32_t w = r_.write;
     while ((used + step <= bytes_) && ((r_.mask + 1) - (w - r_.read) >= repeat)) {

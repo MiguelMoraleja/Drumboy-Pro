@@ -1,7 +1,7 @@
 // Atomic saves: a slot file (song, drumkit) is never overwritten in place. A power cut, a crash
 // or a card that fails half way through a SAVE must leave the slot with its old content or its
 // new content, never with half of one. Hardware-free decisions, tested on a PC (see 02 Software/tests);
-// the file work around them is in Controller/SlotFile.h.
+// the file work around them is in Global/SlotFile.h.
 //
 // How a save goes (File_001.rwf is the slot):
 //   1. The new content is written to File_001.tmp.

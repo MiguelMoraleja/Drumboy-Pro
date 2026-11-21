@@ -5540,6 +5540,9 @@ SdResult Controller::sd_loadImage(const char* fileAddress, uint32_t paletteAddre
     return result;
 }
 
+// A save is dozens of card operations: the watchdog is fed after each one (SlotFile.h).
+static void saveWatchdogTick() { IWDG1->KR = 0xAAAA; }
+
 void Controller::sd_recoverSaves() {
     /// @brief Start-up: for every song and drumkit slot, deletes a half-written .tmp file and puts a
     /// verified .new file in place of the slot (SlotFile.h). Cheap: one failed open per missing file.
@@ -7067,7 +7070,7 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
             uint8_t genData[kGenFileSize];
             genWrite(genMix, genData);
             out.write(genData, kGenFileSize);
-        });
+        }, saveWatchdogTick);
         if (saved) result = SD_OK;
     }
 
@@ -7109,7 +7112,7 @@ SdResult Controller::sd_clearFile(uint8_t fileNum_) {
             out.writeBlocks(kDataDrumkit, kDrumkitByteSize);
             for (uint8_t l = 0; l < kLayerLibrarySize; l++) out.writeBlocks(kDataSong, kSongByteSize);
             out.write(eof, strlen(eof));
-        });
+        }, saveWatchdogTick);
         if (cleared) result = SD_OK;
     }
 
@@ -7701,7 +7704,7 @@ SdResult Controller::sd_saveDrumkit(uint8_t kitNum_) {
             out.write(kDrumkitRef, strlen(kDrumkitRef));
             out.writeBlocks(data, kDrumkitByteSize);
             out.write(eof, strlen(eof));
-        });
+        }, saveWatchdogTick);
         if (saved) result = SD_OK;
     }
 
@@ -7742,7 +7745,7 @@ SdResult Controller::sd_clearDrumkit(uint8_t kitNum_) {
             out.write(kDrumkitRef, strlen(kDrumkitRef));
             out.writeBlocks(kDataDrumkit, kDrumkitByteSize);
             out.write(eof, strlen(eof));
-        });
+        }, saveWatchdogTick);
         if (cleared) result = SD_OK;
     }
 
@@ -20217,7 +20220,12 @@ void Controller::layer_playGen(uint8_t layerNum_, float fillVolMultiplier_) {
     /// generator's LENGTH and SWEEP where a sample has START and END (their LFOs apply to them).
     Layer& layer = layerLibrary[layerNum_];
     LayerPlayData& lD = layerPlayData[layerNum_];
-    BeatPlayData& tBD = lD.tempBeatPlayData;
+    // Built apart and published in one step, as layer_playBeat does: this runs from the main loop (pad,
+    // MIDI) and from the sequencer's timer interrupt, which can land in the middle of the other call, and
+    // the audio interrupt copies lD.tempBeatPlayData while a new note is pending.
+    BeatPlayData built;
+    memset(&built, 0, sizeof(built));
+    BeatPlayData& tBD = built;
     BeatPlayData& aBD = lD.activeBeatPlayData;
 
     // The value of the LFO in a slot (0 = none, or switched off), as the sample path reads it.
@@ -20236,7 +20244,7 @@ void Controller::layer_playGen(uint8_t layerNum_, float fillVolMultiplier_) {
         // 1. PROBABILITY
         if (lfoAt(layer.lfoProbability, d, dep)) nProbability = clamp(static_cast<int16_t>(layer.probability + round(100 * (d - 0.5) * dep)), (int16_t)kMinLayerProbability, (int16_t)kMaxLayerProbability);
         const int random = rand() % 10000;
-        if (random > kNumberDataLibrary[nProbability].stdMultiplier * 10000.0f) return;
+        if (random >= kNumberDataLibrary[nProbability].stdMultiplier * 10000.0f) return;  // 0 % never plays (with > it played once in 10,000)
 
         // 2. THE LAYER'S FIELDS, WITH THEIR LFOS
         if (lfoAt(layer.lfoLevel, d, dep)) nLevel = clamp(static_cast<int16_t>(layer.level + round(50 * (d - 0.5) * dep)), (int16_t)kMinLayerLevel, (int16_t)kMaxLayerLevel);
@@ -20292,7 +20300,13 @@ void Controller::layer_playGen(uint8_t layerNum_, float fillVolMultiplier_) {
     lD.beatStartFlag = true;
     lD.beatEndFlag = false;
 
-    // 4. PUBLISH (as layer_playBeat: under a critical section, the audio interrupt reads aBD)
+    // 4. PUBLISH (as layer_playBeat: the finished note at once, then under a critical section: the audio interrupt reads aBD)
+    {
+        uint32_t primaskPublish = __get_PRIMASK();
+        __disable_irq();
+        memcpy(&lD.tempBeatPlayData, &built, sizeof(BeatPlayData));
+        __set_PRIMASK(primaskPublish);
+    }
     if (!lD.tempBeatTimingFlag) {
         uint32_t primaskBeat = __get_PRIMASK();
         __disable_irq();
@@ -20301,8 +20315,8 @@ void Controller::layer_playGen(uint8_t layerNum_, float fillVolMultiplier_) {
             aBD.counterFade = 0;
             aBD.newBeatFlag = true;
         } else {
-            memcpy(&aBD, &tBD, sizeof(BeatPlayData));
-            memset(&tBD, 0, sizeof(BeatPlayData));
+            memcpy(&aBD, &lD.tempBeatPlayData, sizeof(BeatPlayData));
+            memset(&lD.tempBeatPlayData, 0, sizeof(BeatPlayData));
         }
         __set_PRIMASK(primaskBeat);
     }
@@ -23609,6 +23623,7 @@ void Controller::lcd_drawGenViewData() {
     /// note's waveform as the real generator makes it, the sweep over the note, and the spectrum at
     /// the start, the middle and the end. Drawn from nothing whenever a setting changes.
     if (selectedLayerNum < 0) return;
+    IWDG1->KR = 0xAAAA;  // the peaks below render a few hundred thousand samples
     const uint8_t l = static_cast<uint8_t>(selectedLayerNum);
     const Layer& layer = layerLibrary[l];
 
@@ -23984,6 +23999,7 @@ void Controller::lcd_drawHissViewData() {
     const uint32_t key = hissViewState();
     if (key == hissViewKey) return;
     hissViewKey = key;
+    IWDG1->KR = 0xAAAA;  // the texture renders a second of the bed
     const GsHiss in = {genMix.hissType, genMix.hissLevel, genMix.hissTone, genMix.hissDuck};
     static_assert(4 * kHvTextureCols <= 4096, "the HISS page's peaks and RMS fit the view scratch");
     uint8_t* const peaksL = reinterpret_cast<uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS);

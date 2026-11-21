@@ -1,6 +1,9 @@
 // Writing and recovering slot files (song, drumkit) so a save is atomic and checked
 // (AtomicSave.h explains the scheme). Only FatFs is used, so it runs on a PC against a mock
 // (02 Software/tests/mock/ff.h, test_atomicsave).
+//
+// The watchdog: a save is dozens of card operations (each bounded by the driver, 0.8 s), so the
+// caller passes a tick function that feeds the watchdog after every write and read.
 #ifndef __SLOTFILE_H
 #define __SLOTFILE_H
 
@@ -26,14 +29,18 @@ inline bool slotFileComplete(FIL* f_, uint32_t headerBytes_, uint32_t bodyBytes_
 
 // Writes one slot file and checks it. Every byte goes through here: a write that puts out fewer bytes
 // than asked (full card, card error) is a failure, which an f_write result alone does not tell.
+typedef void (*SaveTick)();
+
 class SaveWriter {
   public:
-    explicit SaveWriter(FIL* file_) : file(file_) {}
+    explicit SaveWriter(FIL* file_, SaveTick tick_ = nullptr) : file(file_), tick(tick_) {}
 
     void write(const void* data_, uint32_t size_) {
         if (!good || (size_ == 0)) return;
         UINT written = 0;
-        if ((f_write(file, data_, size_, &written) != FR_OK) || (written != size_)) {
+        const bool wrote = (f_write(file, data_, size_, &written) == FR_OK) && (written == size_);
+        if (tick) tick();
+        if (!wrote) {
             good = false;
             return;
         }
@@ -63,7 +70,9 @@ class SaveWriter {
         while (whole && (remaining > 0)) {
             const UINT chunk = (remaining > sizeof block) ? static_cast<UINT>(sizeof block) : static_cast<UINT>(remaining);
             UINT got = 0;
-            if ((f_read(file, block, chunk, &got) != FR_OK) || (got != chunk)) {
+            const bool read = (f_read(file, block, chunk, &got) == FR_OK) && (got == chunk);
+            if (tick) tick();
+            if (!read) {
                 whole = false;
                 break;
             }
@@ -76,14 +85,16 @@ class SaveWriter {
 
   private:
     FIL* file;
+    SaveTick tick;
     bool good = true;
     uint32_t total = 0;
     uint32_t crc = 0;
 };
 
-// Puts the verified .new file in the place of the slot. A power cut between the two steps leaves
-// the .new file, which slotRecover puts in place at the next start. If the old slot can't be deleted
-// nothing has changed: the .new file is dropped.
+// Puts the verified .new file in the place of the slot. If the old slot can't be deleted nothing has
+// changed: the .new file is dropped. If the slot was deleted and the rename then fails, the verified
+// .new file stays: the next save puts it back before it starts (slotSave), or the next start does (slotRecover).
+// A power cut between the two steps leaves the same state.
 inline bool slotReplace(const char* readyPath_, const char* finalPath_) {
     const FRESULT removed = f_unlink(finalPath_);
     if ((removed != FR_OK) && (removed != FR_NO_FILE) && (removed != FR_NO_PATH)) {
@@ -98,17 +109,26 @@ inline bool slotReplace(const char* readyPath_, const char* finalPath_) {
 // files, which have their own seal) it is written to finalPath_ directly. True = done.
 // On a failure the slot is as it was (atomic) and the .tmp file is gone.
 template <typename Fill>
-inline bool slotSave(FIL* f_, const char* finalPath_, bool atomic_, Fill fill_) {
+inline bool slotSave(FIL* f_, const char* finalPath_, bool atomic_, Fill fill_, SaveTick tick_ = nullptr) {
     char tempPath[64], readyPath[64];
     const bool viaTemp = atomic_ && atomicTempPath(tempPath, sizeof tempPath, finalPath_) && atomicReadyPath(readyPath, sizeof readyPath, finalPath_);
     const char* target = viaTemp ? tempPath : finalPath_;
     f_close(f_);
+    if (viaTemp) {
+        // An earlier save may have failed at its last step and left its verified .new file with the slot
+        // deleted: put it back first, so a second failure now cannot lose the only good copy.
+        if (f_open(f_, finalPath_, FA_READ) == FR_OK) {
+            f_close(f_);
+        } else {
+            f_rename(readyPath, finalPath_);  // FR_NO_FILE when there is no .new either: nothing to do
+        }
+    }
     if (f_open(f_, target, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
         f_close(f_);
         if (viaTemp) f_unlink(target);
         return false;
     }
-    SaveWriter out(f_);
+    SaveWriter out(f_, tick_);
     fill_(out);
     if (!out.finish(target)) {
         if (viaTemp) f_unlink(target);

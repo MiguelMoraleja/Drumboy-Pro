@@ -1,4 +1,4 @@
-// A tiny in-memory stand-in for FatFs (ff.h) so the slot-file code (Controller/SlotFile.h) runs on a
+// A tiny in-memory stand-in for FatFs (ff.h) so the slot-file code (Global/SlotFile.h) runs on a
 // PC. Only what that code uses. Faults can be injected: a write that fails, comes up short or stores a
 // wrong byte, a close or a delete that fails, and a power cut at any step (a MockPowerCut exception
 // that leaves the "card" as it was at that moment).

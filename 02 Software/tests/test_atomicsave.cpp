@@ -1,4 +1,4 @@
-// Host-side tests for atomic saves (AtomicSave.h, Controller/SlotFile.h) against an in-memory
+// Host-side tests for atomic saves (AtomicSave.h, Global/SlotFile.h) against an in-memory
 // stand-in for FatFs (mock/ff.h): a failed or cut-short save never damages the slot, a power
 // cut at any step leaves the old or the new file, and the start-up recovery sorts out what is left.
 
@@ -39,16 +39,22 @@ static std::vector<uint8_t> makeContent(uint8_t seed) {
     return v;
 }
 
+static int ticks = 0;
+static void countTick() { ticks++; }
+
 // The save the firmware does: the content in pieces, the body in 512-byte blocks.
 static bool save(const std::vector<uint8_t>& content, bool atomic = true) {
     FIL f;
     const uint32_t head = static_cast<uint32_t>(strlen(kRef));
-    return slotSave(&f, kSlot, atomic, [&](SaveWriter& out) {
-        out.write(content.data(), head);
-        out.writeBlocks(content.data() + head, kBody);
-        out.write(content.data() + head + kBody, 3);
-        out.write(content.data() + head + kBody + 3, static_cast<uint32_t>(content.size()) - head - kBody - 3);
-    });
+    return slotSave(
+        &f, kSlot, atomic,
+        [&](SaveWriter& out) {
+            out.write(content.data(), head);
+            out.writeBlocks(content.data() + head, kBody);
+            out.write(content.data() + head + kBody, 3);
+            out.write(content.data() + head + kBody + 3, static_cast<uint32_t>(content.size()) - head - kBody - 3);
+        },
+        countTick);
 }
 
 static void putFile(const char* path, const std::vector<uint8_t>& v) {
@@ -286,6 +292,67 @@ static void testPowerCutDuringRecovery() {
     }
 }
 
+// A save that fails at its last step leaves the verified .new file with the slot deleted: the next save
+// puts it back before it starts, so a second failure does not lose the only good copy.
+static void testLeftoverNewIsKept() {
+    const auto oldContent = makeContent(1), newContent = makeContent(2), thirdContent = makeContent(3);
+    mockFs().reset();
+    putFile(kSlot, oldContent);
+    mockFs().failRenameAt = 2;
+    CHECK(!save(newContent), "the last step failed");
+    CHECK(!hasFile(kSlot) && fileIs(kReady, newContent), "the slot is gone, the verified copy waits");
+    mockFs().failRenameAt = -1;
+    // The next save fails early (a write error): the leftover became the slot again first.
+    mockFs().writes = 0;
+    mockFs().failWriteAt = 1;
+    CHECK(!save(thirdContent), "the second save fails");
+    mockFs().failWriteAt = -1;
+    CHECK(fileIs(kSlot, newContent) && noTemp(), "the first save's verified copy is the slot again");
+    // And a save that works replaces it as usual.
+    CHECK(save(thirdContent) && fileIs(kSlot, thirdContent) && noTemp(), "a later save works");
+
+    // The same through a power cut anywhere in the second save: the slot is the verified copy or the third content, whole.
+    mockFs().reset();
+    putFile(kSlot, oldContent);
+    mockFs().failRenameAt = 2;
+    save(newContent);
+    mockFs().failRenameAt = -1;
+    const MockFs saved = mockFs();  // the card after the failed save
+    int totalOps = 0;
+    mockFs().ops = 0;
+    save(thirdContent);
+    totalOps = mockFs().ops;
+    for (int cut = 1; cut <= totalOps; cut++) {
+        mockFs() = saved;
+        mockFs().ops = 0;
+        mockFs().cutAtOp = cut;
+        try {
+            save(thirdContent);
+        } catch (const MockPowerCut&) {
+        }
+        mockFs().cutAtOp = -1;
+        FIL f;
+        slotRecover(&f, kSlot, kRef, kBody);
+        CHECK(noTemp(), "cut %d: temp left", cut);
+        CHECK(fileIs(kSlot, newContent) || fileIs(kSlot, thirdContent), "cut %d: the slot is neither of the two good copies", cut);
+    }
+}
+
+static void testWatchdogTick() {
+    mockFs().reset();
+    ticks = 0;
+    putFile(kSlot, makeContent(1));
+    CHECK(save(makeContent(2)), "save");
+    // Every write and every read-back chunk ticks: 6 writes, 3 read chunks of the 1.6 KB file.
+    CHECK(ticks >= 9, "ticks during a save: %d", ticks);
+    // Without a tick function nothing is called (the default).
+    FIL f;
+    ticks = 0;
+    const auto c = makeContent(3);
+    CHECK(slotSave(&f, kSlot, true, [&](SaveWriter& out) { out.write(c.data(), static_cast<uint32_t>(c.size())); }), "save without a tick (the content is not a whole slot file, but the write is)");
+    CHECK(ticks == 0, "no tick function, no ticks");
+}
+
 static void testWriterCounting() {
     mockFs().reset();
     FIL f;
@@ -321,6 +388,8 @@ int main() {
     testRecoveryCases();
     testPowerCutDuringRecovery();
     testWriterCounting();
+    testLeftoverNewIsKept();
+    testWatchdogTick();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

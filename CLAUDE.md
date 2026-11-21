@@ -14,7 +14,7 @@ Preparing samples or drumkits: `docs/drumkit-specs.md` (formats, limits, names, 
 
 The owner's standing rule (2026-11-13): never trade sound quality for speed, memory or simplicity. If the audio engine runs out of processor time, find the room elsewhere (data cache, faster code, the unused DTCM RAM, a leaner screen, a specialized firmware build for heavy use) and do not thin out filters, effects, bit depth or sample rate. A cheaper algorithm is only acceptable if it sounds the same. Say so in the backlog when a choice touches this.
 
-Songs and kits are saved only through `slotSave` (`Controller/SlotFile.h`: temp file, checked, replace; backlog 65), never in place; a coefficient set the audio interrupt reads together is published inside an `IrqGuard` scope (`Global.h`); timer interrupts (`interruptPlay` and the others) never draw on the LCD: set a flag, draw in `update()`.
+Songs and kits are saved only through `slotSave` (`Global/SlotFile.h`: temp file, checked, replace; backlog 65), never in place; a coefficient set the audio interrupt reads together is published inside an `IrqGuard` scope (`Global.h`); timer interrupts (`interruptPlay` and the others) never draw on the LCD: set a flag, draw in `update()`.
 
 SD writes with the data cache on need a cache clean before every DMA (`FATFS/Target/sd_diskio.c`): a missing clean in the scratch-buffer path corrupted two cards (backlog 56). Any new DMA from a cacheable buffer needs the same.
 

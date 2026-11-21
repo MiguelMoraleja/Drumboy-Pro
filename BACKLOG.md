@@ -966,7 +966,7 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Decided by the owner:** after the review (item 62) the next work is stability, before the planned features (59 to 61). Four of the review's open findings are built in V1.18; none changes the sound.
 
-**1. Saving a song or a drumkit is atomic and checked** (`Controller/SlotFile.h`, decisions in `Global/AtomicSave.h`, `test_atomicsave`).
+**1. Saving a song or a drumkit is atomic and checked** (`Global/SlotFile.h`, decisions in `Global/AtomicSave.h`, `test_atomicsave`).
 - A slot (`File_NNN.rwf`, `Drumkit_NNN.rwd`) is no longer truncated and rewritten in place. The new content goes to `File_NNN.tmp`. Every write must put out all its bytes (a write that comes up short, as on a full card, was not noticed before), the file must be as long as what was written, and it is read back and compared by CRC-32 (a card that took a write wrongly is found now, not at the next load). Then it is renamed `File_NNN.new` and replaces the slot (delete, rename). If anything fails the slot is untouched and the temporary file is deleted; SAVE shows its error.
 - A power cut or crash in the middle: at start-up (`sd_recoverSaves`, before the slots are counted) a `.tmp` file is deleted (never finished) and a `.new` file that is a whole slot file becomes the slot (the cut came between the verified write and the replacing). So a slot is always the old file or the new one, whole. CLEAR (the blank template of a slot) goes the same way.
 - The autosave files keep their own scheme (two files, a seal with a CRC): they are written in place and now also get the length and read-back checks.

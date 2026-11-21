@@ -847,7 +847,7 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Decision (owner, "lets continue as you say"):** one shared pool (`SamplePool.h`, `test_samplepool`). A sample takes `frames x 4` bytes (a stereo sample two planes, each rounded up to 64 bytes) wherever it first fits between the others; the fifteen sectors stay as descriptors (address, bytes, plane size, owner). 32-bit float storage, no thinning.
 
-**Status: built in V1.17, waiting for the hardware test.**
+**Status: built in V1.17, tested on hardware by the owner (the swap, the packing, SAMPLE MEMORY FULL, the long and the stereo samples), released in V1.17.**
 - **Limit:** `kSampleMaxFrames` = 882,000 frames (20 s at 44.1 kHz), mono and stereo alike. A longer file is **ignored** (marked unsupported, like an unsupported format), not cut. Room: four 20 s mono samples fit at once (14.4 MB), or about 80 s mono in total, 40 s stereo.
 - **Loading:** the new sample gets its block while the old one keeps playing when there is room (seamless swap); if there is room only without the layer's own sample, that is released and replaced (the old note stops, as before when the slots ran out); if not even then, the layer is left empty and the alert **SAMPLE MEMORY FULL** shows for 2 s.
 - **Playing, the sample view and the MEM bar** read the sector's address; the MEM bar now shows the share of the pool in use.
@@ -925,6 +925,8 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 - **Refactoring:** `sd_loadFile` and `sd_loadDrumkit` decode the same kit twice; `sd_saveDrumkit` repeats `file_encodeKit`; `encoder_incValue` and `encoder_decValue` are two mirrored 650-line switches; `interruptTransition` is about 700 lines of ramps; `rhythm_setQuantize` repeats the beat rearrangement about ten times.
 - **Performance:** the pitched layer path reads each sample three times through a volatile lambda; the distortion's `2.0f / M_PI` is a double.
 
+**Status: released in V1.17; the owner reports it works fine (no crash since).** The crash may be gone for good or only rarer: if `CRASH 7` comes back, the cause is not one of the two found here.
+
 **If it crashes again:** the alert text and `System/Crash.log` tell the stage and page; `SdErrorCount` (driver) and `audioFaultCount` (I2S) are new counters for a later diagnostics line.
 
 ### 63. EUCLID settings per layer (owner's report, 2026-11-20)
@@ -933,11 +935,11 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Cause.** The page's STEPS, HITS, ROTATE, GRID, MODE and ACCENTS were single variables of the machine. Applying them rebuilt only the selected layer's beats, but opening the page on another layer showed the settings of the layer edited last, and the next turn of any field applied that whole set (including its accents) to the new layer.
 
-**Built in V1.17, waiting for the hardware test** (`EuclidSettings` in `Euclid.h`, `test_euclid`): each layer has its own set. Opening the page on a layer loads that layer's set; every turn stores the set back for that layer. The sets are saved in the song file as an "EUC" block (64 bytes: marker, version 1, six bytes per layer) after the DUB block; older firmware never reads that far, and a song without the block (older songs, a new song) starts every layer at the defaults (16 steps, 4 hits, no rotation, the default grid, REPLACE, accents off). Values from a file are clamped. The autosave notices a change of the settings. Note: what is stored is the layer's settings, not the beats: the beats are in the song as before; the settings are what the page shows and edits for that layer.
+**Built in V1.17, released in V1.17** (`EuclidSettings` in `Euclid.h`, `test_euclid`): each layer has its own set. Opening the page on a layer loads that layer's set; every turn stores the set back for that layer. The sets are saved in the song file as an "EUC" block (64 bytes: marker, version 1, six bytes per layer) after the DUB block; older firmware never reads that far, and a song without the block (older songs, a new song) starts every layer at the defaults (16 steps, 4 hits, no rotation, the default grid, REPLACE, accents off). Values from a file are clamped. The autosave notices a change of the settings. Note: what is stored is the layer's settings, not the beats: the beats are in the song as before; the settings are what the page shows and edits for that layer.
 
 **Not changed:** the settings are per layer, not per bank (the same set applies to whichever song bank is active when the layer is edited). Per bank would be 10 sets per bank; say if you want it.
 
-**Done when.** Layer 1 with ACC 2 and layer 2 with ACC 4 keep their own values when moving between the pages; saving and loading the song keeps them; an older song loads with the defaults.
+**Status: released in V1.17.** **Done when.** Layer 1 with ACC 2 and layer 2 with ACC 4 keep their own values when moving between the pages; saving and loading the song keeps them; an older song loads with the defaults.
 
 ### 64. Check of the DUB reverb and the line-in (2026-11-20)
 
@@ -953,6 +955,8 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 - The signal is the **mono sum** of left and right, high-passed at 5 Hz, then goes through the line-in's own **low-pass (one pole, about 7 kHz)** and a **downward expander** (closes below -62 dBFS to -18 dB, opens at -56 dBFS, 50 ms hold) before the LI-VOL level (`processAudioReceive`).
 - **In DUB mode line-in has no strip** (design D4): its MIXER IN entry point picks a single path: EQ (through the dub filter, dry), FILTER 2 or EFFECT 1 (into the echo, with no dry), REVERB (only the reverb), SEND (straight to the master). So line-in cannot be heard dry and with an echo send at the same time yet (host-tested for every entry point).
 - **Sound-quality note (the owner's rule):** the 7 kHz low-pass and the expander are there for the codec's noise, but they darken the input and eat quiet passages (reverb tails and fades of the source). They are fixed in the source (`LINE_IN_LPF_ENABLE`, `LINE_IN_GATE_ENABLE`). If the test shows they hurt, make them settings (or off by default) and judge the noise by ear.
+
+**Status: the DUB leak fix released in V1.17; the owner reports V1.17 works fine; the line-in unmute and the reverb tail are still to be confirmed one by one.**
 
 **To test on the device.**
 1. Reverb: MIXER to DUB, MODE DUB; raise VERB on a strip and VERB RTN; hits should ring into a tail; MUTE the strip: the tail keeps ringing (a drop); a reverb throw (REVERB + pad) opens the send; with VERB 0 nothing reaches the reverb; turn the reverb off on its own page: silence, with no burst of the dry send.

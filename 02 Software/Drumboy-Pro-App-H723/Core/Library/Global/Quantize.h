@@ -85,4 +85,86 @@ inline uint16_t quantizeSnap(uint16_t interval_, uint8_t grid_, uint8_t strength
     return static_cast<uint16_t>(snapped);
 }
 
+// --- Grids as a set of points, for stepping, inserting and EUCLID --------------------------------------
+// A QuantizeSpec is one or two grids (a mixed grid has two) as periods in thirds of an interval; the points
+// of a grid are P(k) = (k x period + 1) / 3 (k = 0, 1, 2 ...), and a spec's points are the points of both.
+// A plain step of s intervals is {3 x s, 0}: BeatList.h and Euclid.h keep taking a step in intervals and
+// make a spec of it, so the straight grids behave exactly as before.
+struct QuantizeSpec {
+    uint32_t p3;   // the grid's step in thirds of an interval (0 = no grid)
+    uint32_t p3b;  // a second grid (0 = none)
+};
+
+inline QuantizeSpec quantizeSpecOfStep(uint16_t step_) { return QuantizeSpec{step_ * 3u, 0}; }
+
+// The grid the editing keys and EUCLID step through. OFF has no points: it steps by 1:64.
+inline QuantizeSpec quantizeSpec(uint8_t grid_) {
+    if (grid_ == kQuantizeGridOff) return QuantizeSpec{kQuantizeGridInfo[0].periodThirds, 0};
+    const QuantizeGridInfo& g = quantizeGrid(grid_);
+    return QuantizeSpec{g.periodThirds, g.periodThirdsB};
+}
+
+inline uint32_t quantizePointOf(uint32_t p3_, uint32_t k_) { return (k_ * p3_ + 1u) / 3u; }
+
+// The smallest point of the spec after x_ (not wrapped), the largest before x_ (x_ >= 1) and the largest at or
+// before x_. Each is the best of the two grids.
+inline uint32_t quantizeSpecNext(uint32_t x_, const QuantizeSpec& s_) {
+    uint32_t best = quantizePointOf(s_.p3, (3u * x_ + 2u + s_.p3 - 1u) / s_.p3);
+    if (s_.p3b != 0) {
+        const uint32_t other = quantizePointOf(s_.p3b, (3u * x_ + 2u + s_.p3b - 1u) / s_.p3b);
+        if (other < best) best = other;
+    }
+    return best;
+}
+inline uint32_t quantizeSpecPrev(uint32_t x_, const QuantizeSpec& s_) {
+    uint32_t best = quantizePointOf(s_.p3, (3u * x_ - 2u) / s_.p3);
+    if (s_.p3b != 0) {
+        const uint32_t other = quantizePointOf(s_.p3b, (3u * x_ - 2u) / s_.p3b);
+        if (other > best) best = other;
+    }
+    return best;
+}
+inline uint32_t quantizeSpecFloor(uint32_t x_, const QuantizeSpec& s_) {
+    uint32_t best = quantizePointOf(s_.p3, (3u * x_ + 1u) / s_.p3);
+    if (s_.p3b != 0) {
+        const uint32_t other = quantizePointOf(s_.p3b, (3u * x_ + 1u) / s_.p3b);
+        if (other > best) best = other;
+    }
+    return best;
+}
+inline bool quantizeSpecIsPoint(uint32_t x_, const QuantizeSpec& s_) { return quantizeSpecFloor(x_, s_) == x_; }
+
+// How many points lie before the end of a song (both grids; the shared ones count twice, which only makes a
+// bound a little larger).
+inline uint32_t quantizeSpecCount(const QuantizeSpec& s_, uint32_t songInterval_) {
+    if (songInterval_ == 0) return 0;
+    uint32_t n = (songInterval_ * 3u + s_.p3 - 2u) / s_.p3;
+    if (s_.p3b != 0) n += (songInterval_ * 3u + s_.p3b - 2u) / s_.p3b;
+    return n;
+}
+
+// The step in whole intervals when the spec is one grid of whole intervals (every straight grid, and a step
+// made by quantizeSpecOfStep), else 0: a triplet or a mixed grid has no single whole step.
+inline uint16_t quantizeSpecWholeStep(const QuantizeSpec& s_) { return ((s_.p3b == 0) && (s_.p3 % 3u == 0)) ? static_cast<uint16_t>(s_.p3 / 3u) : 0; }
+
+// --- Strength, saved with the song ---------------------------------------------------------------------
+// A "QNT" block after the GEN block (older firmware never reads that far): the marker, a version and the
+// strength. Without the block a song loads with the full snap (100).
+const uint16_t kQuantizeFileSize = 5;
+
+inline void quantizeWriteBlock(uint8_t strength_, uint8_t* out_) {
+    out_[0] = 'Q';
+    out_[1] = 'N';
+    out_[2] = 'T';
+    out_[3] = 1;
+    out_[4] = (strength_ > 100) ? 100 : strength_;
+}
+
+// True when the block is whole and recognised (strength_ then holds its value, at most 100).
+inline bool quantizeReadBlock(uint8_t& strength_, const uint8_t* in_, uint16_t size_) {
+    if ((size_ < kQuantizeFileSize) || (in_[0] != 'Q') || (in_[1] != 'N') || (in_[2] != 'T') || (in_[3] != 1)) return false;
+    strength_ = (in_[4] > 100) ? 100 : in_[4];
+    return true;
+}
+
 #endif

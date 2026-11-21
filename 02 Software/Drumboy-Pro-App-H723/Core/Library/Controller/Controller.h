@@ -294,9 +294,13 @@ class Controller {
     int16_t fsDrawnSlot = -1;                   // the cursor as drawn (-1 = the screen is not drawn)
     uint32_t fileViewKey = 0;                   // what the grid was drawn from, without the cursor (0 = nothing)
     uint32_t fileViewStateDrawn = 0;
+    uint32_t quantizeViewKey = 0;               // what the quantize screen was drawn from (0 = nothing)
+    uint32_t quantizeViewStateDrawn = 0;
     uint8_t slotRepeat = 0;                     // consecutive repeats of a held UP or DOWN: after 8 the step is ten slots
     uint8_t slotStep(bool repeat_);
     uint32_t fileViewState() const;
+    uint32_t quantizeViewState() const;
+    void lcd_drawQuantizeViewData();
     void lcd_drawFileViewData();
     bool sd_readSlotSummary(FsKind kind_, uint8_t slot_, FsSummary& out_);
     void fsSummaryFromMemory(FsSummary& out_) const;
@@ -326,7 +330,7 @@ class Controller {
     uint8_t euclidSteps = 16;
     uint8_t euclidHits = 4;
     uint8_t euclidRotate = 0;
-    uint8_t euclidGrid = kInitialQuantize;  // index into kQuantizeInterval
+    uint8_t euclidGrid = kInitialQuantize;  // index into the grids of Quantize.h (the single grids: kEuclidGridCount)
     bool euclidMerge = false;
     uint8_t euclidAccentCount = 0;  // 0 = off (every hit full); else that many accents, the other hits GHOST
     bool euclidApplied = false;  // the layer holds a pattern; CLEAR restores euclidSnapshot
@@ -859,6 +863,7 @@ class Controller {
     void lcd_drawRhythm_MeasureData();
     void lcd_drawRhythm_BarData();
     void lcd_drawRhythm_QuantizeData();
+    void lcd_drawRhythm_StrengthData();
     // Metronome menu functions
     void lcd_drawMetroMenu();
     void lcd_drawMetro_ActiveData();
@@ -1041,6 +1046,7 @@ class Controller {
     void rhythm_setMeasureBar(uint8_t measure_, uint8_t bar_);
     void rhythm_setBar(uint8_t bar_);
     void rhythm_setQuantize(uint8_t quantize_);
+    void rhythm_setQuantizeStrength(uint8_t strength_);  // how far a recorded hit moves to its grid point, 0 to 100 (Quantize.h)
 
     /* Mixer Functions ------------------------------------------- */
 
@@ -1331,7 +1337,7 @@ class Controller {
     void layerSong_beatRight();
     void layerSong_beatLeft();
 
-    void layerSong_setBeat(uint8_t layerNum_, uint8_t bankNum_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_ = 0, bool draw_ = true);
+    void layerSong_setBeat(uint8_t layerNum_, uint8_t bankNum_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_ = 0, bool draw_ = true, uint8_t strength_ = kQuantizeStrengthDefault);
     void layerSong_setSelectedBeatFill(uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_);
     void layerSong_setSelectedBeatFillTime(uint8_t fillTime_);
     void layerSong_setSelectedBeatFillLevel(uint8_t fillLevel_);

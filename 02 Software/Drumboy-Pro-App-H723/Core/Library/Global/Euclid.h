@@ -92,23 +92,23 @@ inline void euclidText(uint32_t pattern_, uint8_t steps_, char* out_, uint32_t a
     out_[steps_] = '\0';
 }
 
-// Builds out_ from the pattern, one step per grid_ intervals, repeated from the song start to
-// the song end. With merge_ the beats of base_ are kept (a hit on an existing beat keeps that
-// beat and its fill); otherwise only the pattern's beats remain. New hits outside accents_ are
-// GHOST beats (BASIC pattern 1, half velocity); the others FLAT. Returns how many hits didn't
-// fit in the bank (0 when all did).
-inline uint16_t euclidApply(Bank& out_, const Bank& base_, bool merge_, uint32_t pattern_, uint8_t steps_, uint16_t grid_, uint16_t songInterval_, uint32_t accents_ = 0xFFFFFFFFUL) {
+// Builds out_ from the pattern, one step per grid point (a QuantizeSpec's first grid: a straight grid is a
+// whole step of intervals, a triplet grid has points that are not a whole step apart, so the step k sits at
+// P(k) = (k x period + 1) / 3), repeated from the song start to the song end. With merge_ the beats of base_
+// are kept (a hit on an existing beat keeps that beat and its fill); otherwise only the pattern's beats
+// remain. New hits outside accents_ are GHOST beats (BASIC pattern 1, half velocity); the others FLAT.
+// Returns how many hits didn't fit in the bank (0 when all did).
+inline uint16_t euclidApply(Bank& out_, const Bank& base_, bool merge_, uint32_t pattern_, uint8_t steps_, const QuantizeSpec& grid_, uint16_t songInterval_, uint32_t accents_ = 0xFFFFFFFFUL) {
     if (merge_) {
         out_ = base_;
     } else {
         beatListClear(out_);
     }
     uint16_t dropped = 0;
-    if ((steps_ > 0) && (steps_ <= kEuclidMaxSteps) && (grid_ > 0)) {
-        const uint32_t cycle = static_cast<uint32_t>(steps_) * grid_;
-        for (uint32_t start = 0; start < songInterval_; start += cycle) {
+    if ((steps_ > 0) && (steps_ <= kEuclidMaxSteps) && (grid_.p3 > 0)) {
+        for (uint32_t cycle = 0; quantizePointOf(grid_.p3, cycle) < songInterval_; cycle += steps_) {
             for (uint8_t i = 0; i < steps_; i++) {
-                const uint32_t at = start + static_cast<uint32_t>(i) * grid_;
+                const uint32_t at = quantizePointOf(grid_.p3, cycle + i);
                 if (at >= songInterval_) break;
                 if (!(pattern_ & (1UL << i))) continue;
                 if (beatListFind(out_, static_cast<uint16_t>(at)) != -1) continue;  // keep the beat already there
@@ -123,6 +123,13 @@ inline uint16_t euclidApply(Bank& out_, const Bank& base_, bool merge_, uint32_t
     beatListRebuild(out_, songInterval_);
     return dropped;
 }
+inline uint16_t euclidApply(Bank& out_, const Bank& base_, bool merge_, uint32_t pattern_, uint8_t steps_, uint16_t grid_, uint16_t songInterval_, uint32_t accents_ = 0xFFFFFFFFUL) {
+    return euclidApply(out_, base_, merge_, pattern_, steps_, quantizeSpecOfStep(grid_), songInterval_, accents_);
+}
+
+// The grids EUCLID offers: one grid of one step size, the straight ones and the triplets (Quantize.h: the
+// indices 0 to 10; a mixed grid and OFF have no even steps).
+const uint8_t kEuclidGridCount = 11;
 
 // --- The settings of the EUCLID page, one set per layer ---------------------------------------
 // Until V1.17 there was a single set for the whole machine: opening the page on another layer showed

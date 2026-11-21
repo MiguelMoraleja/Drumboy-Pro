@@ -17,6 +17,7 @@
 #include <stdio.h>
 
 #include "Fill.h"
+#include "Quantize.h"
 
 const uint8_t kFillLevelRandom = 4;  // kFillLevelDataLibrary: RANDOM
 
@@ -124,25 +125,30 @@ inline bool beatListAdd(Bank& bank_, uint16_t start_, uint16_t songInterval_) {
 // An interval off the grid moves to the nearest grid line in that direction.
 // The grid starts at 0; when the song length isn't a multiple of the step, the last cell is
 // shorter and the grid restarts at 0 after it.
-inline uint16_t beatListStep(uint16_t interval_, bool forward_, uint16_t step_, uint16_t songInterval_) {
+// The grid is a QuantizeSpec (Quantize.h: a straight, triplet or mixed grid); a step in intervals makes the
+// spec of a straight grid, which steps exactly as the plain arithmetic did.
+inline uint16_t beatListStep(uint16_t interval_, bool forward_, const QuantizeSpec& grid_, uint16_t songInterval_) {
     if (forward_) {
-        const uint32_t target = (static_cast<uint32_t>(interval_) / step_ + 1) * step_;
+        const uint32_t target = quantizeSpecNext(interval_, grid_);
         return (target < songInterval_) ? static_cast<uint16_t>(target) : 0;
     }
-    if (interval_ == 0) return static_cast<uint16_t>(((songInterval_ - 1) / step_) * step_);
-    return (interval_ % step_) ? static_cast<uint16_t>((interval_ / step_) * step_) : static_cast<uint16_t>(interval_ - step_);
+    if (interval_ == 0) return static_cast<uint16_t>(quantizeSpecPrev(songInterval_, grid_));  // the last point before the song end
+    return static_cast<uint16_t>(quantizeSpecPrev(interval_, grid_));
+}
+inline uint16_t beatListStep(uint16_t interval_, bool forward_, uint16_t step_, uint16_t songInterval_) {
+    return beatListStep(interval_, forward_, quantizeSpecOfStep(step_), songInterval_);
 }
 
 // Moves beat beatNum_ one grid step forward or back, jumping over positions taken by other
 // beats and wrapping around the song end. Its fill setting is kept. Returns the beat's new
 // index, or -1 if there is nowhere to go.
-inline int16_t beatListMove(Bank& bank_, uint8_t beatNum_, bool forward_, uint16_t step_, uint16_t songInterval_) {
-    if ((step_ == 0) || (static_cast<int16_t>(beatNum_) > bank_.lastActiveBeatNum)) return -1;
+inline int16_t beatListMove(Bank& bank_, uint8_t beatNum_, bool forward_, const QuantizeSpec& grid_, uint16_t songInterval_) {
+    if ((grid_.p3 == 0) || (static_cast<int16_t>(beatNum_) > bank_.lastActiveBeatNum)) return -1;
     Beat& beat = bank_.beatLibrary[beatNum_];
     const uint16_t start = beat.getStartInterval();
     uint16_t target = start;
-    for (uint32_t tries = 0; tries <= static_cast<uint32_t>(songInterval_ / step_) + 1; tries++) {
-        target = beatListStep(target, forward_, step_, songInterval_);
+    for (uint32_t tries = 0; tries <= quantizeSpecCount(grid_, songInterval_) + 1; tries++) {
+        target = beatListStep(target, forward_, grid_, songInterval_);
         if (target == start) return -1;
         if (beatListFind(bank_, target) == -1) {
             beat.setStartInterval(target);
@@ -151,6 +157,9 @@ inline int16_t beatListMove(Bank& bank_, uint8_t beatNum_, bool forward_, uint16
         }
     }
     return -1;
+}
+inline int16_t beatListMove(Bank& bank_, uint8_t beatNum_, bool forward_, uint16_t step_, uint16_t songInterval_) {
+    return beatListMove(bank_, beatNum_, forward_, quantizeSpecOfStep(step_), songInterval_);
 }
 
 // Shifts every beat by delta_ (positive = later), wrapping around the song end. Fills follow
@@ -170,22 +179,54 @@ inline void beatListRotate(Bank& bank_, int32_t delta_, uint16_t songInterval_) 
 // the last beat runs to the first beat of the next loop). In an empty bank the beat goes at the
 // song start. Returns the new beat's index, or -1 if the bank is full or the gap has no free
 // grid position.
-inline int16_t beatListInsertAfter(Bank& bank_, int16_t beatNum_, uint16_t step_, uint16_t songInterval_) {
-    if ((step_ == 0) || (bank_.lastActiveBeatNum >= static_cast<int16_t>(kBeatLibrarySize) - 1)) return -1;
+inline int16_t beatListInsertAfter(Bank& bank_, int16_t beatNum_, const QuantizeSpec& grid_, uint16_t songInterval_) {
+    if ((grid_.p3 == 0) || (bank_.lastActiveBeatNum >= static_cast<int16_t>(kBeatLibrarySize) - 1)) return -1;
     uint16_t target = 0;
     if (bank_.lastActiveBeatNum >= 0) {
         if ((beatNum_ < 0) || (beatNum_ > bank_.lastActiveBeatNum)) return -1;
         const uint32_t start = bank_.beatLibrary[beatNum_].getStartInterval();
         const uint32_t end = (beatNum_ < bank_.lastActiveBeatNum) ? bank_.beatLibrary[beatNum_ + 1].getStartInterval()
                                                                   : bank_.beatLibrary[0].getStartInterval() + static_cast<uint32_t>(songInterval_);
-        uint32_t mid = ((start + (end - start) / 2) / step_) * step_;
-        if (mid <= start) mid = (start / step_ + 1) * step_;
+        uint32_t mid = quantizeSpecFloor(start + (end - start) / 2, grid_);
+        if (mid <= start) mid = quantizeSpecNext(start, grid_);
         if (mid >= end) return -1;
         target = static_cast<uint16_t>(mid % songInterval_);
     }
     if (!beatListAdd(bank_, target, songInterval_)) return -1;
     beatListRebuild(bank_, songInterval_);
     return beatListFind(bank_, target);
+}
+inline int16_t beatListInsertAfter(Bank& bank_, int16_t beatNum_, uint16_t step_, uint16_t songInterval_) {
+    return beatListInsertAfter(bank_, beatNum_, quantizeSpecOfStep(step_), songInterval_);
+}
+
+// SHIFT ALL one grid step. A straight grid (a whole step in intervals) rotates every beat by that step, as
+// always: shifting back restores the bank exactly, whatever the beats' positions. A triplet or a mixed grid has
+// no whole step, so a rotation would drift off the grid (three steps of 1:8T of 267 are 801, not 800): when
+// every beat sits on a grid point each one moves to the next (or previous) point instead, and the result is
+// still reversible; a bank with a beat between the points rotates by the grid's step rounded to a whole interval.
+inline int32_t beatListShift(Bank& bank_, bool forward_, const QuantizeSpec& grid_, uint16_t songInterval_, int16_t trackBeat_ = -1) {
+    if ((grid_.p3 == 0) || (bank_.lastActiveBeatNum < 0)) return -1;
+    const bool track = (trackBeat_ >= 0) && (trackBeat_ <= bank_.lastActiveBeatNum);
+    const int32_t trackStart = track ? static_cast<int32_t>(bank_.beatLibrary[trackBeat_].getStartInterval()) : 0;
+    const uint16_t whole = quantizeSpecWholeStep(grid_);
+    bool onGrid = (whole == 0);
+    for (int16_t i = 0; onGrid && (i <= bank_.lastActiveBeatNum); i++) {
+        if (!quantizeSpecIsPoint(bank_.beatLibrary[i].getStartInterval(), grid_)) onGrid = false;
+    }
+    if (onGrid) {
+        for (int16_t i = 0; i <= bank_.lastActiveBeatNum; i++) {
+            Beat& beat = bank_.beatLibrary[i];
+            beat.setStartInterval(beatListStep(beat.getStartInterval(), forward_, grid_, songInterval_));
+        }
+        const int32_t moved = track ? static_cast<int32_t>(beatListStep(static_cast<uint16_t>(trackStart), forward_, grid_, songInterval_)) : -1;
+        beatListRebuild(bank_, songInterval_);
+        return moved;
+    }
+    const uint16_t step = (whole != 0) ? whole : static_cast<uint16_t>((grid_.p3 + 1u) / 3u);  // the grid's step; rounded for a triplet or mixed grid
+    const int32_t delta = forward_ ? static_cast<int32_t>(step) : -static_cast<int32_t>(step);
+    beatListRotate(bank_, delta, songInterval_);
+    return track ? (((trackStart + delta) % songInterval_) + songInterval_) % songInterval_ : -1;
 }
 
 // Writes an interval as bar.beat.16th, 1-based (e.g. "2.3.4"). Positions between 16ths add

@@ -636,7 +636,7 @@ void Controller::update() {
                 if (recordActive) {
                     undo_captureRecord(layerNum, activeSongBank);
                     if (!metronome.precountState) {
-                        layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true, noteEvent.data2);
+                        layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true, noteEvent.data2, true, rhythm.quantizeStrength);
                     } else {
                         // Note landed during precount; commit it to position 0 once playback starts.
                         precountPendingBeat[layerNum] = static_cast<uint8_t>(noteEvent.data2 + 1);
@@ -1763,7 +1763,7 @@ void Controller::keyboard_action() {
                             if (recordActive) {
                                 undo_captureRecord(layerNum, activeSongBank);
                                 if (!metronome.precountState) {
-                                    layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true);
+                                    layerSong_setBeat(layerNum, activeSongBank, playInterval, 0, 0, 0, 0, true, 0, true, rhythm.quantizeStrength);
                                 } else {
                                     // Hit landed during precount; commit it to position 0 once playback starts.
                                     precountPendingBeat[layerNum] = 1;  // pads: velocity from the pattern
@@ -3716,6 +3716,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
                 rhythm_setQuantize(rhythm.quantize + 1);
             break;
 
+        case ENC_RHYTHM_STRENGTH:
+            rhythm_setQuantizeStrength(static_cast<uint8_t>(rhythm.quantizeStrength + kQuantizeStrengthStep));
+            break;
+
             // Io functions
 
         case ENC_IO_SYNCIN:
@@ -4381,6 +4385,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_RHYTHM_QUANTIZE:
             if ((!rhythm.quantizeLock) && (rhythm.quantize > kMinQuantize))
                 rhythm_setQuantize(rhythm.quantize - 1);
+            break;
+
+        case ENC_RHYTHM_STRENGTH:
+            rhythm_setQuantizeStrength((rhythm.quantizeStrength > kQuantizeStrengthStep) ? static_cast<uint8_t>(rhythm.quantizeStrength - kQuantizeStrengthStep) : kMinQuantizeStrength);
             break;
 
             // Io functions
@@ -6393,7 +6401,9 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                                 uint8_t startInterval0 = data[offsetBeat + 2];
                                 uint8_t startInterval1 = data[offsetBeat + 3];
                                 uint16_t startInterval = ((uint16_t)startInterval0 << 8) + startInterval1;
-                                if (startInterval < songInterval) layerSong_setBeat(i, j, startInterval, fillType, fillPattern, fillTime, fillLevel, true);  // a beat past the song end (damaged file) is dropped
+                                // A beat past the song end (a damaged file) is dropped. Strength 0: the saved position as it is
+                                // (a hit recorded with STRENGTH below 100 sits off the grid).
+                                if (startInterval < songInterval) layerSong_setBeat(i, j, startInterval, fillType, fillPattern, fillTime, fillLevel, true, 0, true, 0);
                             }
                         }
 
@@ -6988,6 +6998,7 @@ void Controller::file_readNotes(const char* fileName_) {
     dubClear(dubMix);  // a song without a DUB block plays as CHAIN
     euclid_resetSettings();  // and without an EUC block every layer has the default EUCLID settings
     genClear(genMix);  // and without a GEN block it has no generators and no hiss
+    rhythm.quantizeStrength = kQuantizeStrengthDefault;  // and without a QNT block recording snaps fully, as before
     if (f_open(&sd.file, fileName_, FA_READ) != FR_OK) return;
     uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
     UINT got = 0;
@@ -7019,12 +7030,21 @@ void Controller::file_readNotes(const char* fileName_) {
                 uint8_t eucData[kEuclidFileSize] = {0};
                 UINT eucGot = 0;
                 if (f_read(&sd.file, eucData, kEuclidFileSize, &eucGot) == FR_OK) {
-                    euclidReadBlock(euclidSet, eucData, static_cast<uint16_t>(eucGot), static_cast<uint8_t>(sizeof(kQuantizeInterval) / sizeof(kQuantizeInterval[0])), kInitialQuantize);
+                    euclidReadBlock(euclidSet, eucData, static_cast<uint16_t>(eucGot), kEuclidGridCount, kInitialQuantize);
                     // The GEN block follows the EUC block (Generator.h): each layer's generator and the hiss bed.
                     if (eucGot == kEuclidFileSize) {
                         uint8_t genData[kGenFileSize] = {0};
                         UINT genGot = 0;
-                        if (f_read(&sd.file, genData, kGenFileSize, &genGot) == FR_OK) genRead(genMix, genData, static_cast<uint16_t>(genGot));
+                        if (f_read(&sd.file, genData, kGenFileSize, &genGot) == FR_OK) {
+                            genRead(genMix, genData, static_cast<uint16_t>(genGot));
+                            // The QNT block follows the GEN block (Quantize.h): the quantize strength.
+                            if (genGot == kGenFileSize) {
+                                uint8_t quantData[kQuantizeFileSize] = {0};
+                                UINT quantGot = 0;
+                                uint8_t strength = kQuantizeStrengthDefault;
+                                if ((f_read(&sd.file, quantData, kQuantizeFileSize, &quantGot) == FR_OK) && quantizeReadBlock(strength, quantData, static_cast<uint16_t>(quantGot))) rhythm.quantizeStrength = strength;
+                            }
+                        }
                     }
                 }
             }
@@ -7109,6 +7129,10 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
             uint8_t genData[kGenFileSize];
             genWrite(genMix, genData);
             out.write(genData, kGenFileSize);
+            // and the QNT block after the GEN block (Quantize.h): the quantize strength
+            uint8_t quantData[kQuantizeFileSize];
+            quantizeWriteBlock(rhythm.quantizeStrength, quantData);
+            out.write(quantData, kQuantizeFileSize);
         }, saveWatchdogTick);
         if (saved) result = SD_OK;
     }
@@ -9794,7 +9818,12 @@ void Controller::lcd_drawGlobalMenuData(uint8_t encoderNum_) {
                 break;
 
             case ENC_RHYTHM_QUANTIZE:
-                textPtr = kQuantizeDataLibrary[rhythm.quantize].nameLongR;
+                textPtr = quantizeGrid(rhythm.quantize).nameLongR;
+                break;
+
+            case ENC_RHYTHM_STRENGTH:
+                sprintf(textData, "       %03d", rhythm.quantizeStrength);
+                textPtr = textData;
                 break;
 
                 // Metronome functions
@@ -10925,6 +10954,7 @@ void Controller::lcd_drawRhythmMenu() {
     lcd.drawText(kHeaderMeasure, kMenuHeaderTextSize, kMenuHeaderX[1], kMenuHeaderY[1]);
     lcd.drawText(kHeaderBar, kMenuHeaderTextSize, kMenuHeaderX[2], kMenuHeaderY[2]);
     lcd.drawText(kHeaderQuantize, kMenuHeaderTextSize, kMenuHeaderX[3], kMenuHeaderY[3]);
+    lcd.drawText(kHeaderQuantizeStrength, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
 
     // 4. SIGN/UNIT DRAW
     // Draw unit/sign text for each parameter slot.
@@ -10933,6 +10963,7 @@ void Controller::lcd_drawRhythmMenu() {
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[1], kMenuSignBoxY[1]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[2], kMenuSignBoxY[2]);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]);
+    lcd.drawText("  %", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
 
     // 5. DATA DRAW
     // Draw rhythm parameter values.
@@ -10940,6 +10971,7 @@ void Controller::lcd_drawRhythmMenu() {
     lcd_drawRhythm_MeasureData();
     lcd_drawRhythm_BarData();
     lcd_drawRhythm_QuantizeData();
+    lcd_drawRhythm_StrengthData();
 }
 
 void Controller::lcd_drawRhythm_TempoData() {
@@ -11014,6 +11046,14 @@ void Controller::lcd_drawRhythm_BarData() {
     lcd.drawText("    LOCK", kMenuTextBoxTextSize, kMenuTextBoxX[2], kMenuTextBoxY[2]);
 }
 
+void Controller::lcd_drawRhythm_StrengthData() {
+    /// @brief Draws the quantize strength (0 to 100 %).
+    lcd_setMenuDataState(WHITE);
+    char kData[kMenuDataTextSize + 12];
+    sprintf(kData, "       %03d", rhythm.quantizeStrength);
+    lcd.drawText(kData, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
+}
+
 void Controller::lcd_drawRhythm_QuantizeData() {
     /// @brief Draws quantize value and lock indicator.
 
@@ -11023,7 +11063,7 @@ void Controller::lcd_drawRhythm_QuantizeData() {
 
     // 2. VALUE DRAW
     // Draw current quantize value.
-    lcd.drawText(kQuantizeDataLibrary[rhythm.quantize].nameLongR, kMenuDataTextSize, kMenuDataX[3], kMenuDataY[3]);
+    lcd.drawText(quantizeGrid(rhythm.quantize).nameLongR, kMenuDataTextSize, kMenuDataX[3], kMenuDataY[3]);
 
     // 3. LOCK INDICATOR DRAW
     // Draw LOCK status with active/inactive color.
@@ -15626,6 +15666,7 @@ void Controller::rhythm_reset() {
     rhythm_setMeasure(kInitialMeasure);
     rhythm_setBar(kInitialBar);
     rhythm_setQuantize(kInitialQuantize);
+    rhythm_setQuantizeStrength(kQuantizeStrengthDefault);
 }
 
 void Controller::rhythm_menuRight() {
@@ -15634,7 +15675,7 @@ void Controller::rhythm_menuRight() {
     // 1. TAB STATE UPDATE
     // Advance tab index and wrap to first tab at upper boundary.
     preMenuTab = menuTab;
-    (menuTab < kMaxMenu4Tab) ? menuTab += 1 : menuTab = kMinMenu4Tab;
+    (menuTab < kMaxRhythmTab) ? menuTab += 1 : menuTab = kMinMenu4Tab;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation for tab change.
@@ -15647,7 +15688,7 @@ void Controller::rhythm_menuLeft() {
     // 1. TAB STATE UPDATE
     // Decrement tab index and wrap to last tab at lower boundary.
     preMenuTab = menuTab;
-    (menuTab > kMinMenu4Tab) ? menuTab -= 1 : menuTab = kMaxMenu4Tab;
+    (menuTab > kMinMenu4Tab) ? menuTab -= 1 : menuTab = kMaxRhythmTab;
 
     // 2. UI TRANSITION
     // Trigger selection transition animation for tab change.
@@ -15718,6 +15759,12 @@ void Controller::rhythm_menuUp() {
                 }
             }
             break;
+
+        case 4:
+
+            // The strength changes how hits are recorded from now on: no lock, and no alert during playback.
+            rhythm_setQuantizeStrength(static_cast<uint8_t>(rhythm.quantizeStrength + kQuantizeStrengthStep));
+            break;
     }
 }
 
@@ -15784,6 +15831,11 @@ void Controller::rhythm_menuDown() {
                     }
                 }
             }
+            break;
+
+        case 4:
+
+            rhythm_setQuantizeStrength((rhythm.quantizeStrength > kQuantizeStrengthStep) ? static_cast<uint8_t>(rhythm.quantizeStrength - kQuantizeStrengthStep) : kMinQuantizeStrength);
             break;
     }
 }
@@ -15936,6 +15988,14 @@ void Controller::rhythm_setQuantize(uint8_t quantize_) {
         // Restart playback state to apply new quantize grid safely.
         reset();
     }
+}
+
+void Controller::rhythm_setQuantizeStrength(uint8_t strength_) {
+    /// @brief Sets how far a recorded hit moves to its grid point (100 = snaps, 0 = stays where it was played).
+    /// It only matters for hits recorded from now on: no beat is moved, and the transport keeps running.
+    if (strength_ > kMaxQuantizeStrength) strength_ = kMaxQuantizeStrength;
+    rhythm.quantizeStrength = strength_;
+    if (menu == RHYTHM_MENU) lcd_drawRhythm_StrengthData();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -20449,7 +20509,9 @@ uint32_t Controller::file_genCrc(uint32_t crc_) {
     /// @brief Feeds the GEN block (as written) into a CRC, so autosave sees generator edits.
     uint8_t genData[kGenFileSize];
     genWrite(genMix, genData);
-    return autosaveCrc32(crc_, genData, kGenFileSize);
+    uint8_t quantData[kQuantizeFileSize];
+    quantizeWriteBlock(rhythm.quantizeStrength, quantData);  // the strength is part of the song: autosave sees its edits
+    return autosaveCrc32(autosaveCrc32(crc_, genData, kGenFileSize), quantData, kQuantizeFileSize);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -22744,7 +22806,7 @@ void Controller::euclid_select() {
 void Controller::euclid_loadSettings() {
     /// @brief Takes the selected layer's EUCLID settings as the ones the page shows and edits.
     if ((selectedLayerNum < 0) || (selectedLayerNum >= kLayerLibrarySize)) return;
-    const EuclidSettings s = euclidSettingsClamp(euclidSet[selectedLayerNum], static_cast<uint8_t>(sizeof(kQuantizeInterval) / sizeof(kQuantizeInterval[0])), kInitialQuantize);
+    const EuclidSettings s = euclidSettingsClamp(euclidSet[selectedLayerNum], kEuclidGridCount, kInitialQuantize);
     euclidSteps = s.steps;
     euclidHits = s.hits;
     euclidRotate = s.rotate;
@@ -22783,7 +22845,7 @@ void Controller::euclid_apply() {
     }
     const uint32_t pattern = euclidPattern(euclidSteps, euclidHits, euclidRotate);
     const uint32_t accents = euclidAccents(euclidSteps, euclidHits, euclidRotate, euclidAccentCount);
-    euclidDropped = euclidApply(layerSongScratch, euclidSnapshot, euclidMerge, pattern, euclidSteps, static_cast<uint16_t>(kQuantizeInterval[euclidGrid]), songInterval, accents);
+    euclidDropped = euclidApply(layerSongScratch, euclidSnapshot, euclidMerge, pattern, euclidSteps, quantizeSpec(euclidGrid), songInterval, accents);
     euclidApplied = true;
     layerSong_commitBank(0);
     if (euclidDropped) textFullFlag = true;
@@ -22825,7 +22887,7 @@ void Controller::euclid_step(EncoderFunc function_, bool up_) {
             euclidRotate = up_ ? ((euclidRotate + 1 < euclidSteps) ? euclidRotate + 1 : 0) : ((euclidRotate > 0) ? euclidRotate - 1 : euclidSteps - 1);
             break;
         case ENC_EUC_GRID: {
-            const uint8_t last = static_cast<uint8_t>(sizeof(kQuantizeInterval) / sizeof(kQuantizeInterval[0]) - 1);
+            const uint8_t last = static_cast<uint8_t>(kEuclidGridCount - 1);  // the single grids: straight and triplet (a mixed grid or OFF has no even steps)
             euclidGrid = up_ ? ((euclidGrid < last) ? euclidGrid + 1 : 0) : ((euclidGrid > 0) ? euclidGrid - 1 : last);
         } break;
         case ENC_EUC_MODE:
@@ -22850,7 +22912,8 @@ bool Controller::laneViewHidden() const {
     /// FILTER, EQ and instrument page 2 pages). Everything that draws into a lane checks it, and asks for the view to be
     /// refreshed instead.
     return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU) ||
-           (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (menuTab > 0));  // the load, save and clear tabs show the slots
+           (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (menuTab > 0)) ||  // the load, save and clear tabs show the slots
+           ((menu == RHYTHM_MENU) && (menuTab >= 3));                              // the QUANTIZE and STRENGTH fields show the grids
 }
 
 void Controller::lcd_drawLaneView() {
@@ -22869,6 +22932,7 @@ void Controller::lcd_drawLaneView() {
     noteViewKey = 0;                                                  // and no step edit screen
     hissViewKey = 0;                                                  // and no HISS page
     fileViewKey = 0;                                                  // and no slot grid
+    quantizeViewKey = 0;                                              // and no quantize screen
     fsDrawnSlot = -1;
     lcd_drawLaneViewData();
 }
@@ -22908,6 +22972,9 @@ void Controller::lcd_drawLaneViewData() {
         case DRUMKIT_MENU:
             lcd_drawFileViewData();
             break;
+        case RHYTHM_MENU:
+            lcd_drawQuantizeViewData();
+            break;
         default:
             break;
     }
@@ -22946,10 +23013,10 @@ void Controller::lcd_drawEuclidViewData() {
         lcd.drawCircle(kRingCenterX, kRingCenterY, r);
         if (l == sel) {
             // The EUCLID grid as ticks on the selected ring.
-            const uint16_t grid = kQuantizeInterval[euclidGrid];
-            if ((grid > 0) && (songInterval / grid <= 128)) {
+            const QuantizeSpec grid = quantizeSpec(euclidGrid);
+            if (quantizeSpecCount(grid, songInterval) <= 128) {
                 lcd.setForeColor(WHITE);
-                for (uint32_t at = 0; at < songInterval; at += grid) {
+                for (uint32_t k = 0, at = 0; at < songInterval; at = quantizePointOf(grid.p3, ++k)) {
                     const RingPoint p = ringPoint(at, songInterval, r);
                     lcd.drawPixel(static_cast<uint16_t>(p.x), static_cast<uint16_t>(p.y));
                 }
@@ -23018,6 +23085,7 @@ void Controller::lcd_updateLaneView() {
     if ((menu == DUB_MENU) && (dubViewState() != dubViewStateDrawn)) viewDirty = true;
     if ((menu == NOTE_MENU) && (noteViewState() != noteViewStateDrawn)) viewDirty = true;
     if (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (fileViewState() != fileViewStateDrawn)) viewDirty = true;
+    if ((menu == RHYTHM_MENU) && (quantizeViewState() != quantizeViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -24208,6 +24276,24 @@ void Controller::lcd_drawHissLive() {
     gsDrawHissLive(g, in, hissLive, bedOn, gain, peakL, peakR);
 }
 
+/* QUANTIZE: the grids as a full-area view (QuantizeView.h, QuantizeScreens.h) -----------*/
+
+uint32_t Controller::quantizeViewState() const {
+    /// @brief A fingerprint of what the quantize screen shows: the grid, the strength and the selected field. Never 0.
+    return 0x01000000u | (static_cast<uint32_t>(menuTab == 4) << 16) | (static_cast<uint32_t>(rhythm.quantizeStrength) << 8) | rhythm.quantize;
+}
+
+void Controller::lcd_drawQuantizeViewData() {
+    /// @brief The RHYTHM page's QUANTIZE and STRENGTH screen: every grid as a row of points over two beats, the
+    /// chosen one lit, what it is, and what the strength does to a hit played late. Drawn from nothing whenever
+    /// the grid, the strength or the selected field changes.
+    quantizeViewStateDrawn = quantizeViewState();
+    if (quantizeViewStateDrawn == quantizeViewKey) return;
+    quantizeViewKey = quantizeViewStateDrawn;
+    GsLcd g{lcd};
+    qsDrawScreen(g, QsInput{rhythm.quantize, rhythm.quantizeStrength, menuTab == 4});
+}
+
 /* NOTE: the step edit screen (NoteView.h) ----------------------------------------*/
 
 static uint32_t* noteViewFingerprints() { return reinterpret_cast<uint32_t*>(RAM_VIEW_SCRATCH_ADDRESS + 3072); }  // [kBeatLibrarySize]
@@ -24818,7 +24904,7 @@ void Controller::lcd_drawEuclid_Data() {
     snprintf(text[0], sizeof(text[0]), "%10u", static_cast<unsigned>(euclidSteps));
     snprintf(text[1], sizeof(text[1]), "%10u", static_cast<unsigned>(euclidHits));
     snprintf(text[2], sizeof(text[2]), "%10u", static_cast<unsigned>(euclidRotate));
-    memcpy(text[3], kQuantizeDataLibrary[euclidGrid].nameLongR, sizeof(text[3]));
+    memcpy(text[3], quantizeGrid(euclidGrid).nameLongR, sizeof(text[3]));
     memcpy(text[4], euclidMerge ? "     MERGE" : "   REPLACE", sizeof(text[4]));
     if ((euclidAccentCount == 0) || (euclidAccentCount >= euclidHits)) {
         memcpy(text[5], "       OFF", sizeof(text[5]));
@@ -25464,13 +25550,12 @@ void Controller::layerSong_beatLeft() {
 
 uint16_t Controller::layerSong_quantizeInterval(uint16_t interval_) const {
     /// @brief Nearest grid position at the current QUANTIZE; the end of the song wraps to 0.
-    const uint16_t quantizeInterval = kQuantizeInterval[rhythm.quantize];
-    uint16_t startInterval = ((interval_ / quantizeInterval) + ((interval_ % quantizeInterval) / (quantizeInterval / 2))) * quantizeInterval;
-    if (startInterval >= songInterval) startInterval = 0;  // the end of the song, or past it when the length is no multiple of the grid
-    return startInterval;
+    // The grid and the wrap are Quantize.h's; the straight grids give the result they always gave. The full snap:
+    // loading a song matches its beats by this (the recording strength is applied where a hit is recorded).
+    return quantizeSnap(interval_, rhythm.quantize, kQuantizeStrengthDefault, songInterval);
 }
 
-void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_, bool draw_) {
+void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_, bool draw_, uint8_t strength_) {
     /// @brief Inserts a beat into target bank with quantization, ordering, and UI sync.
     /// draw_ false (the sequencer interrupt, which must not draw): the beat is stored and the selection
     /// bookkeeping done, the lanes are redrawn later by update() (precountDrawMask).
@@ -25484,8 +25569,9 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
     if (bank.lastActiveBeatNum >= static_cast<int16_t>(kBeatLibrarySize) - 1) {
         textFullFlag = true;
     } else {
-        // Quantize incoming interval using nearest-grid rounding; the end of the song is its start.
-        uint16_t startInterval = layerSong_quantizeInterval(interval_);
+        // Quantize incoming interval using nearest-grid rounding (strength_ percent of the way: 100 snaps, a
+        // recorded hit uses the QUANTIZE STRENGTH); the end of the song is its start.
+        uint16_t startInterval = quantizeSnap(interval_, rhythm.quantize, strength_, songInterval);
         uint16_t endInterval;
 
         // 3. INSERTION INDEX RESOLUTION
@@ -25749,7 +25835,7 @@ void Controller::layerSong_shiftSelectedBeat(bool direction_) {
     const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
     if (selectedBeatNum > bank.lastActiveBeatNum) return;
     layerSongScratch = bank;
-    const int16_t beatNum = beatListMove(layerSongScratch, static_cast<uint8_t>(selectedBeatNum), direction_, static_cast<uint16_t>(kQuantizeInterval[rhythm.quantize]), songInterval);
+    const int16_t beatNum = beatListMove(layerSongScratch, static_cast<uint8_t>(selectedBeatNum), direction_, quantizeSpec(rhythm.quantize), songInterval);
     if (beatNum != -1) layerSong_commitBank(beatNum);
 }
 
@@ -25761,17 +25847,22 @@ void Controller::layerSong_shiftAll(bool forward_) {
     if (selectedLayerNum == -1) return;
     const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
     if (bank.lastActiveBeatNum == -1) return;
-    const int32_t step = static_cast<int32_t>(kQuantizeInterval[rhythm.quantize]);
+    // A straight grid (and OFF, which steps by 1:64) rotates every beat by one step: shifting back restores the
+    // layer. A triplet or a mixed grid has no whole step: beats on the grid points move to the next points
+    // (BeatList.h), so three steps of 1:8T are exactly one beat. The shown distance uses the rounded step.
+    const QuantizeSpec grid = quantizeSpec(rhythm.quantize);
+    const int32_t step = static_cast<int32_t>((grid.p3 + 1u) / 3u);
     const int32_t delta = forward_ ? step : -step;
-    const int32_t selectedStart = ((selectedBeatNum != -1) && (selectedBeatNum <= bank.lastActiveBeatNum)) ? bank.beatLibrary[selectedBeatNum].getStartInterval() : -1;
     layerSongScratch = bank;
-    beatListRotate(layerSongScratch, delta, songInterval);
-    layerSongShift = beatListWrapShift(layerSongShift + delta, songInterval);
+    // The selected beat is followed (it stays selected); without one the first beat is the reference for the shown distance.
+    const bool haveSelected = (selectedBeatNum != -1) && (selectedBeatNum <= bank.lastActiveBeatNum);
+    const int16_t reference = haveSelected ? selectedBeatNum : 0;
+    const int32_t before = bank.beatLibrary[reference].getStartInterval();
+    const int32_t moved = beatListShift(layerSongScratch, forward_, grid, songInterval, reference);
+    // The distance shown is what the reference beat moved (on a triplet or mixed grid the steps are not all alike).
+    layerSongShift = beatListWrapShift(layerSongShift + ((moved != -1) ? beatListWrapShift(moved - before, songInterval) : delta), songInterval);
     int16_t beatNum = 0;
-    if (selectedStart != -1) {
-        const int32_t moved = ((selectedStart + delta) % songInterval + songInterval) % songInterval;
-        beatNum = beatListFind(layerSongScratch, static_cast<uint16_t>(moved));
-    }
+    if (haveSelected && (moved != -1)) beatNum = beatListFind(layerSongScratch, static_cast<uint16_t>(moved));
     layerSong_commitBank(beatNum);
 }
 
@@ -25784,7 +25875,7 @@ void Controller::layerSong_insertBeat() {
     const Bank& bank = layerLibrary[selectedLayerNum].bankLibrary[activeSongBank];
     const int16_t after = (bank.lastActiveBeatNum == -1) ? -1 : selectedBeatNum;
     layerSongScratch = bank;
-    const int16_t beatNum = beatListInsertAfter(layerSongScratch, after, static_cast<uint16_t>(kQuantizeInterval[rhythm.quantize]), songInterval);
+    const int16_t beatNum = beatListInsertAfter(layerSongScratch, after, quantizeSpec(rhythm.quantize), songInterval);
     if (beatNum == -1) {
         if (bank.lastActiveBeatNum >= static_cast<int16_t>(kBeatLibrarySize) - 1) textFullFlag = true;
         return;
@@ -25940,7 +26031,8 @@ void Controller::layerSong_resetAllBeats(uint8_t layerNum_, uint8_t bankTab_) {
 void Controller::layerSong_quantizeActiveBeats(uint8_t layerNum_, uint8_t bankTab_) {
     /// @brief Quantizes active beats to current rhythm grid and rebuilds beat ordering.
 
-    uint16_t quantizeInterval = kQuantizeInterval[rhythm.quantize];
+    // OFF has no grid: the beats stay where they are (and keep their fills).
+    if (rhythm.quantize == kQuantizeGridOff) return;
 
     // 1. ACTIVE BEAT QUANTIZATION
     // Snap start/end intervals to quantize grid for active beats.
@@ -25957,8 +26049,8 @@ void Controller::layerSong_quantizeActiveBeats(uint8_t layerNum_, uint8_t bankTa
                     // Compensate interval for better quantization.
                     if (startInterval != 0) startInterval -= 1;
                     if (endInterval != 0) endInterval -= 1;
-                    startInterval = ((startInterval / quantizeInterval) + ((startInterval % quantizeInterval) / (quantizeInterval / 2))) * quantizeInterval;
-                    endInterval = ((endInterval / quantizeInterval) + ((endInterval % quantizeInterval) / (quantizeInterval / 2))) * quantizeInterval;
+                    startInterval = static_cast<uint16_t>(quantizeNearest(startInterval, rhythm.quantize));
+                    endInterval = static_cast<uint16_t>(quantizeNearest(endInterval, rhythm.quantize));
                     if (endInterval > songInterval) {
                         endInterval = songInterval;
                     }
@@ -26180,7 +26272,7 @@ void Controller::layerSong_paste() {
                 uint8_t fillPattern = layerSongCopy.beatLibrary[i].getFillPattern();
                 uint8_t fillTime = layerSongCopy.beatLibrary[i].getFillTime();
                 uint8_t fillLevel = layerSongCopy.beatLibrary[i].getFillLevel();
-                if (startInterval < songInterval) layerSong_setBeat(selectedLayerNum, activeSongBank, startInterval, fillType, fillPattern, fillTime, fillLevel, true);
+                if (startInterval < songInterval) layerSong_setBeat(selectedLayerNum, activeSongBank, startInterval, fillType, fillPattern, fillTime, fillLevel, true, 0, true, 0);  // strength 0: a pasted beat keeps its position
             }
 
             // 4. SELECTION & UI REFRESH
@@ -28471,7 +28563,7 @@ void Controller::interruptPlay() {
                     if (precountPendingBeat[i]) {
                         const uint8_t velocity = static_cast<uint8_t>(precountPendingBeat[i] - 1);
                         precountPendingBeat[i] = 0;
-                        layerSong_setBeat(i, activeSongBank, playInterval, 0, 0, 0, 0, true, velocity, false);  // no drawing in the interrupt
+                        layerSong_setBeat(i, activeSongBank, playInterval, 0, 0, 0, 0, true, velocity, false, rhythm.quantizeStrength);  // no drawing in the interrupt
                     }
                 }
             }

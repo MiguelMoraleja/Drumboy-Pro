@@ -7,6 +7,7 @@
 #include <random>
 
 #include "FileFormat.h"
+#include "Quantize.h"
 #include "Lfo.h"
 #include "MCP23017.h"
 #include "Autosave.h"
@@ -22,6 +23,8 @@
 #include "Generator.h"
 #include "GeneratorView.h"
 #include "GeneratorScreens.h"
+#include "QuantizeView.h"
+#include "QuantizeScreens.h"
 #include "NoteView.h"
 #include "Pan.h"
 #include "UndoLog.h"
@@ -958,6 +961,7 @@ const char kHeaderResonance[]                       = "RESONANCE";
 const char kHeaderProbability[]                     = "PROB      ";
 const char kHeaderQfactor[]                         = "Q-FACTOR  ";
 const char kHeaderQuantize[]                        = "QUANTIZE  ";
+const char kHeaderQuantizeStrength[]                = "STRENGTH  ";
 const char kHeaderSample[]                          = "SAMPLE    ";
 const char kHeaderSave[]                            = "SAVE      ";
 const char kHeaderSize[]                            = "SIZE      ";
@@ -1333,6 +1337,7 @@ typedef enum {
     ENC_DUB_HISSLEVEL                               = 0x8E,
     ENC_DUB_HISSTONE                                = 0x8F,
     ENC_DUB_HISSDUCK                                = 0x90,
+    ENC_RHYTHM_STRENGTH                             = 0x91,  // RHYTHM page, the fifth field: the quantize strength
 
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
@@ -1349,7 +1354,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // MIXER_MENU = 0x04
     {ENC_MIXER_MASTERVOLUME, ENC_MIXER_HPVOLUME, ENC_MIXER_LOVOLUME, ENC_MIXER_LIVOLUME, ENC_MIXER_LIMIXERIN, ENC_MIXER_PAN, ENC_MIXER_LIMITER, ENC_MIXER_NORMALIZE},
     // RHYTHM_MENU = 0x05
-    {ENC_RHYTHM_TEMPO, ENC_RHYTHM_MEASURE, ENC_RHYTHM_BAR, ENC_RHYTHM_QUANTIZE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
+    {ENC_RHYTHM_TEMPO, ENC_RHYTHM_MEASURE, ENC_RHYTHM_BAR, ENC_RHYTHM_QUANTIZE, ENC_RHYTHM_STRENGTH, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
     // METRO_MENU = 0x06
     {ENC_METRO_ACTIVE, ENC_METRO_PRECOUNT, ENC_METRO_SAMPLE, ENC_METRO_VOLUME, ENC_METRO_PREVIEW, ENC_METRO_PREVIEW_LEVEL, ENC_METRO_AUTOSAVE, ENC_FNC_NONE},
     // IO_MENU = 0x07
@@ -1585,7 +1590,8 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_DUB_HISS,            ENC_RES_S, "HISS      ", "DUB   ", "   ", false},
     {ENC_DUB_HISSLEVEL,       ENC_RES_M, "HISS LEVEL", "DUB   ", "  %", false},
     {ENC_DUB_HISSTONE,        ENC_RES_M, "HISS TONE ", "DUB   ", "  %", false},
-    {ENC_DUB_HISSDUCK,        ENC_RES_M, "HISS DUCK ", "DUB   ", "  %", false}
+    {ENC_DUB_HISSDUCK,        ENC_RES_M, "HISS DUCK ", "DUB   ", "  %", false},
+    {ENC_RHYTHM_STRENGTH,     ENC_RES_M, "STRENGTH  ", "RHY   ", "  %", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -2290,12 +2296,16 @@ const uint8_t kMaxBar                               = 12;
 const uint8_t kMaxSongMeasureTotal                  = 80;
 
 const uint8_t kMinQuantize                          = 0;
-const uint8_t kMaxQuantize                          = 6;
+const uint8_t kMaxQuantize                          = kQuantizeGridCount - 1;  // the grids of Quantize.h: straight, triplet, mixed and OFF
+const uint8_t kMinQuantizeStrength                  = 0;
+const uint8_t kMaxQuantizeStrength                  = 100;
+const uint8_t kQuantizeStrengthStep                 = 5;
+const uint8_t kMaxRhythmTab                         = 4;  // TEMPO, MEASURE, BAR, QUANTIZE and the QUANTIZE STRENGTH
 
 const uint8_t kInitialTempo                         = 120;
 const uint8_t kInitialMeasure                       = 4;
 const uint8_t kInitialBar                           = 4;
-const uint8_t kInitialQuantize                      = 2;
+const uint8_t kInitialQuantize                      = kQuantizeGridDefault;
 
 const uint16_t kMeasureInterval                     = 800;
 const uint16_t kMeasureHalfInterval                 = kMeasureInterval / 2;
@@ -2304,26 +2314,12 @@ const uint32_t kClockLockMinPeriodUs                = 40;      // sequencer time
 const uint32_t kClockLockMaxPeriodUs                = 60000;   // (TIM15 counts microseconds, 16 bits)
 const uint16_t kMinSongInterval                     = 800;
 const uint16_t kMaxSongInterval                     = 64000;
-const float kQuantizeInterval[]                     = {50, 100, 200, 400, 800, 1600, 3200};
 
 const uint16_t kSecondsinOneMinute                  = 60;
 const uint32_t kMicroSecondsinOneSecond             = 1000000;
 const uint32_t kMicroSecondsinOneMinute             = 60000000;
 
 /*----------------------------------------------------------------------------*/
-
-struct QuantizeData {
-    char nameLongR[11];
-};
-
-const struct QuantizeData kQuantizeDataLibrary[] = {
-    {"      1:64"}, 
-    {"      1:32"}, 
-    {"      1:16"}, 
-    {"       1:8"}, 
-    {"       1:4"}, 
-    {"       1:2"}, 
-    {"       1:1"}};
 
 /*----------------------------------------------------------------------------*/
 
@@ -2332,6 +2328,7 @@ struct Rhythm {
     uint8_t measure                                 = kInitialMeasure;
     uint8_t bar                                     = kInitialBar;
     uint8_t quantize                                = kInitialQuantize;
+    uint8_t quantizeStrength                        = kQuantizeStrengthDefault;  // how far a recorded hit moves to its grid point (Quantize.h)
     uint8_t measureTotal                            = kInitialMeasure * kInitialBar;
 
     bool measureLock                                = true;

@@ -10,6 +10,7 @@
 // 6. The names fit the 10-character field and only use characters the firmware's font has.
 // 7. quantizePointsIn counts the points the EUCLID page walks; the edit step is the grid's own.
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -238,6 +239,76 @@ static void testPointsAndSteps() {
     CHECK(quantizeEditStep(11) == 200 && quantizeEditStep(12) == 400 && quantizeEditStep(kQuantizeGridOff) == 50, "mixed and OFF edit steps");
 }
 
+// The points of a spec up to a limit, generated one by one (the reference for the closed formulas).
+static std::vector<uint32_t> pointsOf(const QuantizeSpec& spec, uint32_t limit) {
+    std::set<uint32_t> all;
+    for (uint16_t p3 : {spec.p3, spec.p3b}) {
+        if (p3 == 0) continue;
+        for (uint32_t k = 0; (k * p3 + 1) / 3 <= limit; k++) all.insert((k * p3 + 1) / 3);
+    }
+    return std::vector<uint32_t>(all.begin(), all.end());
+}
+
+static void testSpecs() {
+    for (uint8_t g = 0; g < kQuantizeGridCount; g++) {
+        const QuantizeSpec spec = quantizeSpec(g);
+        CHECK(spec.p3 > 0, "grid %u has a spec", g);
+        const std::vector<uint32_t> pts = pointsOf(spec, 12000);
+        for (uint32_t x = 0; x < 6000; x += (g < 8) ? 1 : 7) {
+            // Next: the smallest point above x. Prev: the largest below (x >= 1). Floor: the largest at or below.
+            const uint32_t next = *std::upper_bound(pts.begin(), pts.end(), x);
+            CHECK(quantizeSpecNext(x, spec) == next, "grid %u next(%u) = %u, expected %u", g, static_cast<unsigned>(x), static_cast<unsigned>(quantizeSpecNext(x, spec)), static_cast<unsigned>(next));
+            const uint32_t floorP = *(std::upper_bound(pts.begin(), pts.end(), x) - 1);
+            CHECK(quantizeSpecFloor(x, spec) == floorP, "grid %u floor(%u) = %u, expected %u", g, static_cast<unsigned>(x), static_cast<unsigned>(quantizeSpecFloor(x, spec)), static_cast<unsigned>(floorP));
+            CHECK(quantizeSpecIsPoint(x, spec) == (floorP == x), "grid %u isPoint(%u)", g, static_cast<unsigned>(x));
+            if (x >= 1) {
+                const uint32_t prev = *(std::lower_bound(pts.begin(), pts.end(), x) - 1);
+                CHECK(quantizeSpecPrev(x, spec) == prev, "grid %u prev(%u) = %u, expected %u", g, static_cast<unsigned>(x), static_cast<unsigned>(quantizeSpecPrev(x, spec)), static_cast<unsigned>(prev));
+            }
+            if (failures > 20) return;
+        }
+        // The count of points before the song end, and the whole step.
+        for (uint32_t song : kSongs) {
+            const uint32_t n = static_cast<uint32_t>(std::lower_bound(pts.begin(), pts.end(), song) - pts.begin());
+            if (spec.p3b == 0) CHECK(quantizeSpecCount(spec, song) == n, "grid %u: %u points in %u", g, static_cast<unsigned>(quantizeSpecCount(spec, song)), static_cast<unsigned>(song));
+            else CHECK(quantizeSpecCount(spec, song) >= n, "mixed grid %u: the count is a bound", g);
+        }
+    }
+    // A plain step is the spec of a straight grid, and the straight grids and OFF have whole steps.
+    for (uint8_t g = 0; g < kQuantizeStraightCount; g++) {
+        const QuantizeSpec a = quantizeSpec(g), b = quantizeSpecOfStep(quantizeEditStep(g));
+        CHECK(a.p3 == b.p3 && a.p3b == b.p3b, "grid %u is the spec of its step", g);
+        CHECK(quantizeSpecWholeStep(a) == quantizeEditStep(g), "grid %u whole step", g);
+    }
+    CHECK(quantizeSpecWholeStep(quantizeSpec(kQuantizeGridOff)) == 50, "OFF steps by 1:64");
+    for (uint8_t g = 7; g <= 12; g++) CHECK(quantizeSpecWholeStep(quantizeSpec(g)) == 0, "grid %u has no whole step", g);
+}
+
+static void testStrengthBlock() {
+    uint8_t block[kQuantizeFileSize];
+    for (uint8_t strength : {0, 1, 50, 99, 100}) {
+        quantizeWriteBlock(strength, block);
+        uint8_t back = 77;
+        CHECK(quantizeReadBlock(back, block, kQuantizeFileSize) && back == strength, "strength %u round trip", strength);
+    }
+    quantizeWriteBlock(250, block);
+    CHECK(block[4] == 100, "a value above 100 is written as 100");
+    block[4] = 200;
+    uint8_t back = 0;
+    CHECK(quantizeReadBlock(back, block, kQuantizeFileSize) && back == 100, "a value above 100 reads as 100");
+    // Not a block: wrong marker, unknown version, too short, nothing: the value is left alone and false is returned.
+    uint8_t keep = 42;
+    quantizeWriteBlock(10, block);
+    block[0] = 'X';
+    CHECK(!quantizeReadBlock(keep, block, kQuantizeFileSize) && keep == 42, "wrong marker");
+    quantizeWriteBlock(10, block);
+    block[3] = 2;
+    CHECK(!quantizeReadBlock(keep, block, kQuantizeFileSize) && keep == 42, "unknown version");
+    quantizeWriteBlock(10, block);
+    CHECK(!quantizeReadBlock(keep, block, kQuantizeFileSize - 1) && keep == 42, "short block");
+    CHECK(!quantizeReadBlock(keep, block, 0) && keep == 42, "no block");
+}
+
 int main() {
     testStraightUnchanged();
     testEveryGrid();
@@ -247,6 +318,8 @@ int main() {
     testStrength();
     testNames();
     testPointsAndSteps();
+    testSpecs();
+    testStrengthBlock();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

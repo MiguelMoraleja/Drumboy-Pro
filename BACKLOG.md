@@ -1101,3 +1101,17 @@ The sample's own START and END are kept and come back when GEN is OFF. The gener
 
 **Status: released in V1.18 (2026-11-21); the owner tested the file on the unit: everything seemed fine.** **Done when** the reverb sounds exactly as before (tail, DECAY, SIZE, DAMPING, PRE-DELAY, SURROUND, a song with the reverb on loads and plays the same) and the CPU meter shows the same or lower.
 
+### 68. nanoKONTROL Studio on the DUB mixer (V1.20, owner's request 2026-11-21)
+
+**Asked by the owner:** the nanoKONTROL Studio to control the dub mixer, mapped to its third scene (proposal with my picks accepted: "let's go").
+
+**Built in V1.20 (test build):** `Global/MidiCc.h` (hardware-free, `test_midicc`, 619 checks) and the Controller's `midi_serviceCc`.
+- **Input:** `MIDI_EVENT_CC` (the parser already produced it) on channel 3 goes, in the receive interrupt, into a table that keeps the latest value of each controller (`CcTable`: only the interrupt writes value, a 16-bit sequence and the press count, the main loop keeps its own copies, so no lock). A fader costs one change per main-loop pass however fast it moves; a button press that came and went between two passes still counts.
+- **Map:** faders 1 to 8 = CC 20 to 27, knobs = 30 to 37, M buttons = 40 to 47, TRACK < and > = 58 and 59; the Studio's eight strips control eight of the desk's twelve columns (ten layers, ECHO, VERB), TRACK slides the window one column at a time (0 to 4). Fader: a layer's LEVEL, the echo's WET (Effect 1 as DELAY), the reverb's WET. Knob: a layer's ECHO send, the echo's FEEDBACK, the reverb's DECAY. M: toggles a layer's mute. A cyan bar above the desk's plates marks the window once a mapped controller has sent a message.
+- **Take-over (`CcTakeover`):** a fader or knob applies only when it has reached the value shown (within 2 %) or crossed it between two messages, so a level never jumps; it lets go again when the shown value differs by more than 4 % from what the controller set last (the encoder, a loaded song, undo), and at every window move. A setter that refuses a value (the echo's and the reverb's WET while their mix transition runs) is tried again each pass.
+- **Review (high) fixes:** a 16-bit sequence (exactly 256 messages between two passes hid the last value), take-over lets go on outside changes, the retry of refused values, the marker only for mapped controllers.
+- **Known, accepted:** channel 3 is fixed and CC control has no switch of its own (MIDI IN off switches it off); CCs 20 to 27, 30 to 37, 40 to 47, 58 and 59 on channel 3 from any other device would act too.
+- **Not yet (D2, the dub mixer's next step):** echo and reverb throws on S and R, the dub filter and the echo feedback past 100 % on the X-Y pad, the echo time on the jog wheel; MIDI learn; a settable channel.
+- **Setup:** `docs/nanokontrol-scene3.md` (the CC list for the Kontrol Editor, the connection through Loopy Pro and the Scarlett or a USB host to DIN box).
+
+**Status: built in V1.20 (test build, not released). Done when** (on the unit): with the Studio set as in the guide, a fader moved to the level shown takes hold and then sets that layer's LEVEL; the knobs set the ECHO send (the DUB desk follows); an M button mutes and unmutes the layer; TRACK > shows the cyan bar one column to the right and the faders take over again only when they reach the new values; the ECHO and VERB columns follow with their WET, FEEDBACK and DECAY; moving a fast fader does not slow the Drumboy.

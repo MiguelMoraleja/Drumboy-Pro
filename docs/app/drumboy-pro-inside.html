@@ -296,7 +296,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.19</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.20 (testing)</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -624,6 +624,13 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">✓</span><div><b>Safe SAVE</b> (V1.18): a song or drumkit is written to File_001.tmp, checked (written in full, read back and compared) and only then replaces the slot, so a failed or interrupted SAVE leaves the old file. After a power cut during a SAVE you may find File_001.tmp or File_001.new on the card: the next start deletes the unfinished one and finishes the checked one.</div></div>
           <div class="k"><span class="keycap">◌</span><div><b>SAVE on screen</b> (V1.14): while an autosave writes, the status area shows SAVE; keys, the screen and incoming MIDI notes wait for that moment. SDERR in red means the write failed. The Metronome page shows under AUTOSAVE how many milliseconds the last one took.</div></div>
           <div class="k"><span class="keycap">✓</span><div><b>Two files</b> (<span class="mono">System/File/Autosave_A.rwf</span> and <span class="mono">_B</span>) are written in turn and sealed with a checksum, so pulling the power in the middle of a write still leaves the previous copy. Your numbered slots are never touched.</div></div>
+        </div>
+        <div class="panel keys">
+          <h3>nanoKONTROL Studio on the DUB desk (V1.20)</h3>
+          <div class="k"><span class="keycap">3</span><div><b>Channel 3, control changes.</b> The Drumboy reads CC messages on MIDI channel 3 while MIDI IN is on, on every page. In the Korg Kontrol Editor, scene 3: channel 3, faders 1 to 8 = CC 20 to 27, knobs 1 to 8 = CC 30 to 37, M buttons = CC 40 to 47 (momentary: 127 on press, 0 on release), TRACK &#9664; = CC 58 and TRACK &#9654; = CC 59. The Studio reaches the Drumboy through the iPad's Loopy Pro and the Scarlett's MIDI out (or a USB host to DIN box). The full guide is <span class="mono">docs/nanokontrol-scene3.md</span>.</div></div>
+          <div class="k"><span class="keycap">&#9618;</span><div><b>Eight strips, twelve columns.</b> The desk has ten layers and the ECHO and VERB returns. TRACK &#9664; and &#9654; slide the Studio's eight strips along them, one column at a time; a cyan bar above the plates marks the eight columns it is on. <b>Fader</b>: a layer's LEVEL, the echo's WET, the reverb's WET. <b>Knob</b>: a layer's ECHO send, the echo's FEEDBACK, the reverb's DECAY. <b>M button</b>: a press mutes or unmutes the layer.</div></div>
+          <div class="k"><span class="keycap">&#8646;</span><div><b>Take-over.</b> After the strips slid, after a song loaded or at power-on, a fader does not match the screen. It takes hold only when it reaches the value shown (or crosses it), so a level never jumps; when the value is changed another way (the encoder, a loaded song, undo) it lets go again until it reaches the new value. A fader that sends hundreds of messages a second costs one change per pass: only the latest value is kept.</div></div>
+          <div class="k"><span class="keycap">&#8230;</span><div><b>Not yet</b> (the dub mixer's next step): echo and reverb throws on S and R, the dub filter and the echo feedback past 100 % on the X-Y pad, the echo time on the jog wheel.</div></div>
         </div>
       </div>
     </div>
@@ -2400,6 +2407,9 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
+  { v: "V1.20", date: "2026-11-22", status: "Testing, not published", pub: false,
+    nw: ["nanoKONTROL Studio on the DUB desk (backlog 68): the Drumboy reads MIDI control changes on channel 3 while MIDI IN is on. Faders set a layer's LEVEL (the echo's WET and the reverb's WET on the ECHO and VERB columns), knobs the layer's ECHO send (the echo's FEEDBACK, the reverb's DECAY), the M buttons mute a layer, and TRACK < and > slide the Studio's eight strips along the desk's twelve columns (a cyan bar above the plates marks them). A fader takes over only when it reaches the value shown, so a level never jumps. The CC list for the Kontrol Editor is in docs/nanokontrol-scene3.md"],
+    fix: [] },
   { v: "V1.19", date: "2026-11-21", status: "GitHub release v1.19 · tested", pub: true,
     nw: ["Quantize modes (backlog 59): the RHYTHM page's QUANTIZE field adds the triplet grids 1:32T, 1:16T, 1:8T and 1:4T, the mixed grids 1:16+T and 1:8+T (a hit snaps to the nearer point of the straight and the triplet grid) and OFF (no snap), after the seven straight grids of before (same order, same behaviour). A triplet step is rounded to a whole interval, but three of them are exactly one beat (no drift)",
          "A screen for QUANTIZE and STRENGTH: while either field of the RHYTHM page is selected the lanes give way to every grid as a row of points over two beats (the chosen one lit), what the grid is, and what STRENGTH does to a hit played late and where it lands (see the picture in the Euclid tab)",

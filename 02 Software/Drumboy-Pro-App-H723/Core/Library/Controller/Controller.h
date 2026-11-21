@@ -294,12 +294,24 @@ class Controller {
     int16_t fsDrawnSlot = -1;                   // the cursor as drawn (-1 = the screen is not drawn)
     uint32_t fileViewKey = 0;                   // what the grid was drawn from, without the cursor (0 = nothing)
     uint32_t fileViewStateDrawn = 0;
+    CcTakeover ccFaderTake[kCcStrips];          // a fader of the controller takes over only when it reaches the shown value (MidiCc.h)
+    CcTakeover ccKnobTake[kCcStrips];
+    uint8_t ccWindow = 0;                       // the controller's eight strips control the desk's columns ccWindow .. ccWindow + 7
+    bool ccPendingSet[2][kCcStrips];            // a value the setter refused (its mix transition was running) is tried again each pass
+    uint8_t ccPendingValue[2][kCcStrips];       // [0] faders, [1] knobs
+    bool ccSeen = false;                        // the controller has sent something: the desk marks its eight strips
+    int8_t ccWindowDrawn = -1;                  // the window the desk's marker shows (-1 = nothing drawn, -2 = no marker)
+    bool ccUiDirty = false;                     // something changed through the controller: the DUB page redraws soon
+    uint32_t ccUiMs = 0;
     uint32_t quantizeViewKey = 0;               // what the quantize screen was drawn from (0 = nothing)
     uint32_t quantizeViewStateDrawn = 0;
     uint8_t slotRepeat = 0;                     // consecutive repeats of a held UP or DOWN: after 8 the step is ten slots
     uint8_t slotStep(bool repeat_);
     uint32_t fileViewState() const;
     uint32_t quantizeViewState() const;
+    void midi_serviceCc();                      // main loop: applies the controller's latest values once per pass
+    uint8_t cc_current(CcKind kind_, uint8_t column_) const;
+    bool cc_apply(CcKind kind_, uint8_t column_, uint8_t percent_);  // true when the parameter reached the value
     void lcd_drawQuantizeViewData();
     void lcd_drawFileViewData();
     bool sd_readSlotSummary(FsKind kind_, uint8_t slot_, FsSummary& out_);

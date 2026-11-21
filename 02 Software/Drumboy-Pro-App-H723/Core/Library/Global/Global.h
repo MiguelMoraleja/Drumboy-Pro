@@ -8,6 +8,7 @@
 
 #include "FileFormat.h"
 #include "Quantize.h"
+#include "MidiCc.h"
 #include "Lfo.h"
 #include "MCP23017.h"
 #include "Autosave.h"
@@ -2524,6 +2525,7 @@ struct Midi {
     // main loop, receive errors (UART overrun/framing, full queue) for the diagnostics display.
     MidiParser rxParser;
     MidiQueue<16> rxNoteQueue;
+    CcTable rxCc;                                   // control changes on MIDI channel 3 (MidiCc.h): the latest value of each controller
     volatile uint32_t rxErrors                      = 0;
 
     bool txTriggerNoteOn[10]                        = {false};

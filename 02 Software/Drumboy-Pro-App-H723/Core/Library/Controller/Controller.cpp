@@ -645,6 +645,8 @@ void Controller::update() {
             }
         }
 
+        midi_serviceCc();  // the controller's faders, knobs and buttons
+
         watchdog_stage(WD_STAGE_TRANSPORT);
         // 14. INBOUND MIDI TRANSPORT AND CLOCK
         // Handle transport commands and tempo updates signaled by the MIDI RX ISR.
@@ -1236,6 +1238,12 @@ void Controller::receiveMidiCommand() {
             if (io.midi.rxNotes && (event.channel == io.midi.rxChannel)) {
                 if (!io.midi.rxNoteQueue.push(event)) io.midi.rxErrors = io.midi.rxErrors + 1;
             }
+            break;
+
+        // 2b. CONTROL CHANGES on channel 3 (the nanoKONTROL Studio's scene 3): only the latest value of each
+        // controller is kept (MidiCc.h); the main loop applies it once per pass.
+        case MIDI_EVENT_CC:
+            if (event.channel == kCcChannel) io.midi.rxCc.set(event.data1, event.data2);
             break;
 
         // 3. DRUMBOY SYSEX TRANSPORT COMMANDS
@@ -22933,6 +22941,7 @@ void Controller::lcd_drawLaneView() {
     hissViewKey = 0;                                                  // and no HISS page
     fileViewKey = 0;                                                  // and no slot grid
     quantizeViewKey = 0;                                              // and no quantize screen
+    ccWindowDrawn = -1;                                               // and no marker of the controller's strips
     fsDrawnSlot = -1;
     lcd_drawLaneViewData();
 }
@@ -24168,6 +24177,17 @@ void Controller::lcd_drawDubViewData() {
         return;
     }
     dubViewStateDrawn = dubViewState();
+    // The strips the MIDI controller controls (MidiCc.h), marked above the plates once it has sent something.
+    const int8_t markedWindow = ccSeen ? static_cast<int8_t>(ccWindow) : static_cast<int8_t>(-2);
+    if (markedWindow != ccWindowDrawn) {
+        ccWindowDrawn = markedWindow;
+        lcd.setBackColor(BLACK);
+        lcd.clearRect(kDeskX, kDeskMarkY, kDeskColumns * kDeskStep, 2);
+        if (ccSeen) {
+            lcd.setForeColor(CYAN);
+            lcd.fillRect(deskX(ccWindow), kDeskMarkY, (kCcStrips - 1) * kDeskStep + kDeskWidth, 2);
+        }
+    }
     const Effect& echo = effect[0];
     for (uint8_t col = 0; col < kDeskColumns; col++) {
         uint32_t fp = 2166136261u;
@@ -24668,6 +24688,119 @@ void Controller::dub_step(EncoderFunc function_, bool up_) {
     }
     lcd_drawDub_Data();
     viewDirty = true;
+}
+
+/* MIDI control changes: the nanoKONTROL Studio on the DUB desk (MidiCc.h) ----------*/
+
+uint8_t Controller::cc_current(CcKind kind_, uint8_t column_) const {
+    /// @brief What the column's parameter is now, 0..100 (for the take-over: the controller must reach it).
+    if (column_ < kDubStrips) return (kind_ == CC_FADER) ? layerLibrary[column_].level : dubMix.strip[column_].echo;
+    if (column_ == kDubStrips) {  // the ECHO return: its WET and the echo's FEEDBACK
+        if (effect[0].type != EF_DELAY) return 0;
+        if (kind_ == CC_FADER) {
+            const SubEffect& sub = effect[0].subEffect[effect[0].type];
+            return ccFromRange(sub.fData, sub.kMinFData, sub.kMaxFData);
+        }
+        return ccFromRange(effect[0].subEffect[EF_DELAY].cData, kMinDelayFeedback, kMaxDelayFeedback);
+    }
+    return (kind_ == CC_FADER) ? reverb.wet : reverb.decay;  // the VERB return: its WET and the reverb's DECAY
+}
+
+bool Controller::cc_apply(CcKind kind_, uint8_t column_, uint8_t percent_) {
+    /// @brief Sets the column's parameter from the controller (0..100). True when the parameter reached the value:
+    /// the echo's and the reverb's WET refuse a new value while their mix transition runs, and the caller then tries again.
+    ccUiDirty = true;
+    if (column_ < kDubStrips) {
+        if (kind_ == CC_FADER) {
+            layerInst_setLevel(column_, percent_);
+        } else {
+            dubMix.strip[column_].echo = (percent_ > kDubMaxSend) ? kDubMaxSend : percent_;
+        }
+        return true;
+    }
+    if (column_ == kDubStrips) {
+        if (effect[0].type != EF_DELAY) return true;  // the echo is Effect 1 set to DELAY (a send into anything else is not an echo): nothing to set
+        if (kind_ == CC_FADER) {
+            const SubEffect& sub = effect[0].subEffect[effect[0].type];
+            const uint8_t target = ccToRange(percent_, sub.kMinFData, sub.kMaxFData);
+            effect_setFData(0, effect[0].type, target);
+            return sub.fData == target;
+        }
+        effect_setCData(0, EF_DELAY, ccToRange(percent_, kMinDelayFeedback, kMaxDelayFeedback));
+        return true;
+    }
+    if (kind_ == CC_FADER) {
+        reverb_setWet(percent_);
+        return reverb.wet == percent_;
+    }
+    reverb_setDecay(percent_);
+    return true;
+}
+
+void Controller::midi_serviceCc() {
+    /// @brief Main loop: TRACK < and > slide the strips along the desk, an M button mutes its layer, a fader and
+    /// a knob set LEVEL / echo WET / reverb WET and ECHO send / FEEDBACK / DECAY of their column (MidiCc.h). The
+    /// interrupt kept only the latest value of each, so a fast fader costs one change per pass.
+    CcTable& t = io.midi.rxCc;
+
+    // 1. THE FIRST MESSAGE of a mapped controller: the desk shows its strips from now on
+    if (!ccSeen) {
+        for (uint8_t cc = 0; cc < 128; cc++) {
+            if ((ccDecode(cc).kind != CC_NONE) && (t.seq[cc] != t.seen[cc])) {
+                ccSeen = true;
+                ccUiDirty = true;
+                break;
+            }
+        }
+    }
+
+    // 2. THE WINDOW
+    const int8_t move = static_cast<int8_t>(static_cast<int>(t.takePresses(kCcTrackNext)) - static_cast<int>(t.takePresses(kCcTrackPrev)));
+    if (move != 0) {
+        const uint8_t w = ccMoveWindow(ccWindow, move);
+        if (w != ccWindow) {
+            ccWindow = w;
+            for (uint8_t s = 0; s < kCcStrips; s++) {  // the faders no longer match the columns under them
+                ccDisengage(ccFaderTake[s]);
+                ccDisengage(ccKnobTake[s]);
+                ccPendingSet[0][s] = ccPendingSet[1][s] = false;
+            }
+            ccUiDirty = true;
+        }
+    }
+
+    // 3. THE M BUTTONS (a press toggles; two presses between two passes cancel)
+    for (uint8_t s = 0; s < kCcStrips; s++) {
+        const uint8_t presses = t.takePresses(static_cast<uint8_t>(kCcMuteBase + s));
+        const uint8_t column = ccColumn(ccWindow, s);
+        if ((presses & 1) && (column < kDubStrips)) layerInst_setMute(column, !layerLibrary[column].mute);
+    }
+
+    // 4. THE FADERS AND KNOBS: a value the setter refused earlier is tried again, then the new messages are applied
+    for (uint8_t s = 0; s < kCcStrips; s++) {
+        const uint8_t column = ccColumn(ccWindow, s);
+        for (uint8_t k = 0; k < 2; k++) {
+            const CcKind kind = (k == 0) ? CC_FADER : CC_KNOB;
+            CcTakeover& take = (k == 0) ? ccFaderTake[s] : ccKnobTake[s];
+            if (ccPendingSet[k][s] && cc_apply(kind, column, ccPendingValue[k][s])) ccPendingSet[k][s] = false;
+            uint8_t value;
+            if (!t.poll(static_cast<uint8_t>(((k == 0) ? kCcFaderBase : kCcKnobBase) + s), value)) continue;
+            const uint8_t scaled = ccTo100(value);
+            // While a value waits to be set, the parameter is as good as at that value (for the take-over's check of outside changes).
+            const uint8_t current = ccPendingSet[k][s] ? ccPendingValue[k][s] : cc_current(kind, column);
+            if (!ccTakeoverStep(take, scaled, current)) continue;
+            ccPendingSet[k][s] = !cc_apply(kind, column, scaled);
+            ccPendingValue[k][s] = scaled;
+        }
+    }
+
+    // 5. THE SCREEN: the DUB page's fields and its desk follow, at most every 40 ms
+    if (ccUiDirty && ((HAL_GetTick() - ccUiMs) >= 40)) {
+        ccUiDirty = false;
+        ccUiMs = HAL_GetTick();
+        if (menu == DUB_MENU) lcd_drawDub_Data();
+        viewDirty = true;
+    }
 }
 
 /* NOTE page (BeatNote.h) ----------------------------------------------------*/

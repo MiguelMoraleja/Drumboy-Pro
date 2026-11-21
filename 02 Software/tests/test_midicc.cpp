@@ -1,0 +1,190 @@
+// Host-side tests for the MIDI control change input (Global/MidiCc.h): the CC map, the scaling, the latest-
+// value table, presses, the take-over of faders and the window of strips; and the parser's CC events that feed it.
+
+#include <cstdio>
+#include <cstring>
+#include <initializer_list>
+
+#include "MidiCc.h"
+#include "MidiParser.h"
+
+static int failures = 0, checks = 0;
+#define CHECK(cond, ...)                                                \
+    do {                                                                \
+        ++checks;                                                       \
+        if (!(cond)) {                                                  \
+            ++failures;                                                 \
+            std::printf("FAIL %s:%d: %s  ", __FILE__, __LINE__, #cond); \
+            std::printf(__VA_ARGS__);                                   \
+            std::printf("\n");                                          \
+        }                                                               \
+    } while (0)
+
+static void testMap() {
+    int faders = 0, knobs = 0, mutes = 0, prev = 0, next = 0, none = 0;
+    for (int cc = 0; cc < 128; cc++) {
+        const CcControl c = ccDecode(static_cast<uint8_t>(cc));
+        switch (c.kind) {
+            case CC_FADER: faders++; CHECK(c.strip == cc - 20 && cc >= 20 && cc <= 27, "fader cc %d", cc); break;
+            case CC_KNOB: knobs++; CHECK(c.strip == cc - 30 && cc >= 30 && cc <= 37, "knob cc %d", cc); break;
+            case CC_MUTE: mutes++; CHECK(c.strip == cc - 40 && cc >= 40 && cc <= 47, "mute cc %d", cc); break;
+            case CC_TRACK_PREV: prev++; CHECK(cc == 58, "prev cc %d", cc); break;
+            case CC_TRACK_NEXT: next++; CHECK(cc == 59, "next cc %d", cc); break;
+            default: none++; break;
+        }
+    }
+    CHECK(faders == 8 && knobs == 8 && mutes == 8 && prev == 1 && next == 1 && none == 128 - 26, "counts %d %d %d %d %d %d", faders, knobs, mutes, prev, next, none);
+    // Common controllers on other numbers stay unmapped: the mod wheel, volume, pan, sustain, all notes off.
+    for (uint8_t cc : {1, 7, 10, 64, 120, 123}) CHECK(ccDecode(cc).kind == CC_NONE, "cc %u is not mapped", cc);
+    CHECK(kCcChannel == 2 && kCcMaxWindow == 4 && ccColumn(4, 7) == 11 && ccColumn(0, 0) == 0, "channel 3, twelve columns");
+}
+
+static void testScaling() {
+    CHECK(ccTo100(0) == 0 && ccTo100(127) == 100 && ccTo100(255) == 100, "ends");
+    uint8_t previous = 0;
+    for (int v = 0; v < 128; v++) {
+        const uint8_t s = ccTo100(static_cast<uint8_t>(v));
+        CHECK(s >= previous && s <= 100, "monotonic at %d", v);
+        previous = s;
+    }
+    CHECK(ccTo100(64) == 50 || ccTo100(64) == 51, "the middle is about 50 (%u)", ccTo100(64));
+    // Ranges: 0..100 onto [min, max] and back, hitting both ends.
+    CHECK(ccToRange(0, 0, 80) == 0 && ccToRange(100, 0, 80) == 80 && ccToRange(50, 0, 80) == 40 && ccToRange(100, 10, 30) == 30 && ccToRange(0, 10, 30) == 10, "to range");
+    for (uint8_t p = 0; p <= 100; p++) {
+        const uint8_t v = ccToRange(p, 0, 80);
+        const uint8_t back = ccFromRange(v, 0, 80);
+        CHECK(back >= p - 1 && back <= p + 1, "round trip %u -> %u -> %u", p, v, back);
+    }
+    CHECK(ccFromRange(0, 0, 80) == 0 && ccFromRange(80, 0, 80) == 100 && ccFromRange(200, 0, 80) == 100 && ccFromRange(5, 7, 7) == 0, "from range edges");
+}
+
+static void testTable() {
+    CcTable t;
+    uint8_t v = 99;
+    CHECK(!t.poll(20, v) && v == 99, "nothing yet");
+    t.set(20, 10);
+    t.set(20, 50);
+    t.set(20, 70);  // three messages between two polls: only the latest is read
+    CHECK(t.poll(20, v) && v == 70, "the latest value (%u)", v);
+    CHECK(!t.poll(20, v), "read once");
+    t.set(21, 5);
+    CHECK(!t.poll(20, v) && t.poll(21, v) && v == 5, "per controller");
+    // The sequence counter wraps (256 messages) without losing a message.
+    for (int i = 0; i < 300; i++) t.set(22, static_cast<uint8_t>(i & 127));
+    CHECK(t.poll(22, v) && v == ((299) & 127), "after a wrap (%u)", v);
+    t.set(22, 3);
+    CHECK(t.poll(22, v) && v == 3, "and again");
+    // Exactly 256 messages between two polls (the old 8-bit sequence would have looked like silence), and 512.
+    CcTable w;
+    for (int i = 0; i < 256; i++) w.set(23, static_cast<uint8_t>(i & 127));
+    CHECK(w.poll(23, v) && v == (255 & 127), "256 messages are seen (%u)", v);
+    for (int i = 0; i < 512; i++) w.set(23, static_cast<uint8_t>((i + 1) & 127));
+    CHECK(w.poll(23, v) && v == (512 & 127), "512 messages are seen (%u)", v);
+    t.set(200, 1);  // out of range: ignored
+    // Presses: values of 64 or more; a press and release between two passes still counts.
+    CcTable b;
+    CHECK(b.takePresses(40) == 0, "no press");
+    b.set(40, 127);
+    b.set(40, 0);
+    CHECK(b.takePresses(40) == 1 && b.takePresses(40) == 0, "one press, even when released at once");
+    b.set(40, 127);
+    b.set(40, 0);
+    b.set(40, 127);
+    b.set(40, 0);
+    CHECK(b.takePresses(40) == 2, "two presses");
+    for (int i = 0; i < 260; i++) {
+        b.set(41, 127);
+        b.set(41, 0);
+    }
+    CHECK(b.takePresses(41) == (260 & 255), "the count wraps like a byte (%u)", b.takePresses(41));
+}
+
+static void testTakeover() {
+    CcTakeover t;
+    // The fader is far from the shown value (50): nothing applies until it gets there.
+    CHECK(!ccTakeoverStep(t, 10, 50) && !ccTakeoverStep(t, 20, 50) && !ccTakeoverStep(t, 30, 50), "below the value: not applied");
+    CHECK(ccTakeoverStep(t, 49, 50) && t.engaged, "within 2: engaged");
+    CHECK(ccTakeoverStep(t, 20, 50), "once engaged it follows everywhere, also away from the value");
+    ccDisengage(t);
+    CHECK(!t.engaged && !t.hasLast, "disengaged");
+    // Crossing between two messages (a fast move) engages too.
+    CHECK(!ccTakeoverStep(t, 10, 50), "start low");
+    CHECK(ccTakeoverStep(t, 90, 50), "jumped across 50: engaged and applied");
+    ccDisengage(t);
+    // From above, downwards.
+    CHECK(!ccTakeoverStep(t, 100, 50) && !ccTakeoverStep(t, 70, 50) && ccTakeoverStep(t, 40, 50), "crossing downwards");
+    ccDisengage(t);
+    // The first message ever, close to the value: engaged at once. Far: it waits for a second message.
+    CHECK(ccTakeoverStep(t, 51, 50), "close at the start");
+    ccDisengage(t);
+    CHECK(!ccTakeoverStep(t, 100, 50), "far at the start waits (a crossing needs a previous value)");
+    // The value changed by another route (the encoder, a loaded song): the fader lets go and has to reach it again.
+    ccDisengage(t);
+    CHECK(ccTakeoverStep(t, 50, 50), "engaged at 50");
+    CHECK(ccTakeoverStep(t, 52, 51), "it follows and sets 52 (the shown value follows it)");
+    CHECK(!ccTakeoverStep(t, 53, 10), "the shown value was changed to 10 elsewhere: the fader lets go (53 is far from 10)");
+    CHECK(!t.engaged, "disengaged by the outside change");
+    CHECK(!ccTakeoverStep(t, 40, 10) && !ccTakeoverStep(t, 25, 10), "it is not applied while it comes down");
+    CHECK(ccTakeoverStep(t, 9, 10), "reaching the new value engages again");
+    // Rounding between the controller's scale and a parameter's range is not an outside change.
+    ccDisengage(t);
+    ccTakeoverStep(t, 50, 50);
+    CHECK(ccTakeoverStep(t, 60, 62) && ccTakeoverStep(t, 70, 71) && ccTakeoverStep(t, 20, 18), "a shown value within the tolerance of what was set stays engaged");
+    // Every combination of start, current and a monotone sweep engages by the time the sweep reaches the current value.
+    for (int current = 0; current <= 100; current += 5) {
+        for (int start = 0; start <= 100; start += 7) {
+            for (int dir : {-1, 1}) {
+                CcTakeover s;
+                ccDisengage(s);
+                bool applied = false;
+                int at = start;
+                bool reached = false;
+                for (int step = 0; step < 300 && !reached; step++) {
+                    applied = ccTakeoverStep(s, static_cast<uint8_t>(at), static_cast<uint8_t>(current)) || applied;
+                    if (at == current) reached = true;
+                    at += dir;
+                    if (at < 0 || at > 100) break;
+                }
+                if (reached) CHECK(applied, "sweep from %d (%d) reached %d without engaging", start, dir, current);
+            }
+        }
+    }
+}
+
+static void testWindow() {
+    CHECK(ccMoveWindow(0, -1) == 0 && ccMoveWindow(0, 1) == 1 && ccMoveWindow(3, 1) == 4 && ccMoveWindow(4, 1) == 4 && ccMoveWindow(2, -1) == 1 && ccMoveWindow(0, 100) == 4, "the window slides and stops at its ends");
+    // The strips cover layers 1-8 at 0, and columns 5-12 (layers 5-10, ECHO, VERB) at 4.
+    CHECK(ccColumn(0, 7) == 7 && ccColumn(4, 0) == 4 && ccColumn(4, 7) == 11, "columns");
+}
+
+// The parser delivers the controller's messages: CC on channel 3, running status, interleaved clock bytes.
+static void testParserFeed() {
+    MidiParser p;
+    MidiEvent e;
+    CcTable table;
+    auto feed = [&](std::initializer_list<uint8_t> bytes) {
+        for (uint8_t b : bytes) {
+            if (midiParse(p, b, e) && (e.type == MIDI_EVENT_CC) && (e.channel == kCcChannel)) table.set(e.data1, e.data2);
+        }
+    };
+    feed({0xB2, 20, 64, 20, 66, 0xF8, 20, 70});  // fader 1 on channel 3 in running status, a clock byte in between
+    uint8_t v = 0;
+    CHECK(table.poll(20, v) && v == 70, "fader 1: latest value %u", v);
+    feed({0xB0, 21, 99});  // channel 1: not ours
+    CHECK(!table.poll(21, v), "other channels are ignored");
+    feed({0xB2, 40, 127, 40, 0});
+    CHECK(table.takePresses(40) == 1, "a button press through the parser");
+    feed({0x92, 36, 100});  // a note on channel 3 does not disturb it
+    CHECK(!table.poll(36, v), "notes are not controllers");
+}
+
+int main() {
+    testMap();
+    testScaling();
+    testTable();
+    testTakeover();
+    testWindow();
+    testParserFeed();
+    std::printf("%d checks, %d failures\n", checks, failures);
+    return failures ? 1 : 0;
+}

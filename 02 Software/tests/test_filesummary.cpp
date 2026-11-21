@@ -119,6 +119,14 @@ static void testKit() {
     CHECK(!fsParseKit(bad.data(), v), "BAR 13");
     bad = makeKit(120, 255, 255, inst, sample, 10);
     CHECK(!fsParseKit(bad.data(), v), "garbage");
+    // A drumkit slot only shows names: a kit block from another tool with MEASURE and BAR 0 still reads.
+    bad = makeKit(0, 0, 0, inst, sample, 10);
+    FsSummary kitOnly;
+    CHECK(fsParseKit(bad.data(), kitOnly, false) && kitOnly.valid, "a kit with no timing reads as a kit");
+    CHECK(strcmp(kitOnly.inst[0], "808 KICK") == 0 && strcmp(kitOnly.sample[0], "bd_deep_02") == 0, "and shows its names");
+    CHECK(!fsParseKit(bad.data(), v, true), "but not as a song");
+    bad[0] = '-';
+    CHECK(!fsParseKit(bad.data(), v, false), "a kit still needs the '*' marker");
 }
 
 static void testBank() {

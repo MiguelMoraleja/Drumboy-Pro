@@ -19998,7 +19998,6 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
     BeatPlayData built;
     memset(&built, 0, sizeof(built));
     BeatPlayData& tBD = built;
-    BeatPlayData& aBD = lD.activeBeatPlayData;
 
     // A layer with GEN on plays its generator instead of the sample (Generator.h).
     if (layerGenOn(layerNum_)) {
@@ -20038,6 +20037,8 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                 io.midi.txVelocity[layerNum_] = midiMultiplierToVelocity(fillVolMultiplier_);
 
                 // initialize temp beat data
+                bool timed = false;  // a TIMING offset delays the note: set below when STYLE is on
+                uint16_t timingMax = 0;
                 tBD.active = true;
                 tBD.ramAddress = sampleSectorLibrary[targetSector].address;
                 tBD.stereoOffset = sampleSectorLibrary[targetSector].planeBytes;
@@ -20150,15 +20151,9 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     }
                     lD.shownValid = 0xFF;
 
-                    if (nTiming == 0) {
-                        lD.tempBeatTimingFlag = false;
-                        lD.tempBeatTimingCounter = 0;
-                        lD.tempBeatTimingCounterMax = 0;
-                    } else {
-                        lD.tempBeatTimingFlag = true;
-                        lD.tempBeatTimingCounter = 0;
-                        lD.tempBeatTimingCounterMax = kNumberDataLibrary[nTiming].stdMultiplier * 800;
-                    }
+                    // The timing offset goes with the note, published below in one step.
+                    timed = (nTiming != 0);
+                    timingMax = timed ? static_cast<uint16_t>(kNumberDataLibrary[nTiming].stdMultiplier * 800) : static_cast<uint16_t>(0);
                 } else {
                     // set default playback parameters
                     tBD.volumeMultiplier = kLayerVolumeCoef * kNumberDataLibrary[layer.level].powMultiplier * fillVolMultiplier_ * normMultiplier * mixer.masterVolumeFloat;
@@ -20203,33 +20198,8 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                 }
                 tBD.newBeatFlag = false;
 
-                // publish the finished beat at once
-                {
-                    uint32_t primaskPublish = __get_PRIMASK();
-                    __disable_irq();
-                    memcpy(&lD.tempBeatPlayData, &built, sizeof(BeatPlayData));
-                    __set_PRIMASK(primaskPublish);
-                }
-
-                // activate beat if no delay
-                if (!lD.tempBeatTimingFlag) {
-                    // aBD is read every audio block by processAudioLayer(), which runs from the
-                    // I2S DMA ISR, while this function can itself run from a timer ISR
-                    // (interruptPlay). Publish under a critical section so the audio ISR never
-                    // observes 'active' alongside a stale/partially-copied ramAddress/counterMax,
-                    // or a torn fadeAction/counterFade pair.
-                    uint32_t primaskBeat = __get_PRIMASK();
-                    __disable_irq();
-                    if (aBD.active) {
-                        aBD.fadeAction = true;
-                        aBD.counterFade = 0;
-                        aBD.newBeatFlag = true;
-                    } else {
-                        memcpy(&aBD, &lD.tempBeatPlayData, sizeof(BeatPlayData));
-                        memset(&lD.tempBeatPlayData, 0, sizeof(BeatPlayData));
-                    }
-                    __set_PRIMASK(primaskBeat);
-                }
+                // publish the finished beat, its timing offset and (when it plays at once) the hand-off to the active note, in one step
+                layer_publishBeat(layerNum_, built, timed, timingMax);
             }
         }
     }
@@ -20269,7 +20239,6 @@ void Controller::layer_playGen(uint8_t layerNum_, float fillVolMultiplier_) {
     BeatPlayData built;
     memset(&built, 0, sizeof(built));
     BeatPlayData& tBD = built;
-    BeatPlayData& aBD = lD.activeBeatPlayData;
 
     // The value of the LFO in a slot (0 = none, or switched off), as the sample path reads it.
     auto lfoAt = [this](uint8_t slot_, float& data_, float& depth_) -> bool {
@@ -20315,9 +20284,8 @@ void Controller::layer_playGen(uint8_t layerNum_, float fillVolMultiplier_) {
         nSweep = 0;
         nTiming = 0;
     }
-    lD.tempBeatTimingFlag = (nTiming != 0);
-    lD.tempBeatTimingCounter = 0;
-    lD.tempBeatTimingCounterMax = (nTiming != 0) ? static_cast<uint16_t>(kNumberDataLibrary[nTiming].stdMultiplier * 800) : 0;
+    const bool timed = (nTiming != 0);
+    const uint16_t timingMax = timed ? static_cast<uint16_t>(kNumberDataLibrary[nTiming].stdMultiplier * 800) : static_cast<uint16_t>(0);
 
     // 3. THE NOTE
     io.midi.txVelocity[layerNum_] = midiMultiplierToVelocity(fillVolMultiplier_);
@@ -20343,26 +20311,35 @@ void Controller::layer_playGen(uint8_t layerNum_, float fillVolMultiplier_) {
     lD.beatStartFlag = true;
     lD.beatEndFlag = false;
 
-    // 4. PUBLISH (as layer_playBeat: the finished note at once, then under a critical section: the audio interrupt reads aBD)
-    {
-        uint32_t primaskPublish = __get_PRIMASK();
-        __disable_irq();
-        memcpy(&lD.tempBeatPlayData, &built, sizeof(BeatPlayData));
-        __set_PRIMASK(primaskPublish);
-    }
-    if (!lD.tempBeatTimingFlag) {
-        uint32_t primaskBeat = __get_PRIMASK();
-        __disable_irq();
+    // 4. PUBLISH (as layer_playBeat)
+    layer_publishBeat(layerNum_, built, timed, timingMax);
+}
+
+void Controller::layer_publishBeat(uint8_t layerNum_, const BeatPlayData& built_, bool timed_, uint16_t timingMax_) {
+    /// @brief Publishes a finished note as one step with interrupts off: its TIMING offset, the pending
+    /// copy and, when it plays at once, the hand-off to the active note. This runs from the main loop (pad,
+    /// MIDI) and from the sequencer's timer interrupt, which can land between any two of these writes for
+    /// the same layer, and the audio interrupt reads aBD every block: done piece by piece, the other call's
+    /// note or flags could end up under this note's timing, or the note could be lost.
+    LayerPlayData& lD = layerPlayData[layerNum_];
+    BeatPlayData& aBD = lD.activeBeatPlayData;
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    lD.tempBeatTimingFlag = timed_;
+    lD.tempBeatTimingCounter = 0;
+    lD.tempBeatTimingCounterMax = timingMax_;
+    memcpy(&lD.tempBeatPlayData, &built_, sizeof(BeatPlayData));
+    if (!timed_) {
         if (aBD.active) {
             aBD.fadeAction = true;
             aBD.counterFade = 0;
-            aBD.newBeatFlag = true;
+            aBD.newBeatFlag = true;  // the audio interrupt takes the pending note when the fade ends
         } else {
-            memcpy(&aBD, &lD.tempBeatPlayData, sizeof(BeatPlayData));
+            memcpy(&aBD, &built_, sizeof(BeatPlayData));
             memset(&lD.tempBeatPlayData, 0, sizeof(BeatPlayData));
         }
-        __set_PRIMASK(primaskBeat);
     }
+    __set_PRIMASK(primask);
 }
 
 void Controller::processAudioGenLayer(uint8_t layerNum_) {
@@ -23759,7 +23736,7 @@ bool Controller::sd_readSlotSummary(FsKind kind_, uint8_t slot_, FsSummary& out_
     if (f_open(&sd.file, path, FA_READ) == FR_OK) {
         uint8_t kit[kDrumkitByteSize];
         UINT got = 0;
-        if ((f_lseek(&sd.file, kFsHeaderBytes) == FR_OK) && (f_read(&sd.file, kit, kFsKitBytes, &got) == FR_OK) && (got == kFsKitBytes) && fsParseKit(kit, out_)) {
+        if ((f_lseek(&sd.file, kFsHeaderBytes) == FR_OK) && (f_read(&sd.file, kit, kFsKitBytes, &got) == FR_OK) && (got == kFsKitBytes) && fsParseKit(kit, out_, kind_ == FS_SONG)) {
             ok = true;
             if (kind_ == FS_SONG) {
                 const uint32_t interval = fsSongInterval(out_.measure, out_.bar);

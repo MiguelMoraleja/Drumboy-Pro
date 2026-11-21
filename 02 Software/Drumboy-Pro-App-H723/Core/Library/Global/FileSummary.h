@@ -51,11 +51,13 @@ inline void fsCleanName(const uint8_t* in_, uint8_t inSize_, char* out_, uint8_t
 }
 
 // The kit block: tempo, MEASURE, BAR and the instrument (and, for a kit, the sample) names. Returns false
-// when the block is not a kit block that this firmware wrote ('*' marker, values in range).
-inline bool fsParseKit(const uint8_t* kit_, FsSummary& s_) {
+// when the block is not a kit block that this firmware wrote ('*' marker; for a song also MEASURE and BAR
+// in range, which the thumbnail needs: a drumkit slot only shows its names, and a file made by another
+// tool may leave those bytes 0).
+inline bool fsParseKit(const uint8_t* kit_, FsSummary& s_, bool song_ = true) {
     if (kit_[0] != '*') return false;
     const uint8_t tempo = kit_[13], measure = kit_[14], bar = kit_[15];
-    if ((measure < 1) || (measure > 12) || (bar < 1) || (bar > 12)) return false;
+    if (song_ && ((measure < 1) || (measure > 12) || (bar < 1) || (bar > 12))) return false;
     s_.tempo = tempo;
     s_.measure = measure;
     s_.bar = bar;

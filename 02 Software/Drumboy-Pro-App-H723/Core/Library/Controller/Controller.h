@@ -464,6 +464,7 @@ class Controller {
     bool layer_canPlay(uint8_t layerNum_) const;            // a sample is loaded, or GEN is on
     bool layerGenOn(uint8_t layerNum_) const;
     void layer_playGen(uint8_t layerNum_, float fillVolMultiplier_);
+    void layer_publishBeat(uint8_t layerNum_, const BeatPlayData& built_, bool timed_, uint16_t timingMax_);
     void processAudioGenLayer(uint8_t layerNum_);
     void layerInst_setGen(uint8_t layerNum_, uint8_t type_);
     void layerInst_stepGenLength(uint8_t layerNum_, bool up_);

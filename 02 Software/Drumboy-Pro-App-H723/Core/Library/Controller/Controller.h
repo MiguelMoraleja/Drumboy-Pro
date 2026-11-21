@@ -997,6 +997,7 @@ class Controller {
 
     void rhythm_setTempo(uint8_t tempo_);
     void rhythm_setMeasure(uint8_t measure_);
+    void rhythm_setMeasureBar(uint8_t measure_, uint8_t bar_);
     void rhythm_setBar(uint8_t bar_);
     void rhythm_setQuantize(uint8_t quantize_);
 
@@ -1208,6 +1209,7 @@ class Controller {
     void layerInst_setDirection(uint8_t layerNum_, uint8_t direction_);
     void layerInst_setResolution(uint8_t layerNum_, uint8_t resolution_);
     void layerInst_setStart(uint8_t layerNum_, uint8_t start_);
+    void layerInst_setStartEnd(uint8_t layerNum_, uint8_t start_, uint8_t end_);
     void layerInst_setEnd(uint8_t layerNum_, uint8_t end_);
     void layerInst_setTiming(uint8_t layerNum_, uint8_t timing_);
     void layerInst_setProbability(uint8_t layerNum_, uint8_t probability_);

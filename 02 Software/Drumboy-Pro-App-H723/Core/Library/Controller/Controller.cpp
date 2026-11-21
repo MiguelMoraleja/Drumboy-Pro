@@ -6042,8 +6042,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
 
                     // Rhythm configuration
                     rhythm_setTempo(data[13]);
-                    rhythm_setMeasure(data[14]);
-                    rhythm_setBar(data[15]);
+                    rhythm_setMeasureBar(data[14], data[15]);
                     rhythm_setQuantize(data[16]);
 
                     // Metronome settings
@@ -6133,8 +6132,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                         layerInst_setPitch(i, pitchFromFile(static_cast<uint8_t>(data[offset + 1]), static_cast<uint8_t>(data[offset + 24]), loadFormatVersion));
                         layerInst_setDirection(i, data[offset + 2]);
                         layerInst_setResolution(i, data[offset + 3]);
-                        layerInst_setStart(i, data[offset + 4]);
-                        layerInst_setEnd(i, data[offset + 5]);
+                        layerInst_setStartEnd(i, data[offset + 4], data[offset + 5]);
                         layerInst_setTiming(i, data[offset + 6]);
                         layerInst_setProbability(i, data[offset + 7]);
                         layerInst_setLfoLevel(i, data[offset + 8]);
@@ -6323,7 +6321,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                                 uint8_t startInterval0 = data[offsetBeat + 2];
                                 uint8_t startInterval1 = data[offsetBeat + 3];
                                 uint16_t startInterval = ((uint16_t)startInterval0 << 8) + startInterval1;
-                                layerSong_setBeat(i, j, startInterval, fillType, fillPattern, fillTime, fillLevel, true);
+                                if (startInterval < songInterval) layerSong_setBeat(i, j, startInterval, fillType, fillPattern, fillTime, fillLevel, true);  // a beat past the song end (damaged file) is dropped
                             }
                         }
 
@@ -7289,8 +7287,7 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                         layerInst_setPitch(i, pitchFromFile(static_cast<uint8_t>(data[offset + 1]), static_cast<uint8_t>(data[offset + 24]), loadFormatVersion));
                         layerInst_setDirection(i, data[offset + 2]);
                         layerInst_setResolution(i, data[offset + 3]);
-                        layerInst_setStart(i, data[offset + 4]);
-                        layerInst_setEnd(i, data[offset + 5]);
+                        layerInst_setStartEnd(i, data[offset + 4], data[offset + 5]);
                         layerInst_setTiming(i, data[offset + 6]);
                         layerInst_setProbability(i, data[offset + 7]);
                         layerInst_setLfoLevel(i, data[offset + 8]);
@@ -15701,6 +15698,35 @@ void Controller::rhythm_setMeasure(uint8_t measure_) {
     }
 }
 
+void Controller::rhythm_setMeasureBar(uint8_t measure_, uint8_t bar_) {
+    /// @brief Sets measure and bar together (a file load). The two setters above each check the
+    /// product against the other's current value: a valid pair from a file could be refused half
+    /// (measure 12 x bar 6 over a song of measure 8 x bar 8) and the song loaded with the wrong length.
+
+    // 1. INPUT VALIDATION
+    // The pair must be valid; a damaged file leaves the current timing alone.
+    if ((measure_ < kMinMeasure) || (measure_ > kMaxMeasure) || (bar_ < kMinBar) || (bar_ > kMaxBar) || (measure_ * bar_ > kMaxSongMeasureTotal)) return;
+
+    // 2. CORE TIMING UPDATE
+    rhythm.measure = measure_;
+    rhythm.bar = bar_;
+    calculateSongInterval();
+    adjustMeasureBarTiming();
+
+    // 3. UI REFRESH AND TRANSPORT RESET (as the single setters)
+    if (menu == RHYTHM_MENU) {
+        lcd_drawRhythm_MeasureData();
+        lcd_drawRhythm_BarData();
+    }
+    lcd_calculateSongX();
+    lcd_resetPlay();
+    lcd_drawMeasureBar();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        lcd_drawSong(i, activeSongBank);
+    }
+    reset();
+}
+
 void Controller::rhythm_setBar(uint8_t bar_) {
     /// @brief Sets bar count and rebuilds song timing/layout state.
 
@@ -21507,6 +21533,21 @@ void Controller::layerInst_setStart(uint8_t layerNum_, uint8_t start_) {
             lcd_drawLayerInst_StartData(layerNum_);
             lcd_drawLayerInst_GraphData(layerNum_);
         }
+    }
+}
+
+void Controller::layerInst_setStartEnd(uint8_t layerNum_, uint8_t start_, uint8_t end_) {
+    /// @brief Sets sample start and end together (a file load). The single setters each check against
+    /// the other's current value: a valid pair could be refused half (start 60 / end 100 over a
+    /// layer at 0 / 50 kept start 0).
+    if ((start_ < kMinLayerPosition) || (end_ > kMaxLayerPosition) || (start_ >= end_)) return;  // a damaged file keeps what is set
+    Layer& layer = layerLibrary[layerNum_];
+    layer.start = start_;
+    layer.end = end_;
+    if ((menu == LAYER_INST_1_MENU) && (selectedLayerNum == layer.number)) {
+        lcd_drawLayerInst_StartData(layerNum_);
+        lcd_drawLayerInst_EndData(layerNum_);
+        lcd_drawLayerInst_GraphData(layerNum_);
     }
 }
 

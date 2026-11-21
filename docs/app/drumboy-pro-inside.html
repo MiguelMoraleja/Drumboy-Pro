@@ -279,7 +279,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.17</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.18</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -564,6 +564,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">⏲</span><div><b>AUTOSAVE</b> on the Metronome page (last field): OFF, 2, 5, 10 (default) or 20 minutes. When that time has passed and the song changed, it is written to the SD card: when stopped, or at a loop end while playing. With MIDI notes coming in it waits for STOP, so a note is never held back. It also waits while you turn knobs or press keys.</div></div>
           <div class="k"><span class="keycap">⏻</span><div><b>After a power cut or a crash:</b> at power-on the Drumboy asks RESTORE AUTOSAVE?. ADD loads it, CLEAR throws it away. Then save it into a slot as usual.</div></div>
           <div class="k"><span class="keycap">⇄</span><div><b>LOAD and NEW</b> autosave unsaved work first, so a wrong LOAD can be undone at the next power-on. <b>SAVE</b> into a slot removes the autosave files (the work is safe in the slot).</div></div>
+          <div class="k"><span class="keycap">✓</span><div><b>Safe SAVE</b> (V1.18): a song or drumkit is written to File_001.tmp, checked (written in full, read back and compared) and only then replaces the slot, so a failed or interrupted SAVE leaves the old file. After a power cut during a SAVE you may find File_001.tmp or File_001.new on the card: the next start deletes the unfinished one and finishes the checked one.</div></div>
           <div class="k"><span class="keycap">◌</span><div><b>SAVE on screen</b> (V1.14): while an autosave writes, the status area shows SAVE; keys, the screen and incoming MIDI notes wait for that moment. SDERR in red means the write failed. The Metronome page shows under AUTOSAVE how many milliseconds the last one took.</div></div>
           <div class="k"><span class="keycap">✓</span><div><b>Two files</b> (<span class="mono">System/File/Autosave_A.rwf</span> and <span class="mono">_B</span>) are written in turn and sealed with a checksum, so pulling the power in the middle of a write still leaves the previous copy. Your numbered slots are never touched.</div></div>
         </div>
@@ -2217,6 +2218,11 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
+  { v: "V1.18", date: "2026-11-21", status: "Testing, not published", pub: false,
+    nw: ["Safe saves: SAVE (and CLEAR) of a song or a drumkit no longer rewrites the slot in place. The new file is written next to it, every byte is checked (written in full, read back and compared), and only then does it replace the old one, so a failed or interrupted save leaves the old file. SAVE takes a moment longer because of the check. If the power fails in the middle, the next start tidies up: an unfinished temporary file (File_001.tmp) is deleted, a checked one (File_001.new) becomes the slot",
+         "Loading a song sets MEASURE and BAR together (and a sample's START and END together). Before, each was checked against the other's old value, so a song of 12 x 6 loaded over a song of 8 x 8 came back as 8 x 6 and its beats lay past the end. A beat past the song end in a damaged file is dropped",
+         "Stability inside: the filter, EQ and effect-tone coefficients are published in one step, so no audio block runs with half old and half new numbers (a possible click when a knob moved); the sequencer's timer interrupt no longer draws on the display (stop, reset and the pre-count hits set a flag and the main loop draws), so it cannot stall the next tick or interleave with a draw. The sound is unchanged"],
+    fix: [] },
   { v: "V1.17", date: "2026-11-21", status: "GitHub release v1.17 · tested", pub: true,
     nw: ["EUCLID settings per layer: STEPS, HITS, ROTATE, GRID, MODE and ACCENTS are remembered for each layer (before there was one set for the whole machine, so an accent count set on one layer showed up on all). Opening the EUCLID page on a layer shows that layer's own settings; they are saved in the song file (older songs start every layer at the defaults)",
          "Fewer crashes: the SD card driver no longer waits up to 30 s for a transfer that failed (that stalled the unit until the watchdog restarted it with CRASH 7 while browsing samples); a glitch of the card-detect line no longer starts a full rescan; the lanes no longer try to fill billions of pixels for two beats in one pixel column; the bitcrusher fold and a damaged WAV header cannot run for ever; a song file cut short is not loaded as zeros; the audio and MIDI OUT restart after a transfer error. Sound fixes: the master soft clip stays below full scale, the overdrive has no step at its threshold, the bit depth reduction no longer adds a DC offset, PONG plays its whole forward half, PROBABILITY 0 never plays",

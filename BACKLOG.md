@@ -915,13 +915,13 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 - **Sound (the master soft clip and effects):** the soft knee went over full scale (peak 1.056) and stepped down above 1.25: it now ends at exactly 1.0 with zero slope (1.1667). The overdrive curve jumped by 0.125 at its threshold at the default -6 dB (continuous now, identical at 0 dB). The bit depth reduction truncated, so silence became a DC offset (-0.125 at 4 bits); it rounds now (silence stays silence). The flanger's read head ran past its buffer at TIME 5 ms and WIDTH 100. The audio interrupt now runs with flush-to-zero like the main loop (`FPDSCR`). All in `DspMath.h` with `test_dspmath` where pure.
 - **Reverb off** no longer collapses every pan to mono (backlog 58).
 
-**Found and not done yet (candidates for the next steps)**
-- **Coefficient changes are not atomic with the audio interrupt** (filters, EQ, effects: a dozen separate stores while the interrupt can run; a block can run with new `b` and old `a`). Build the coefficients apart and publish them in one step.
-- **The sequencer timer interrupt draws on the LCD** (`stop()`, `reset()`, precount hits) while the main loop may be mid-draw: set flags in the interrupt, draw in `update()`.
+**Found and not done yet (candidates for the next steps).** Four of them are done in V1.18 (item 65), marked below.
+- **Coefficient changes are not atomic with the audio interrupt** (filters, EQ, effects: a dozen separate stores while the interrupt can run; a block can run with new `b` and old `a`). Build the coefficients apart and publish them in one step. **Done in V1.18 (item 65).**
+- **The sequencer timer interrupt draws on the LCD** (`stop()`, `reset()`, precount hits) while the main loop may be mid-draw: set flags in the interrupt, draw in `update()`. **Done in V1.18 (item 65).**
 - **A module that is switched off keeps its state** (reverb tail, filter history, compressor): it comes back when it is switched on again.
 - **`setBeatFill(n, 0, 0, 0, 0)`** (set beat, reset, quantize) resets every beat's fill, pattern and ghost notes; `beatListRebuild` keeps them.
-- **Measure and bar, START and END are validated against each other's old value when a song or kit loads**, so a song can load with the wrong length; and beats past a shorter song end stay as invisible beats.
-- **Saving is not atomic**: a slot is truncated and rewritten in place (write a temporary file, check every length, sync, rename); `f_write` results are not compared with the length.
+- **Measure and bar, START and END are validated against each other's old value when a song or kit loads**, so a song can load with the wrong length; and beats past a shorter song end stay as invisible beats. **Done in V1.18 (item 65).**
+- **Saving is not atomic**: a slot is truncated and rewritten in place (write a temporary file, check every length, sync, rename); `f_write` results are not compared with the length. **Done in V1.18 (item 65).**
 - **Refactoring:** `sd_loadFile` and `sd_loadDrumkit` decode the same kit twice; `sd_saveDrumkit` repeats `file_encodeKit`; `encoder_incValue` and `encoder_decValue` are two mirrored 650-line switches; `interruptTransition` is about 700 lines of ramps; `rhythm_setQuantize` repeats the beat rearrangement about ten times.
 - **Performance:** the pitched layer path reads each sample three times through a volatile lambda; the distortion's `2.0f / M_PI` is a double.
 
@@ -961,3 +961,25 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 **To test on the device.**
 1. Reverb: MIXER to DUB, MODE DUB; raise VERB on a strip and VERB RTN; hits should ring into a tail; MUTE the strip: the tail keeps ringing (a drop); a reverb throw (REVERB + pad) opens the send; with VERB 0 nothing reaches the reverb; turn the reverb off on its own page: silence, with no burst of the dry send.
 2. Line-in: unmute on the LI-VOL tab, play a source into the input: the meter/level should move, check the tone and the quiet passages; try MIXER IN = EQ, FILTER 2 (echo) and REVERB while in DUB.
+
+### 65. Stability first (V1.18, owner's choice 2026-11-21)
+
+**Decided by the owner:** after the review (item 62) the next work is stability, before the planned features (59 to 61). Four of the review's open findings are built in V1.18; none changes the sound.
+
+**1. Saving a song or a drumkit is atomic and checked** (`Controller/SlotFile.h`, decisions in `Global/AtomicSave.h`, `test_atomicsave`).
+- A slot (`File_NNN.rwf`, `Drumkit_NNN.rwd`) is no longer truncated and rewritten in place. The new content goes to `File_NNN.tmp`. Every write must put out all its bytes (a write that comes up short, as on a full card, was not noticed before), the file must be as long as what was written, and it is read back and compared by CRC-32 (a card that took a write wrongly is found now, not at the next load). Then it is renamed `File_NNN.new` and replaces the slot (delete, rename). If anything fails the slot is untouched and the temporary file is deleted; SAVE shows its error.
+- A power cut or crash in the middle: at start-up (`sd_recoverSaves`, before the slots are counted) a `.tmp` file is deleted (never finished) and a `.new` file that is a whole slot file becomes the slot (the cut came between the verified write and the replacing). So a slot is always the old file or the new one, whole. CLEAR (the blank template of a slot) goes the same way.
+- The autosave files keep their own scheme (two files, a seal with a CRC): they are written in place and now also get the length and read-back checks.
+- Tested on the PC against a mock of FatFs (`tests/mock/ff.h`): every kind of failure (a write that fails, is short or stores a wrong byte, close, delete, rename), and a power cut at every step of a save, with and without an existing slot, then the recovery (and a cut during the recovery): the slot always holds the old or the new content, whole, and no temporary file remains. 203 checks.
+- Known limit: FAT has no journal. A cut inside the single directory-entry rename could leave two names for one file; the window is a few microseconds and is not covered.
+
+**2. Coefficient sets are published with interrupts off** (`IrqGuard` in `Global.h`). The filters, the EQ bands, the input low-pass and the overdrive and distortion tone filters computed their coefficients in the main loop and stored them one by one while the audio interrupt could run in between: one block could run with half old and half new coefficients (two stable filters mixed can ring or click). The maths is done first; the 5 to 12 stores happen inside a scope with interrupts off (well under a microsecond).
+
+**3. The sequencer timer interrupt no longer draws on the LCD.** `stop()`, `reset()` (both also run from `interruptPlay`) and the pre-count commit drew on the display from a timer interrupt, which is long, can interleave with a draw of the main loop and delays the next tick. They set flags (`countDownClearFlag`, `bankTabRedrawFlag`, `precountDrawMask`) and `update()` draws. The beats hit during the pre-count are still stored in the interrupt at the same tick (so they play in sync); only their drawing is deferred (`layerSong_setBeat(..., draw_ = false)`).
+
+**4. Loading a song or a kit sets pairs together.** `rhythm_setMeasure` and `rhythm_setBar` each check the product against the other's current value, so a song of 12 x 6 loaded over a song of 8 x 8 kept measure 8 (the file's beats then lay past the song end, and the song had the wrong length); likewise START and END of a layer's sample (a file's start 60 / end 100 over a layer at 0 / 50 kept start 0). The loader now uses `rhythm_setMeasureBar` and `layerInst_setStartEnd`, which validate the pair from the file (a damaged pair leaves the current values), and a beat at or past the song end is dropped.
+
+**Still open from item 62:** a switched-off module keeps its state (reverb tail, filter history, compressor) and comes back when switched on; `setBeatFill(n, 0, 0, 0, 0)` resets a beat's fill and ghosts when a beat is inserted after it; the refactoring and the performance notes.
+
+**Status: built in V1.18 (test build, not released).** **Done when** (on the unit): SAVE and LOAD of songs and kits work as before (SAVE a little slower: it writes, reads back and replaces); a song saved with a different MEASURE and BAR than the one in memory loads with the right length; recording over the pre-count still plays the first hits in time, and the beats appear in the lanes right after; no `CRASH` and no stray files except at most a `.tmp` or `.new` after a power cut (they are tidied at the next start).
+

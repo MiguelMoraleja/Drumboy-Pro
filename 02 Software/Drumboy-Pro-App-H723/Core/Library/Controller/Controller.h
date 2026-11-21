@@ -7,7 +7,9 @@
 #include "BeatList.h"
 #include "Euclid.h"
 #include "Global.h"
+#include "FileSummary.h"
 #include "Lcd.h"
+#include "SlotFile.h"
 #include "fatfs.h"
 #include "main.h"
 #include "sdmmc.h"
@@ -72,7 +74,7 @@ class Controller {
     Eq eq;                                                              // Global Equalizer
     Filter filter[kFilterLibrarySize];                                  // Multimode filters for instrument layers
     Effect effect[kEffectLibrarySize];                                  // Multi-effects (Delay, Chorus, etc.)
-    Reverb reverb;                                                      // Global Reverb engine
+    Reverb& reverb;                                                     // Global Reverb engine: 72 KB that live in the DTCM RAM (Controller.cpp reverbStorage, built by dtcmInit())
 
     /* Preset Data Buffers --------------------------------------- */
 
@@ -211,6 +213,10 @@ class Controller {
     Icon stopIcon;
     Icon recordIcon;
     bool resetPlayFlag;
+    // The sequencer timer interrupt (interruptPlay) must not draw on the LCD: it sets these, update() draws.
+    volatile bool countDownClearFlag = false;                           // Clear the pre-count number
+    volatile bool bankTabRedrawFlag = false;                            // Redraw the SONG bank tab (a pending bank shift was cancelled)
+    volatile uint16_t precountDrawMask = 0;                             // Layers that got beats from the pre-count: redraw their lanes (bit = layer)
 
     FileStatus fileStatus;                                              // Current operation status of project files
     FileStatus drumkitStatus;                                           // Current operation status of drum kits
@@ -277,6 +283,23 @@ class Controller {
 
     int8_t fileMenuCounter;           
     int8_t drumkitMenuCounter;
+    // Load and save screens (FileScreens.h, FileSummary.h): the grid of the 100 slots and the card of the selected one.
+    uint8_t fileSlotState[kFsSlots] = {0};      // FsState of each song slot, from the library scan
+    uint8_t kitSlotState[kFsSlots] = {0};       // and of each drumkit slot
+    int16_t fileSlotCurrent = -1;               // the song slot last loaded or saved (-1 = none)
+    int16_t kitSlotCurrent = -1;                // the same for drumkits
+    FsView fsView;                              // what the screen shows (the summaries too): about 3 KB
+    int16_t fsSummarySlot = -1;                 // which slot fsView.sel holds (-1 = none), and of which kind
+    int8_t fsSummaryKind = -1;
+    int16_t fsDrawnSlot = -1;                   // the cursor as drawn (-1 = the screen is not drawn)
+    uint32_t fileViewKey = 0;                   // what the grid was drawn from, without the cursor (0 = nothing)
+    uint32_t fileViewStateDrawn = 0;
+    uint8_t slotRepeat = 0;                     // consecutive repeats of a held UP or DOWN: after 8 the step is ten slots
+    uint8_t slotStep(bool repeat_);
+    uint32_t fileViewState() const;
+    void lcd_drawFileViewData();
+    bool sd_readSlotSummary(FsKind kind_, uint8_t slot_, FsSummary& out_);
+    void fsSummaryFromMemory(FsSummary& out_) const;
 
     /* Transition & Animation Flags ------------------------------ */
 
@@ -333,7 +356,7 @@ class Controller {
     uint32_t file_stateCrc();
     uint16_t file_noteEntryCount();
     uint32_t file_noteCrc(uint32_t crc_);
-    bool file_writeNotes();
+    void file_writeNotes(SaveWriter& out_);
     void file_readNotes(const char* fileName_);
     uint16_t layerSong_quantizeInterval(uint16_t interval_) const;
     // Trig conditions (BeatNote.h): loops of the active bank, each layer's PRE, fills skipped whole.
@@ -401,7 +424,7 @@ class Controller {
     float pingWidth = 0.0f;                                 // ping-pong width of the echo in this block (0 = centred; audio interrupt)
     float effectDelta = 0.0f;                               // right minus left of the effect's last sample (audio interrupt)
     float fxDryScale = 1.0f;                                // 0 in DUB mode: effects and reverb run without their DRY
-    uint8_t dubPage = 0;                                    // 0: the first DUB page, 1: the second (pan, FX send, echo width)
+    uint8_t dubPage = 0;                                    // 0: the first DUB page, 1: the second (pan, FX send, echo width), 2: HISS (the bed, GeneratorView.h)
     uint8_t dubStripSel = 0;                                // the strip the DUB page edits (a pad press selects it)
     uint32_t dubStripDrawn[kDubStrips] = {0};               // the desk: what each strip shows (a fingerprint), 0 = nothing
     uint32_t dubReturnDrawn[2] = {0, 0};
@@ -410,6 +433,14 @@ class Controller {
     uint32_t dubViewState() const;
     void lcd_drawDubViewData();
     void lcd_drawDubMeters();
+    // Generator screens (GeneratorView.h): the GEN view on instrument page 2, the HISS page (DUB page 3)
+    void layerShortName(uint8_t layerNum_, char* out_, size_t size_) const;  // 12 characters: the instrument, or GEN and the generator
+    uint32_t hissViewState() const;
+    void lcd_drawGenViewData();
+    void lcd_drawHissViewData();
+    void lcd_drawHissLive();
+    uint32_t hissViewKey = 0;                                // what the HISS page was drawn from (0 = nothing)
+    GsHissLive hissLive;                                     // what the HISS page's live part has drawn
     void lcd_drawDeskKnob(uint16_t cx_, uint16_t cy_, uint8_t percent_, RGB16Color color_);
     void lcd_drawDeskColumn(uint8_t column_);
     void lcd_drawDeskSegments(uint8_t column_, uint8_t lit_, bool audible_);
@@ -427,6 +458,20 @@ class Controller {
     void lcd_drawDubMenu();
     void lcd_drawDub_Data();
     uint32_t file_dubCrc(uint32_t crc_);
+    // Generators (Generator.h): GEN on a layer, the hiss bed on DUB page 2 (a song setting)
+    GenMix genMix;
+    uint32_t genSeedCount = 0;                              // a new seed for every generator note
+    bool layer_canPlay(uint8_t layerNum_) const;            // a sample is loaded, or GEN is on
+    bool layerGenOn(uint8_t layerNum_) const;
+    void layer_playGen(uint8_t layerNum_, float fillVolMultiplier_);
+    void layer_publishBeat(uint8_t layerNum_, const BeatPlayData& built_, bool timed_, uint16_t timingMax_);
+    void processAudioGenLayer(uint8_t layerNum_);
+    void layerInst_setGen(uint8_t layerNum_, uint8_t type_);
+    void layerInst_stepGenLength(uint8_t layerNum_, bool up_);
+    void layerInst_stepGenSweep(uint8_t layerNum_, bool up_);
+    void lcd_drawLayerInst_GenData(uint8_t layerNum_);
+    void lcd_drawLayerInst1Headers(uint8_t layerNum_);
+    uint32_t file_genCrc(uint32_t crc_);
     void layerInst_setSolo(uint8_t layerNum_, bool solo_);
     void layerInst_clearSolo();
     void lcd_drawLayerInst_StyleData(uint8_t layerNum_);
@@ -559,6 +604,7 @@ class Controller {
     /* Main Functions -------------------------------------------- */
 
     void initialize();
+    void dtcmInit();  // builds what lives in the DTCM RAM (the reverb); main() calls it right after it has zeroed the DTCM
     void update();
     void test();
 
@@ -706,6 +752,7 @@ class Controller {
     SdResult sd_checkFileExist(const char* fileAddress);
     SdResult sd_checkFolderExist(const char* folderAddress);
     SdResult sd_loadImage(const char* fileAddress, uint32_t paletteAddress, uint32_t dataAddress, uint16_t paletteSize, uint16_t width, uint16_t height, RGBMode mode);
+    void sd_recoverSaves();
     void sd_getLibraries();
     SdResult sd_getFileLibrary();
     SdResult sd_getDrumkitLibrary();
@@ -918,6 +965,7 @@ class Controller {
     void lcd_drawIcon();
     void lcd_drawCopyPaste();
     void lcd_drawCountDown();
+    void lcd_drawPrecountBeats();
     void lcd_clearCountDown();
     void lcd_restartPlay();
     void lcd_resetPlay();
@@ -948,8 +996,8 @@ class Controller {
 
     void file_menuRight();
     void file_menuLeft();
-    void file_menuUp();
-    void file_menuDown();
+    void file_menuUp(bool repeat_ = false);
+    void file_menuDown(bool repeat_ = false);
 
     void file_newSelect();
     void file_newAction();
@@ -966,8 +1014,8 @@ class Controller {
 
     void drumkit_menuRight();
     void drumkit_menuLeft();
-    void drumkit_menuUp();
-    void drumkit_menuDown();
+    void drumkit_menuUp(bool repeat_ = false);
+    void drumkit_menuDown(bool repeat_ = false);
 
     void drumkit_newSelect();
     void drumkit_newAction();
@@ -990,6 +1038,7 @@ class Controller {
 
     void rhythm_setTempo(uint8_t tempo_);
     void rhythm_setMeasure(uint8_t measure_);
+    void rhythm_setMeasureBar(uint8_t measure_, uint8_t bar_);
     void rhythm_setBar(uint8_t bar_);
     void rhythm_setQuantize(uint8_t quantize_);
 
@@ -1201,6 +1250,7 @@ class Controller {
     void layerInst_setDirection(uint8_t layerNum_, uint8_t direction_);
     void layerInst_setResolution(uint8_t layerNum_, uint8_t resolution_);
     void layerInst_setStart(uint8_t layerNum_, uint8_t start_);
+    void layerInst_setStartEnd(uint8_t layerNum_, uint8_t start_, uint8_t end_);
     void layerInst_setEnd(uint8_t layerNum_, uint8_t end_);
     void layerInst_setTiming(uint8_t layerNum_, uint8_t timing_);
     void layerInst_setProbability(uint8_t layerNum_, uint8_t probability_);
@@ -1281,7 +1331,7 @@ class Controller {
     void layerSong_beatRight();
     void layerSong_beatLeft();
 
-    void layerSong_setBeat(uint8_t layerNum_, uint8_t bankNum_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_ = 0);
+    void layerSong_setBeat(uint8_t layerNum_, uint8_t bankNum_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_ = 0, bool draw_ = true);
     void layerSong_setSelectedBeatFill(uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_);
     void layerSong_setSelectedBeatFillTime(uint8_t fillTime_);
     void layerSong_setSelectedBeatFillLevel(uint8_t fillLevel_);

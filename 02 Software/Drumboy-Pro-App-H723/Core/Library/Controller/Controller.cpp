@@ -1,6 +1,8 @@
 #include "Controller.h"
 #include "Version.h"
 
+#include <new>
+
 // Edited copy of the selected layer's bank. Beat-list edits (BeatList.h) are made here and
 // swapped in by layerSong_commitBank() with the sequencer interrupt held off, so playback
 // never sees a half-edited bank.
@@ -8,6 +10,11 @@ static Bank layerSongScratch;
 
 // Layer's beats when the EUCLID page was opened: the base for MERGE and what CLEAR restores.
 static Bank euclidSnapshot;
+
+// The reverb's 72 KB (its delay lines) live in the DTCM RAM, not in the Controller object: the main RAM (RAM_D1)
+// had 1.4 KB left, no DMA touches the reverb, and the DTCM is also faster than the cached main RAM. main() zeroes
+// the whole DTCM after the static constructors have run, so the object is built in place by dtcmInit().
+alignas(8) static uint8_t reverbStorage[sizeof(Reverb)] __attribute__((section(".dtcm")));
 
 Controller::Controller()
 
@@ -18,7 +25,7 @@ Controller::Controller()
       eq(),
       filter{{0}, {1}},
       effect{{0}, {1}},
-      reverb(),
+      reverb(*reinterpret_cast<Reverb*>(reverbStorage)),
 
       /* --- SECTION 2: AUDIO BUFFERS (BLOCK PROCESSING) -------------------- */
 
@@ -192,6 +199,12 @@ Controller::Controller()
       sampleFadeOut(true) {}
 
 Controller::~Controller() {}
+
+void Controller::dtcmInit() {
+    /// @brief Builds the objects that live in the DTCM RAM, which main() has just zeroed. Same as the
+    /// reverb() the Controller's initializer list used to run: zero-filled, then its default values.
+    new (&reverb) Reverb();
+}
 
 void Controller::initialize() {
     /// @brief Orchestrates the complete cold-boot sequence.
@@ -612,11 +625,10 @@ void Controller::update() {
         while (io.midi.rxNoteQueue.pop(noteEvent)) {
             uint8_t layerNum = noteEvent.data1 % 12;  // Map MIDI key to layer (0-11)
             if (layerNum < kLayerLibrarySize) {
-                Layer& layer = layerLibrary[layerNum];
                 const uint8_t level = midiVelocityToLevel(noteEvent.data2);
 
                 // Trigger audio if layer is active, unmuted and not silenced by a SOLO
-                if (layerAudible(layerNum) && (layer.samplePlay))
+                if (layerAudible(layerNum) && layer_canPlay(layerNum))
                     layer_playBeat(layerNum, kNumberDataLibrary[level].powMultiplier);
 
                 // Write note to the current sequencer step if Recording is enabled, with the
@@ -1743,12 +1755,11 @@ void Controller::keyboard_action() {
                         } else if (preview_padReplay(layerNum)) {
                             // Browsing samples: the pad replays the preview, not the loaded sample.
                         } else {
-                            Layer& layer = layerLibrary[layerNum];
                             if ((menu == DUB_MENU) && (dubStripSel != layerNum)) {
                                 dubStripSel = layerNum;  // the DUB page edits the strip of the pad just pressed
                                 lcd_drawDub_Data();
                             }
-                            if (layerAudible(layerNum) && (layer.samplePlay)) layer_playBeat(layerNum, 1.0f);
+                            if (layerAudible(layerNum) && layer_canPlay(layerNum)) layer_playBeat(layerNum, 1.0f);
                             if (recordActive) {
                                 undo_captureRecord(layerNum, activeSongBank);
                                 if (!metronome.precountState) {
@@ -2742,10 +2753,12 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_MIXER:
-                                // MIXER, then DUB (two pages), then ROUTING, then the mixer again.
+                                // MIXER, then DUB (three pages: the desk, its second page, the HISS bed), then ROUTING,
+                                // then the mixer again.
                                 if (!alertFlag) {
-                                    if ((menu == DUB_MENU) && (dubPage == 0)) {
-                                        dubPage = 1;
+                                    if ((menu == DUB_MENU) && (dubPage < kDubPageHiss)) {
+                                        dubPage++;
+                                        if (dubPage == kDubPageHiss) viewFull = true;  // the HISS screen replaces the desk
                                         lcd_drawDubMenu();
                                         encoder_update();
                                     } else if (menu == DUB_MENU) {
@@ -2989,11 +3002,11 @@ void Controller::keyboard_upLong() {
     // 1. MENU DISPATCH
     switch (menu) {
         case FILE_MENU:
-            file_menuUp();
+            file_menuUp(true);
             break;
 
         case DRUMKIT_MENU:
-            drumkit_menuUp();
+            drumkit_menuUp(true);
             break;
 
         case RHYTHM_MENU:
@@ -3066,11 +3079,11 @@ void Controller::keyboard_downLong() {
     // 1. MENU DISPATCH
     switch (menu) {
         case FILE_MENU:
-            file_menuDown();
+            file_menuDown(true);
             break;
 
         case DRUMKIT_MENU:
-            drumkit_menuDown();
+            drumkit_menuDown(true);
             break;
 
         case RHYTHM_MENU:
@@ -3469,6 +3482,7 @@ void Controller::encoder_update() {
             enc.mode = ENC_MODE_LOCAL;
             enc.function = encoderLocalFunction[menuSafe][i];
             if ((menuSafe == DUB_MENU) && (dubPage == 1)) enc.function = kDubPage2Function[i];
+            if ((menuSafe == DUB_MENU) && (dubPage == kDubPageHiss)) enc.function = kDubPage3Function[i];
         }
 
         // 2. COUNTER STATE RESET
@@ -4139,6 +4153,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             break;
 
         case ENC_INST_1_START:
+            if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {  // GEN on: the generator's own field
+                layerInst_stepGenLength(selectedLayerNum, true);
+                break;
+            }
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoStart < kMaxLfo) ? layerInst_setLfoStart(selectedLayerNum, layerLibrary[selectedLayerNum].lfoStart + 1) : layerInst_setLfoStart(selectedLayerNum, kMinLfo);
             } else if (layerLibrary[selectedLayerNum].start < kMaxLayerPosition)
@@ -4146,6 +4164,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             break;
 
         case ENC_INST_1_END:
+            if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {  // GEN on: the generator's own field
+                layerInst_stepGenSweep(selectedLayerNum, true);
+                break;
+            }
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoEnd < kMaxLfo) ? layerInst_setLfoEnd(selectedLayerNum, layerLibrary[selectedLayerNum].lfoEnd + 1) : layerInst_setLfoEnd(selectedLayerNum, kMinLfo);
             } else if (layerLibrary[selectedLayerNum].end < kMaxLayerPosition)
@@ -4182,6 +4204,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
 
         case ENC_INST_2_PAN:
             layerPan_step(1);  // ADD + turn: every layer moves by the same step
+            break;
+
+        case ENC_INST_2_GEN:
+            (genMix.type[selectedLayerNum] < kGenTypeCount - 1) ? layerInst_setGen(selectedLayerNum, genMix.type[selectedLayerNum] + 1) : layerInst_setGen(selectedLayerNum, GEN_OFF);
             break;
 
         case ENC_ROUTE_EQ_OUT:
@@ -4254,6 +4280,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_DUB_PAN:
         case ENC_DUB_FX:
         case ENC_DUB_WIDTH:
+        case ENC_DUB_HISS:
+        case ENC_DUB_HISSLEVEL:
+        case ENC_DUB_HISSTONE:
+        case ENC_DUB_HISSDUCK:
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, true);
             break;
 
@@ -4761,6 +4791,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
             break;
 
         case ENC_INST_1_START:
+            if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {  // GEN on: the generator's own field
+                layerInst_stepGenLength(selectedLayerNum, false);
+                break;
+            }
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoStart > kMinLfo) ? layerInst_setLfoStart(selectedLayerNum, layerLibrary[selectedLayerNum].lfoStart - 1) : layerInst_setLfoStart(selectedLayerNum, kMaxLfo);
             } else if (layerLibrary[selectedLayerNum].start > kMinLayerPosition)
@@ -4768,6 +4802,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
             break;
 
         case ENC_INST_1_END:
+            if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {  // GEN on: the generator's own field
+                layerInst_stepGenSweep(selectedLayerNum, false);
+                break;
+            }
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoEnd > kMinLfo) ? layerInst_setLfoEnd(selectedLayerNum, layerLibrary[selectedLayerNum].lfoEnd - 1) : layerInst_setLfoEnd(selectedLayerNum, kMaxLfo);
             } else if (layerLibrary[selectedLayerNum].end > kMinLayerPosition)
@@ -4804,6 +4842,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
 
         case ENC_INST_2_PAN:
             layerPan_step(-1);
+            break;
+
+        case ENC_INST_2_GEN:
+            (genMix.type[selectedLayerNum] > GEN_OFF) ? layerInst_setGen(selectedLayerNum, genMix.type[selectedLayerNum] - 1) : layerInst_setGen(selectedLayerNum, kGenTypeCount - 1);
             break;
 
         case ENC_ROUTE_EQ_OUT:
@@ -4876,6 +4918,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_DUB_PAN:
         case ENC_DUB_FX:
         case ENC_DUB_WIDTH:
+        case ENC_DUB_HISS:
+        case ENC_DUB_HISSLEVEL:
+        case ENC_DUB_HISSTONE:
+        case ENC_DUB_HISSDUCK:
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, false);
             break;
 
@@ -5316,6 +5362,13 @@ SdResult Controller::sd_reinitialize() {
         lcd_drawSdAlert(SD_ANALYZE);
         samplePool_releaseAll();
         sd_getLibraries();
+        // The slots may hold other files now: forget the grid's cached card and the marks of the slot last
+        // loaded or saved (they described the old card).
+        fsSummarySlot = -1;
+        fsSummaryKind = -1;
+        fileSlotCurrent = -1;
+        kitSlotCurrent = -1;
+        fileViewKey = 0;
         lcd_clearSdAlert();
         for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
             Layer& l = layerLibrary[i];
@@ -5507,9 +5560,36 @@ SdResult Controller::sd_loadImage(const char* fileAddress, uint32_t paletteAddre
     return result;
 }
 
+// A save is dozens of card operations: the watchdog is fed after each one (SlotFile.h).
+static void saveWatchdogTick() { IWDG1->KR = 0xAAAA; }
+
+void Controller::sd_recoverSaves() {
+    /// @brief Start-up: for every song and drumkit slot, deletes a half-written .tmp file and puts a
+    /// verified .new file in place of the slot (SlotFile.h). Cheap: one failed open per missing file.
+    keyboard_disable();
+    char path[50];
+    for (uint8_t i = 0; i < kFileLibrarySize; i++) {
+        IWDG1->KR = 0xAAAA;
+        snprintf(path, sizeof path, "%s%03d%s", kFileStart, i + 1, kFileEnd);
+        slotRecover(&sd.file, path, kFileRef, kFileByteSize);
+    }
+    for (uint8_t i = 0; i < kDrumkitLibrarySize; i++) {
+        IWDG1->KR = 0xAAAA;
+        snprintf(path, sizeof path, "%s%03d%s", kDrumkitStart, i + 1, kDrumkitEnd);
+        slotRecover(&sd.file, path, kDrumkitRef, kDrumkitByteSize);
+    }
+    f_close(&sd.file);
+    keyboard_enable();
+}
+
 void Controller::sd_getLibraries() {
     /// @brief Rebuilds all SD-backed runtime library caches in a deterministic sequence.
     /// Refreshes project, drumkit, instrument, and sample indexes before integrity validation.
+
+    // 0. INTERRUPTED SAVES
+    // A power cut or a crash during a SAVE can leave File_NNN.tmp / .new files: finish or drop them
+    // before the slots are counted (AtomicSave.h).
+    sd_recoverSaves();
 
     // 1. CACHE DIRECTORY RESET
     // Remove temporary index artifacts to force a clean rebuild pass.
@@ -5565,19 +5645,27 @@ SdResult Controller::sd_getFileLibrary() {
 
         // 4. HEADER VALIDATION
         // Attempt to open the project file. If successful, verify the file header and occupancy marker.
+        // The state of the slot for the load and save screen: empty, used (a whole slot file) or not readable.
+        uint8_t slotState = FS_EMPTY;
         if (f_open(&sd.file, fileName, FA_READ) == FR_OK) {
+            slotState = FS_BAD;  // a file that is not a slot file, until it proves to be one
             // Read the unique file reference string (kFileRef) to verify compatibility.
             if (f_read(&sd.file, refRead, strlen(kFileRef), &sd.bytesread) == 0) {
+                const bool signatureOk = (sd.bytesread == strlen(kFileRef)) && (strncmp(kFileRef, refRead, strlen(kFileRef)) == 0);
                 // Read the single character status marker immediately following the header.
                 if (f_read(&sd.file, &data, 1, &sd.bytesread) == FR_OK) {
                     // 5. VALIDITY CHECK
                     // An asterisk '*' indicates that this project slot contains active user data.
                     if (data == '*') {
                         fileLibrarySize += 1;
+                        slotState = (signatureOk && slotFileComplete(&sd.file, strlen(kFileRef), kFileByteSize)) ? FS_USED : FS_BAD;
+                    } else if (signatureOk) {
+                        slotState = FS_EMPTY;  // the blank template of a cleared slot
                     }
                 }
             }
         }
+        fileSlotState[i] = slotState;
 
         // 6. RESOURCE CLEANUP
         // Ensure the file is closed before the next iteration to avoid FatFS handle overflows.
@@ -5622,19 +5710,27 @@ IWDG1->KR = 0xAAAA;  // a rescan of a big card takes longer than the watchdog
 
         // 4. HEADER VALIDATION
         // Attempt to open the drumkit file. If it exists, verify its internal marker.
+        // The state of the slot for the load and save screen: empty, used (a whole slot file) or not readable.
+        uint8_t slotState = FS_EMPTY;
         if (f_open(&sd.file, fileName, FA_READ) == FR_OK) {
+            slotState = FS_BAD;
             // Read the reference header string to ensure file type compatibility.
             if (f_read(&sd.file, refRead, strlen(kDrumkitRef), &sd.bytesread) == 0) {
+                const bool signatureOk = (sd.bytesread == strlen(kDrumkitRef)) && (strncmp(kDrumkitRef, refRead, strlen(kDrumkitRef)) == 0);
                 // Read the occupancy marker character immediately after the header.
                 if (f_read(&sd.file, &data, 1, &sd.bytesread) == FR_OK) {
                     // 5. VALIDITY CHECK
                     // An asterisk '*' confirms this slot is active and contains user data.
                     if (data == '*') {
                         drumkitLibrarySize += 1;
+                        slotState = (signatureOk && slotFileComplete(&sd.file, strlen(kDrumkitRef), kDrumkitByteSize)) ? FS_USED : FS_BAD;
+                    } else if (signatureOk) {
+                        slotState = FS_EMPTY;
                     }
                 }
             }
         }
+        kitSlotState[i] = slotState;
 
         // 6. RESOURCE CLEANUP
         // Close the file handle before the next iteration to avoid reaching the FatFS handle limit.
@@ -5858,18 +5954,6 @@ IWDG1->KR = 0xAAAA;  // a rescan of a big card takes longer than the watchdog
     keyboard_enable();
 }
 
-// A slot file is complete when it holds its header, its body and the "EOF" marker the save writes last.
-// A file cut short (power lost during a save, a full card) is not: it is treated as an empty slot instead
-// of being loaded as zeros (every level 0, an empty song) over the user's current work. f_ is open.
-static bool slotFileComplete(FIL* f_, uint32_t headerBytes_, uint32_t bodyBytes_) {
-    const uint32_t eofAt = headerBytes_ + bodyBytes_;
-    if (f_size(f_) < eofAt + 3u) return false;
-    char tail[3] = {0, 0, 0};
-    UINT got = 0;
-    if ((f_lseek(f_, eofAt) != FR_OK) || (f_read(f_, tail, 3, &got) != FR_OK) || (got != 3)) return false;
-    return (tail[0] == 'E') && (tail[1] == 'O') && (tail[2] == 'F');
-}
-
 SdResult Controller::sd_checkFile(uint8_t fileNum_) {
     /// @brief Validates a project file's existence and internal status before loading.
     /// Categorizes the slot to prevent loading empty or corrupt project data.
@@ -6030,8 +6114,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
 
                     // Rhythm configuration
                     rhythm_setTempo(data[13]);
-                    rhythm_setMeasure(data[14]);
-                    rhythm_setBar(data[15]);
+                    rhythm_setMeasureBar(data[14], data[15]);
                     rhythm_setQuantize(data[16]);
 
                     // Metronome settings
@@ -6121,8 +6204,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                         layerInst_setPitch(i, pitchFromFile(static_cast<uint8_t>(data[offset + 1]), static_cast<uint8_t>(data[offset + 24]), loadFormatVersion));
                         layerInst_setDirection(i, data[offset + 2]);
                         layerInst_setResolution(i, data[offset + 3]);
-                        layerInst_setStart(i, data[offset + 4]);
-                        layerInst_setEnd(i, data[offset + 5]);
+                        layerInst_setStartEnd(i, data[offset + 4], data[offset + 5]);
                         layerInst_setTiming(i, data[offset + 6]);
                         layerInst_setProbability(i, data[offset + 7]);
                         layerInst_setLfoLevel(i, data[offset + 8]);
@@ -6311,7 +6393,7 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                                 uint8_t startInterval0 = data[offsetBeat + 2];
                                 uint8_t startInterval1 = data[offsetBeat + 3];
                                 uint16_t startInterval = ((uint16_t)startInterval0 << 8) + startInterval1;
-                                layerSong_setBeat(i, j, startInterval, fillType, fillPattern, fillTime, fillLevel, true);
+                                if (startInterval < songInterval) layerSong_setBeat(i, j, startInterval, fillType, fillPattern, fillTime, fillLevel, true);  // a beat past the song end (damaged file) is dropped
                             }
                         }
 
@@ -6335,6 +6417,9 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
             }
             chainRead(songChain, chainData, static_cast<uint16_t>(got));
             file_readNotes(fileName);  // per-note settings after the chain (BeatNote.h)
+            // The GEN block came with it: the lanes were named before it was read (they are hidden behind
+            // the FILE screen; after an autosave restore they are visible).
+            for (uint8_t j = 0; j < kLayerLibrarySize; j++) lcd_drawLayerTab_InstData(j);
             chainRestart(songChain, chainPlay);
             songStepSel = 0;
             if (songChain.active) layerSong_selectBank(chainCurrentBank(songChain, chainPlay));
@@ -6583,7 +6668,7 @@ uint32_t Controller::file_stateCrc() {
     }
     uint8_t chainData[kChainFileSize];
     chainWrite(songChain, chainData);
-    return file_dubCrc(file_noteCrc(autosaveCrc32(crc, chainData, kChainFileSize)));
+    return file_genCrc(file_dubCrc(file_noteCrc(autosaveCrc32(crc, chainData, kChainFileSize))));
 }
 
 /* Autosave (Autosave.h) -----------------------------------------------------*/
@@ -6872,13 +6957,12 @@ uint32_t Controller::file_noteCrc(uint32_t crc_) {
     return crc_;
 }
 
-bool Controller::file_writeNotes() {
-    /// @brief Writes the BTX block (BeatNote.h) at the current file position: one 7-byte entry
-    /// per beat with note settings. Older firmware stops reading before it.
+void Controller::file_writeNotes(SaveWriter& out_) {
+    /// @brief Writes the BTX block (BeatNote.h) through out_: one 7-byte entry per beat with note
+    /// settings. Older firmware stops reading before it.
     uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
     noteWriteHeader(buffer, file_noteEntryCount());
     uint16_t used = kNoteHeaderSize;
-    bool ok = true;
     for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
         for (uint8_t b = 0; b < kBankLibrarySize; b++) {
             const Bank& bank = layerLibrary[l].bankLibrary[b];
@@ -6886,8 +6970,7 @@ bool Controller::file_writeNotes() {
                 const Beat& beat = bank.beatLibrary[k];
                 if (!beat.getActive() || noteIsDefault(beat.getVelocity(), beat.getNote())) continue;
                 if (static_cast<size_t>(used + kNoteEntrySize) > sizeof buffer) {
-                    UINT written = 0;
-                    ok = ok && (f_write(&sd.file, buffer, used, &written) == FR_OK) && (written == used);
+                    out_.write(buffer, used);
                     used = 0;
                 }
                 noteWriteEntry(buffer + used, NoteEntry{l, b, beat.getStartInterval(), beat.getVelocity(), beat.getNote()});
@@ -6895,9 +6978,7 @@ bool Controller::file_writeNotes() {
             }
         }
     }
-    UINT written = 0;
-    ok = ok && (f_write(&sd.file, buffer, used, &written) == FR_OK) && (written == used);
-    return ok;
+    out_.write(buffer, used);
 }
 
 void Controller::file_readNotes(const char* fileName_) {
@@ -6906,6 +6987,7 @@ void Controller::file_readNotes(const char* fileName_) {
     f_close(&sd.file);
     dubClear(dubMix);  // a song without a DUB block plays as CHAIN
     euclid_resetSettings();  // and without an EUC block every layer has the default EUCLID settings
+    genClear(genMix);  // and without a GEN block it has no generators and no hiss
     if (f_open(&sd.file, fileName_, FA_READ) != FR_OK) return;
     uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
     UINT got = 0;
@@ -6938,6 +7020,12 @@ void Controller::file_readNotes(const char* fileName_) {
                 UINT eucGot = 0;
                 if (f_read(&sd.file, eucData, kEuclidFileSize, &eucGot) == FR_OK) {
                     euclidReadBlock(euclidSet, eucData, static_cast<uint16_t>(eucGot), static_cast<uint8_t>(sizeof(kQuantizeInterval) / sizeof(kQuantizeInterval[0])), kInitialQuantize);
+                    // The GEN block follows the EUC block (Generator.h): each layer's generator and the hiss bed.
+                    if (eucGot == kEuclidFileSize) {
+                        uint8_t genData[kGenFileSize] = {0};
+                        UINT genGot = 0;
+                        if (f_read(&sd.file, genData, kGenFileSize, &genGot) == FR_OK) genRead(genMix, genData, static_cast<uint16_t>(genGot));
+                    }
                 }
             }
         }
@@ -6989,72 +7077,40 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
     }
 
     // 5. FILE WRITE PIPELINE
-    // Write header, drumkit block, song blocks, and EOF marker.
+    // The song goes to File_NNN.tmp and is checked (every write complete, the file reads back with
+    // the same CRC-32); only then does it replace the slot: a save that fails or is cut off leaves
+    // the old file (AtomicSave.h). The autosave files are written in place, they have their own seal.
     if (sd_checkFile(fileNum_) == SD_OK) {
-        if (f_open(&sd.file, fileName, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
-            if (f_write(&sd.file, kFileRef, strlen(kFileRef), &sd.byteswritten) == FR_OK) {
-                // 5.1 DRUMKIT BLOCK WRITE
-                // Stream encoded drumkit payload in 512-byte chunks.
-                const uint16_t writeByteSize = 512;
-                uint16_t writeCountTotal = (kDrumkitByteSize / writeByteSize);
-                uint16_t remainderByteSize = (kDrumkitByteSize % writeByteSize);
-                uint32_t pointerOffset = 0;
-                uint32_t errorCount = 0;
-                for (uint16_t i = 0; i < writeCountTotal; i++) {
-                    if (f_write(&sd.file, (data + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    pointerOffset += 512;
-                }
+        const bool saved = slotSave(&sd.file, fileName, fileNameOverride == nullptr, [&](SaveWriter& out) {
+            out.write(kFileRef, strlen(kFileRef));
 
-                // 5.2 DRUMKIT TAIL WRITE
-                // Write final non-512-aligned remainder.
-                if (remainderByteSize) {
-                    if (f_write(&sd.file, (data + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                }
-
-                // 5.3 SONG ENCODE + WRITE
-                // Encode each layer's banks/beats and write serialized song payload.
-                for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
-                    file_encodeLayerSong(l, data);
-
-                    // Write song payload in 512-byte chunks
-                    writeCountTotal = (kSongByteSize / writeByteSize);
-                    remainderByteSize = (kSongByteSize % writeByteSize);
-                    pointerOffset = 0;
-                    for (uint16_t i = 0; i < writeCountTotal; i++) {
-                        if (f_write(&sd.file, (data + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                        pointerOffset += 512;
-                    }
-
-                    // Write song tail remainder
-                    if (remainderByteSize) {
-                        if (f_write(&sd.file, (data + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    }
-                }
-
-                // 5.4 EOF COMMIT
-                // Commit EOF marker only when all previous writes succeeded.
-                if (errorCount == 0) {
-                    if (f_write(&sd.file, eof, strlen(eof), &sd.byteswritten) == FR_OK) {
-                        // Song mode chain after "EOF" (older firmware stops reading at "EOF").
-                        uint8_t chainData[kChainFileSize];
-                        chainWrite(songChain, chainData);
-                        // Per-note settings after the chain (BeatNote.h).
-                        if ((f_write(&sd.file, chainData, kChainFileSize, &sd.byteswritten) == FR_OK) && file_writeNotes()) {
-                            // The DUB block after the notes (DubMix.h).
-                            uint8_t dubData[kDubFileSize];
-                            dubWrite(dubMix, dubData);
-                            if (f_write(&sd.file, dubData, kDubFileSize, &sd.byteswritten) == FR_OK) {
-                                // The EUC block after the DUB block (Euclid.h): each layer's EUCLID settings.
-                                uint8_t eucData[kEuclidFileSize];
-                                euclidWriteBlock(euclidSet, eucData);
-                                if ((f_write(&sd.file, eucData, kEuclidFileSize, &sd.byteswritten) == FR_OK) && (sd.byteswritten == kEuclidFileSize)) result = SD_OK;
-                            }
-                        }
-                    }
-                }
+            // 5.1 DRUMKIT BLOCK, then each layer's banks/beats as the song payload
+            out.writeBlocks(data, kDrumkitByteSize);
+            for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+                file_encodeLayerSong(l, data);
+                out.writeBlocks(data, kSongByteSize);
             }
-        }
-        f_close(&sd.file);
+
+            // 5.2 EOF marker, then what older firmware does not read (it stops at "EOF"):
+            // the song mode chain, the per-note settings (BeatNote.h), the DUB block (DubMix.h)
+            // and each layer's EUCLID settings (Euclid.h)
+            out.write(eof, strlen(eof));
+            uint8_t chainData[kChainFileSize];
+            chainWrite(songChain, chainData);
+            out.write(chainData, kChainFileSize);
+            file_writeNotes(out);
+            uint8_t dubData[kDubFileSize];
+            dubWrite(dubMix, dubData);
+            out.write(dubData, kDubFileSize);
+            uint8_t eucData[kEuclidFileSize];
+            euclidWriteBlock(euclidSet, eucData);
+            out.write(eucData, kEuclidFileSize);
+            // and the GEN block after the EUC block (Generator.h): each layer's generator and the hiss bed
+            uint8_t genData[kGenFileSize];
+            genWrite(genMix, genData);
+            out.write(genData, kGenFileSize);
+        }, saveWatchdogTick);
+        if (saved) result = SD_OK;
     }
 
     // 6. INPUT RESTORATION
@@ -7088,64 +7144,15 @@ SdResult Controller::sd_clearFile(uint8_t fileNum_) {
     }
 
     // 3. FILE RE-CREATION
-    // Re-create the target slot to wipe any previous project data.
+    // The default template replaces the slot the same atomic way as a save (AtomicSave.h).
     if (sd_checkFile(fileNum_) == SD_OK) {
-        if (f_open(&sd.file, fileName, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
-            // 4. HEADER WRITE
-            // Write standard project signature header.
-            if (f_write(&sd.file, kFileRef, strlen(kFileRef), &sd.byteswritten) == FR_OK) {
-                const uint16_t writeByteSize = 512;  // Chunk size for SD block writing
-                uint16_t writeCountTotal;
-                uint16_t remainderByteSize;
-                uint32_t pointerOffset = 0;
-                uint32_t errorCount = 0;
-
-                // 5. DEFAULT PAYLOAD WRITE
-                // Stream default drumkit/song templates in fixed-size blocks.
-
-                // 5.1 DRUMKIT BLOCK WRITE
-                // Write default drumkit data in 512-byte chunks.
-                writeCountTotal = (kDrumkitByteSize / writeByteSize);
-                remainderByteSize = (kDrumkitByteSize % writeByteSize);
-                for (uint16_t i = 0; i < writeCountTotal; i++) {
-                    if (f_write(&sd.file, (kDataDrumkit + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    pointerOffset += 512;
-                }
-
-                // 5.2 DRUMKIT TAIL WRITE
-                // Write final non-512-aligned drumkit remainder.
-                if (remainderByteSize) {
-                    if (f_write(&sd.file, (kDataDrumkit + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                }
-
-                // 5.3 SONG BLOCK WRITE
-                // Iterate all layers and write default sequencer templates.
-                writeCountTotal = (kSongByteSize / writeByteSize);
-                remainderByteSize = (kSongByteSize % writeByteSize);
-                for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
-                    pointerOffset = 0;
-                    for (uint16_t i = 0; i < writeCountTotal; i++) {
-                        if (f_write(&sd.file, (kDataSong + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                        pointerOffset += 512;
-                    }
-
-                    // 5.4 SONG TAIL WRITE
-                    // Write final non-512-aligned song remainder.
-                    if (remainderByteSize) {
-                        if (f_write(&sd.file, (kDataSong + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    }
-                }
-
-                // 5.5 EOF COMMIT
-                // Seal the file with EOF only if all previous writes succeeded.
-                if (errorCount == 0) {
-                    if (f_write(&sd.file, eof, strlen(eof), &sd.byteswritten) == FR_OK) {
-                        result = SD_OK;
-                    }
-                }
-            }
-        }
-        f_close(&sd.file);
+        const bool cleared = slotSave(&sd.file, fileName, true, [&](SaveWriter& out) {
+            out.write(kFileRef, strlen(kFileRef));
+            out.writeBlocks(kDataDrumkit, kDrumkitByteSize);
+            for (uint8_t l = 0; l < kLayerLibrarySize; l++) out.writeBlocks(kDataSong, kSongByteSize);
+            out.write(eof, strlen(eof));
+        }, saveWatchdogTick);
+        if (cleared) result = SD_OK;
     }
 
     // 6. INPUT RESTORATION
@@ -7366,8 +7373,7 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                         layerInst_setPitch(i, pitchFromFile(static_cast<uint8_t>(data[offset + 1]), static_cast<uint8_t>(data[offset + 24]), loadFormatVersion));
                         layerInst_setDirection(i, data[offset + 2]);
                         layerInst_setResolution(i, data[offset + 3]);
-                        layerInst_setStart(i, data[offset + 4]);
-                        layerInst_setEnd(i, data[offset + 5]);
+                        layerInst_setStartEnd(i, data[offset + 4], data[offset + 5]);
                         layerInst_setTiming(i, data[offset + 6]);
                         layerInst_setProbability(i, data[offset + 7]);
                         layerInst_setLfoLevel(i, data[offset + 8]);
@@ -7730,38 +7736,15 @@ SdResult Controller::sd_saveDrumkit(uint8_t kitNum_) {
     }
 
     // 5. FILE WRITE PIPELINE
-    // Write header, drumkit block, and EOF marker.
+    // Header, drumkit block and EOF marker go to Drumkit_NNN.tmp, are checked and then replace
+    // the slot (AtomicSave.h).
     if (sd_checkDrumkit(kitNum_) == SD_OK) {
-        if (f_open(&sd.file, drumkitName, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
-            if (f_write(&sd.file, kDrumkitRef, strlen(kDrumkitRef), &sd.byteswritten) == FR_OK) {
-                // 5.1 DRUMKIT BLOCK WRITE
-                // Stream encoded drumkit payload in 512-byte chunks.
-                const uint16_t writeByteSize = 512;
-                uint16_t writeCountTotal = (kDrumkitByteSize / writeByteSize);
-                uint16_t remainderByteSize = (kDrumkitByteSize % writeByteSize);
-                uint32_t pointerOffset = 0;
-                uint32_t errorCount = 0;
-                for (uint16_t i = 0; i < writeCountTotal; i++) {
-                    if (f_write(&sd.file, (data + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    pointerOffset += 512;
-                }
-
-                // 5.2 DRUMKIT TAIL WRITE
-                // Write final non-512-aligned remainder.
-                if (remainderByteSize) {
-                    if (f_write(&sd.file, (data + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                }
-
-                // 5.3 EOF COMMIT
-                // Commit EOF marker only when all previous writes succeeded.
-                if (errorCount == 0) {
-                    if (f_write(&sd.file, eof, strlen(eof), &sd.byteswritten) == FR_OK) {
-                        result = SD_OK;
-                    }
-                }
-            }
-        }
-        f_close(&sd.file);
+        const bool saved = slotSave(&sd.file, drumkitName, true, [&](SaveWriter& out) {
+            out.write(kDrumkitRef, strlen(kDrumkitRef));
+            out.writeBlocks(data, kDrumkitByteSize);
+            out.write(eof, strlen(eof));
+        }, saveWatchdogTick);
+        if (saved) result = SD_OK;
     }
 
     // 6. INPUT RESTORATION
@@ -7795,45 +7778,14 @@ SdResult Controller::sd_clearDrumkit(uint8_t kitNum_) {
     }
 
     // 3. FILE RE-CREATION
-    // Re-create the target slot to wipe any previous drumkit data.
+    // The default template replaces the slot the same atomic way as a save (AtomicSave.h).
     if (sd_checkDrumkit(kitNum_) == SD_OK) {
-        if (f_open(&sd.file, drumkitName, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
-            // 4. HEADER WRITE
-            // Write standard drumkit signature header.
-            if (f_write(&sd.file, kDrumkitRef, strlen(kDrumkitRef), &sd.byteswritten) == FR_OK) {
-                const uint16_t writeByteSize = 512;  // Block-aligned size for SD efficiency
-                const uint16_t drumkitByteSize = kDrumkitByteSize;
-                uint16_t writeCountTotal = (drumkitByteSize / writeByteSize);
-                uint16_t remainderByteSize = (drumkitByteSize % writeByteSize);
-                uint32_t pointerOffset = 0;
-                uint32_t errorCount = 0;
-
-                // 5. DEFAULT PAYLOAD WRITE
-                // Stream default drumkit template in fixed-size blocks.
-
-                // 5.1 DRUMKIT BLOCK WRITE
-                // Write default drumkit data in 512-byte chunks.
-                for (uint16_t i = 0; i < writeCountTotal; i++) {
-                    if (f_write(&sd.file, (kDataDrumkit + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    pointerOffset += 512;
-                }
-
-                // 5.2 DRUMKIT TAIL WRITE
-                // Write final non-512-aligned drumkit remainder.
-                if (remainderByteSize) {
-                    if (f_write(&sd.file, (kDataDrumkit + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                }
-
-                // 5.3 EOF COMMIT
-                // Seal the file with EOF only if all previous writes succeeded.
-                if (errorCount == 0) {
-                    if (f_write(&sd.file, eof, strlen(eof), &sd.byteswritten) == FR_OK) {
-                        result = SD_OK;
-                    }
-                }
-            }
-        }
-        f_close(&sd.file);
+        const bool cleared = slotSave(&sd.file, drumkitName, true, [&](SaveWriter& out) {
+            out.write(kDrumkitRef, strlen(kDrumkitRef));
+            out.writeBlocks(kDataDrumkit, kDrumkitByteSize);
+            out.write(eof, strlen(eof));
+        }, saveWatchdogTick);
+        if (cleared) result = SD_OK;
     }
 
     // 6. INPUT RESTORATION
@@ -8449,8 +8401,14 @@ void Controller::lcd_update() {
     lcd_drawSongBankShift();
 
     // 6. PRECOUNT UPDATE
-    // Refresh count-down indicator during precount.
+    // Refresh count-down indicator during precount, and what the sequencer interrupt left to draw
+    // when the pre-count ended or was stopped (it must not draw itself).
     lcd_drawCountDown();
+    if (countDownClearFlag) {
+        countDownClearFlag = false;
+        lcd_clearCountDown();
+    }
+    lcd_drawPrecountBeats();
 
     // 7. TRANSITION EFFECT UPDATE
     // Refresh UI transition animations/flags.
@@ -9034,6 +8992,10 @@ void Controller::lcd_drawSongBankShift() {
 
     // 1. BANK SHIFT GATE
     // Apply redraw flow only when bank action flag is armed.
+    if (bankTabRedrawFlag) {
+        bankTabRedrawFlag = false;  // a pending bank shift was cancelled by stop/reset (maybe in the interrupt)
+        lcd_drawSongBankTab(activeSongBank, false);
+    }
     if (bankActionFlag) {
         bankActionFlag = false;
 
@@ -12432,9 +12394,8 @@ void Controller::lcd_drawLayerInst1Menu(uint8_t layerNum_) {
 
     // 1. HEADER DRAW
     // Draw headers for start/end/timing/probability fields.
+    lcd_drawLayerInst1Headers(layerNum_);  // START and END, or a generator's LENGTH and SWEEP
     lcd_setMenuHeaderState(CYAN);
-    lcd.drawText(kHeaderStart, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
-    lcd.drawText(kHeaderEnd, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
     lcd.drawText(kHeaderTiming, kMenuHeaderTextSize, kMenuHeaderX[6], kMenuHeaderY[6]);
     lcd.drawText(kHeaderProbability, kMenuHeaderTextSize, kMenuHeaderX[7], kMenuHeaderY[7]);
 
@@ -12475,6 +12436,13 @@ void Controller::lcd_drawLayerInst2Menu(uint8_t layerNum_) {
     lcd_setMenuSignState(GRAY_75);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[6], kMenuSignBoxY[6]);
     lcd_drawLayerInst_PanData(layerNum_);
+
+    // GEN (tab 7): a generator instead of the sample (Generator.h).
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kHeaderGen, kMenuHeaderTextSize, kMenuHeaderX[7], kMenuHeaderY[7]);
+    lcd_setMenuSignState(GRAY_75);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[7], kMenuSignBoxY[7]);
+    lcd_drawLayerInst_GenData(layerNum_);
 }
 
 void Controller::lcd_drawLayerInst_StyleData(uint8_t layerNum_) {
@@ -12511,6 +12479,18 @@ void Controller::lcd_drawLayerInst_SampleData(uint8_t layerNum_) {
     // Resolve layer reference for selected and loaded sample data.
     Layer& layer = layerLibrary[layerNum_];
 
+    // GEN on: the generator plays instead of the sample, so its name stands there (in yellow).
+    if (layerGenOn(layerNum_)) {
+        char text[kMenuDataTextSize + 1];
+        snprintf(text, sizeof text, "%10s", kGenTypeName[genMix.type[layerNum_]]);
+        lcd_setMenuDataState(YELLOW);
+        lcd.drawText(text, kMenuDataTextSize, kMenuDataX[1], kMenuDataY[1]);
+        lcd_setMenuSignState(GRAY_75);
+        lcd.clearRect(kMenuSignBoxX[1] - 80, kMenuSignBoxY[1], 80, 8);
+        lcd.drawText("  GENERATOR", 11, kMenuSignBoxX[1], kMenuSignBoxY[1]);
+        return;
+    }
+
     // 2. SAMPLE NAME DRAW
     // Draw sample name using loaded/selected match color.
     lcd_setMenuDataState(WHITE);
@@ -12525,6 +12505,7 @@ void Controller::lcd_drawLayerInst_SampleData(uint8_t layerNum_) {
     // Draw read/type errors or sample metadata based on selection state.
     uint16_t xPos = kMenuSignBoxX[1];
     uint16_t yPos = kMenuSignBoxY[1];
+    lcd.clearRect(xPos - 80, yPos, 80, 8);  // what GEN or an error left there
     if (layer.sampleSelected != -1) {
         // Show error if sample read failed
         if (layer.sampleSelectedReadError) {
@@ -12843,6 +12824,17 @@ void Controller::lcd_drawLayerInst_StartData(uint8_t layerNum_) {
     // 2. START VALUE DRAW
     // Draw start-position value text.
     // While playing with an LFO on it, show what the last hit used, in yellow.
+    // GEN on: the generator's LENGTH in 16ths (the LFO on START moves it).
+    if (layerGenOn(layerNum_)) {
+        int16_t length = genMix.length[layerNum_];
+        lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_START, length) ? YELLOW : WHITE);
+        char text[kMenuDataTextSize + 1];
+        snprintf(text, sizeof text, "%7d/16", static_cast<int>(length));
+        lcd.drawText(text, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText(kLfoNameDataLibrary[layer.lfoStart].nameShortR, kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
+        return;
+    }
     int16_t value = layer.start;
     lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_START, value) ? YELLOW : WHITE);
     lcd.drawText(kNumberDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
@@ -12863,6 +12855,18 @@ void Controller::lcd_drawLayerInst_EndData(uint8_t layerNum_) {
     // 2. END VALUE DRAW
     // Draw end-position value text.
     // While playing with an LFO on it, show what the last hit used, in yellow.
+    // GEN on: the generator's SWEEP in octaves (the LFO on END moves it).
+    if (layerGenOn(layerNum_)) {
+        int16_t sweep = genMix.sweep[layerNum_];
+        lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_END, sweep) ? YELLOW : WHITE);
+        char text[kMenuDataTextSize + 1];
+        const int hundredths = static_cast<int>(sweep) * 4;  // 100 = 4.00 octaves
+        snprintf(text, sizeof text, "%3u.%02u OCT", static_cast<unsigned>(hundredths / 100) % 10u, static_cast<unsigned>(hundredths % 100));
+        lcd.drawText(text, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText(kLfoNameDataLibrary[layer.lfoEnd].nameShortR, kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
+        return;
+    }
     int16_t value = layer.end;
     lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_END, value) ? YELLOW : WHITE);
     lcd.drawText(kNumberDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
@@ -13367,13 +13371,11 @@ void Controller::lcd_drawLayerTab_InstData(uint8_t layerNum_) {
     // Configure layer-tab text style.
     lcd_setLayerTabState(layerNum_);
 
-    // 2. CONTEXT LOAD
-    // Load layer reference for text lookup.
-    Layer& layer = layerLibrary[layerNum_];
-
-    // 3. VALUE DRAW
-    // Draw loaded instrument short label.
-    lcd.drawText(layer.instLoadedData.nameShortL, 12, kLayerTextInstX, kLayerTextY[layerNum_]);
+    // 2. VALUE DRAW
+    // Draw the loaded instrument's short label (a GEN layer shows its generator).
+    char name[16];
+    layerShortName(layerNum_, name, sizeof name);
+    lcd.drawText(name, 12, kLayerTextInstX, kLayerTextY[layerNum_]);
 }
 
 void Controller::lcd_drawLayerTab_Mute(uint8_t layerNum_) {
@@ -13694,6 +13696,29 @@ void Controller::lcd_drawCountDown() {
         // 5. FLAG RESET
         // Consume one-shot draw trigger for this update tick.
         metronome.countDownFlag = false;
+    }
+}
+
+void Controller::lcd_drawPrecountBeats() {
+    /// @brief Draws the beats the sequencer interrupt stored when the pre-count ended (the hits
+    /// played during it): the lanes of those layers and, on the song page, the selected beat's data.
+    if (precountDrawMask == 0) return;
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    const uint16_t mask = precountDrawMask;
+    precountDrawMask = 0;
+    __set_PRIMASK(primask);
+
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        if (!(mask & (1u << i))) continue;
+        lcd_drawSong(i, activeSongBank);
+        if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == i)) {
+            lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+            lcd_drawLayerSong_PositionData(selectedLayerNum);
+            lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
+            lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
+            lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
+        }
     }
 }
 
@@ -14209,12 +14234,12 @@ void Controller::file_menuLeft() {
     }
 }
 
-void Controller::file_menuUp() {
+void Controller::file_menuUp(bool repeat_) {
     /// @brief Increments file slot selection with wrap-around and refreshes active tab panel.
 
     // 1. FILE SLOT NAVIGATION
     // Increment slot pointer and wrap after reaching last index.
-    (fileMenuCounter < kMaxFile) ? fileMenuCounter += 1 : fileMenuCounter = kMinFile;
+    fileMenuCounter = static_cast<int8_t>((fileMenuCounter + slotStep(repeat_)) % kFileLibrarySize);  // one slot, or ten while the key is held
 
     // 2. SLOT STATUS VALIDATION
     // Recompute slot state (active/inactive/empty/corrupt) for current index.
@@ -14244,12 +14269,12 @@ void Controller::file_menuUp() {
     }
 }
 
-void Controller::file_menuDown() {
+void Controller::file_menuDown(bool repeat_) {
     /// @brief Decrements file slot selection with wrap-around and refreshes active tab panel.
 
     // 1. FILE SLOT NAVIGATION
     // Decrement slot pointer and wrap before first index.
-    (fileMenuCounter > kMinFile) ? fileMenuCounter -= 1 : fileMenuCounter = kMaxFile;
+    fileMenuCounter = static_cast<int8_t>((fileMenuCounter + kFileLibrarySize - slotStep(repeat_)) % kFileLibrarySize);
 
     // 2. SLOT STATUS VALIDATION
     // Recompute slot state (active/inactive/empty/corrupt) for current index.
@@ -14307,7 +14332,9 @@ void Controller::file_newAction() {
     reset();
     chainClear(songChain);
     dubClear(dubMix);
+    fileSlotCurrent = -1;  // a new song is in no slot
     euclid_resetSettings();
+    genClear(genMix);
     chainRestart(songChain, chainPlay);
     songStepSel = 0;
 
@@ -14407,7 +14434,10 @@ void Controller::file_loadAction() {
     // 4. TRANSACTION FLAG RESTORE
     // Release load-in-progress flag after SD transaction completes.
     loadAction = false;
-    if (alertType != ALERT_LOADERROR) autosave_markClean();
+    if (alertType != ALERT_LOADERROR) {
+        autosave_markClean();
+        fileSlotCurrent = fileMenuCounter;  // the slot the grid marks
+    }
     undoLog.clear();  // another song: its edits start a new history
 
     // 5. RESULT ALERT PRESENTATION
@@ -14455,7 +14485,9 @@ void Controller::file_saveAction() {
     if (alertType == ALERT_SAVESUCCESS) {
         autosave_deleteAll();
         autosave_markClean();
+        fileSlotCurrent = fileMenuCounter;  // the slot the grid marks
     }
+    fsSummarySlot = -1;  // what the slot holds changed: its card is read again
 
     // 4. TRANSACTION FLAG RESTORE
     // Release save-in-progress flag after SD transaction completes.
@@ -14480,11 +14512,13 @@ void Controller::file_saveAction() {
 }
 
 void Controller::file_clearSelect() {
-    /// @brief Opens clear confirmation alert when selected slot is not inactive.
+    /// @brief Opens clear confirmation alert when the selected slot holds a file (used, or not readable).
 
     // 1. PRECONDITION CHECK
-    // Show clear confirmation only for non-empty/non-inactive slots.
-    if (fileStatus != FILE_INACTIVE) {
+    // The same table the load and save screen draws its banner from: a used slot and an unreadable one (a
+    // file cut short by a power cut) can be cleared, an empty one has nothing to clear. (fileStatus calls a
+    // cut-short file inactive, like the blank template, so it cannot tell them apart.)
+    if ((fileMenuCounter >= 0) && (fileMenuCounter < static_cast<int8_t>(kFsSlots)) && (fileSlotState[fileMenuCounter] != FS_EMPTY)) {
         // 2. ALERT STATE CONFIGURATION
         // Configure clear action prompt and enable alert rendering.
         alertFlag = true;
@@ -14506,6 +14540,8 @@ void Controller::file_clearAction() {
     // 2. SD CLEAR EXECUTION & RESULT MAPPING
     // Execute slot clear on SD and map result to alert type.
     (sd_clearFile(fileMenuCounter) == SD_OK) ? alertType = ALERT_CLEARSUCCESS : alertType = ALERT_CLEARERROR;
+    fsSummarySlot = -1;
+    if (fileSlotCurrent == fileMenuCounter) fileSlotCurrent = -1;
 
     // 3. STATUS & LIBRARY REFRESH
     // Re-evaluate slot status and refresh indexed file library cache.
@@ -14653,12 +14689,12 @@ void Controller::drumkit_menuLeft() {
     }
 }
 
-void Controller::drumkit_menuUp() {
+void Controller::drumkit_menuUp(bool repeat_) {
     /// @brief Increments drumkit slot selection with wrap-around and refreshes active tab panel.
 
     // 1. DRUMKIT SLOT NAVIGATION
     // Increment slot pointer and wrap after reaching last index.
-    (drumkitMenuCounter < kMaxDrumkit) ? drumkitMenuCounter += 1 : drumkitMenuCounter = kMinFile;
+    drumkitMenuCounter = static_cast<int8_t>((drumkitMenuCounter + slotStep(repeat_)) % kDrumkitLibrarySize);
 
     // 2. SLOT STATUS VALIDATION
     // Recompute slot state (active/inactive/empty/corrupt) for current index.
@@ -14688,12 +14724,12 @@ void Controller::drumkit_menuUp() {
     }
 }
 
-void Controller::drumkit_menuDown() {
+void Controller::drumkit_menuDown(bool repeat_) {
     /// @brief Decrements drumkit slot selection with wrap-around and refreshes active tab panel.
 
     // 1. DRUMKIT SLOT NAVIGATION
     // Decrement slot pointer and wrap before first index.
-    (drumkitMenuCounter > kMinDrumkit) ? drumkitMenuCounter -= 1 : drumkitMenuCounter = kMaxFile;
+    drumkitMenuCounter = static_cast<int8_t>((drumkitMenuCounter + kDrumkitLibrarySize - slotStep(repeat_)) % kDrumkitLibrarySize);
 
     // 2. SLOT STATUS VALIDATION
     // Recompute slot state (active/inactive/empty/corrupt) for current index.
@@ -14746,6 +14782,7 @@ void Controller::drumkit_newAction() {
     // 2. TRANSPORT RESET
     // Reset song transport and playback runtime state.
     reset();
+    kitSlotCurrent = -1;
 
     // 3. LAYER RESET
     // Reinitialize all layer instruments to default state.
@@ -14826,6 +14863,7 @@ void Controller::drumkit_loadAction() {
     // 4. TRANSACTION FLAG RESTORE
     // Release load-in-progress flag after SD transaction completes.
     loadAction = false;
+    if (alertType != ALERT_LOADERROR) kitSlotCurrent = drumkitMenuCounter;
 
     // 5. RESULT ALERT PRESENTATION
     // Display result alert and keep it visible for user acknowledgment.
@@ -14871,6 +14909,8 @@ void Controller::drumkit_saveAction() {
     // 4. TRANSACTION FLAG RESTORE
     // Release save-in-progress flag after SD transaction completes.
     saveAction = false;
+    if (alertType == ALERT_SAVESUCCESS) kitSlotCurrent = drumkitMenuCounter;
+    fsSummarySlot = -1;
 
     // 5. STATUS & LIBRARY REFRESH
     // Re-evaluate slot status and refresh indexed drumkit library cache.
@@ -14891,11 +14931,11 @@ void Controller::drumkit_saveAction() {
 }
 
 void Controller::drumkit_clearSelect() {
-    /// @brief Opens clear confirmation alert when selected drumkit slot is not inactive.
+    /// @brief Opens clear confirmation alert when the selected drumkit slot holds a file (used, or not readable).
 
     // 1. PRECONDITION CHECK
-    // Show clear confirmation only for non-empty/non-inactive slots.
-    if (drumkitStatus != FILE_INACTIVE) {
+    // As for songs: the slot table the screen's banner comes from decides.
+    if ((drumkitMenuCounter >= 0) && (drumkitMenuCounter < static_cast<int8_t>(kFsSlots)) && (kitSlotState[drumkitMenuCounter] != FS_EMPTY)) {
         // 2. ALERT STATE CONFIGURATION
         // Configure clear action prompt and enable alert rendering.
         alertFlag = true;
@@ -14917,6 +14957,8 @@ void Controller::drumkit_clearAction() {
     // 2. SD CLEAR EXECUTION & RESULT MAPPING
     // Execute slot clear on SD and map result to alert type.
     (sd_clearDrumkit(drumkitMenuCounter) == SD_OK) ? alertType = ALERT_CLEARSUCCESS : alertType = ALERT_CLEARERROR;
+    fsSummarySlot = -1;
+    if (kitSlotCurrent == drumkitMenuCounter) kitSlotCurrent = -1;
 
     // 3. STATUS & LIBRARY REFRESH
     // Re-evaluate slot status and refresh indexed drumkit library cache.
@@ -15797,6 +15839,35 @@ void Controller::rhythm_setMeasure(uint8_t measure_) {
         // Restart playback state to apply new measure structure safely.
         reset();
     }
+}
+
+void Controller::rhythm_setMeasureBar(uint8_t measure_, uint8_t bar_) {
+    /// @brief Sets measure and bar together (a file load). The two setters above each check the
+    /// product against the other's current value: a valid pair from a file could be refused half
+    /// (measure 12 x bar 6 over a song of measure 8 x bar 8) and the song loaded with the wrong length.
+
+    // 1. INPUT VALIDATION
+    // The pair must be valid; a damaged file leaves the current timing alone.
+    if ((measure_ < kMinMeasure) || (measure_ > kMaxMeasure) || (bar_ < kMinBar) || (bar_ > kMaxBar) || (measure_ * bar_ > kMaxSongMeasureTotal)) return;
+
+    // 2. CORE TIMING UPDATE
+    rhythm.measure = measure_;
+    rhythm.bar = bar_;
+    calculateSongInterval();
+    adjustMeasureBarTiming();
+
+    // 3. UI REFRESH AND TRANSPORT RESET (as the single setters)
+    if (menu == RHYTHM_MENU) {
+        lcd_drawRhythm_MeasureData();
+        lcd_drawRhythm_BarData();
+    }
+    lcd_calculateSongX();
+    lcd_resetPlay();
+    lcd_drawMeasureBar();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        lcd_drawSong(i, activeSongBank);
+    }
+    reset();
 }
 
 void Controller::rhythm_setBar(uint8_t bar_) {
@@ -19939,7 +20010,12 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
     BeatPlayData built;
     memset(&built, 0, sizeof(built));
     BeatPlayData& tBD = built;
-    BeatPlayData& aBD = lD.activeBeatPlayData;
+
+    // A layer with GEN on plays its generator instead of the sample (Generator.h).
+    if (layerGenOn(layerNum_)) {
+        layer_playGen(layerNum_, fillVolMultiplier_);
+        return;
+    }
 
     // 2. PLAYBACK GATE
     // Continue only when a playable sample sector is selected and active.
@@ -19973,9 +20049,12 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                 io.midi.txVelocity[layerNum_] = midiMultiplierToVelocity(fillVolMultiplier_);
 
                 // initialize temp beat data
+                bool timed = false;  // a TIMING offset delays the note: set below when STYLE is on
+                uint16_t timingMax = 0;
                 tBD.active = true;
                 tBD.ramAddress = sampleSectorLibrary[targetSector].address;
                 tBD.stereoOffset = sampleSectorLibrary[targetSector].planeBytes;
+                tBD.genType = GEN_OFF;  // a sample note (a pending generator note may have been here)
                 tBD.counterMax = sampleSectorLibrary[targetSector].size;
                 tBD.mixerInMode = layer.mixerInMode;
                 lD.beatStartFlag = true;
@@ -20084,15 +20163,9 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     }
                     lD.shownValid = 0xFF;
 
-                    if (nTiming == 0) {
-                        lD.tempBeatTimingFlag = false;
-                        lD.tempBeatTimingCounter = 0;
-                        lD.tempBeatTimingCounterMax = 0;
-                    } else {
-                        lD.tempBeatTimingFlag = true;
-                        lD.tempBeatTimingCounter = 0;
-                        lD.tempBeatTimingCounterMax = kNumberDataLibrary[nTiming].stdMultiplier * 800;
-                    }
+                    // The timing offset goes with the note, published below in one step.
+                    timed = (nTiming != 0);
+                    timingMax = timed ? static_cast<uint16_t>(kNumberDataLibrary[nTiming].stdMultiplier * 800) : static_cast<uint16_t>(0);
                 } else {
                     // set default playback parameters
                     tBD.volumeMultiplier = kLayerVolumeCoef * kNumberDataLibrary[layer.level].powMultiplier * fillVolMultiplier_ * normMultiplier * mixer.masterVolumeFloat;
@@ -20137,36 +20210,246 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                 }
                 tBD.newBeatFlag = false;
 
-                // publish the finished beat at once
-                {
-                    uint32_t primaskPublish = __get_PRIMASK();
-                    __disable_irq();
-                    memcpy(&lD.tempBeatPlayData, &built, sizeof(BeatPlayData));
-                    __set_PRIMASK(primaskPublish);
-                }
-
-                // activate beat if no delay
-                if (!lD.tempBeatTimingFlag) {
-                    // aBD is read every audio block by processAudioLayer(), which runs from the
-                    // I2S DMA ISR, while this function can itself run from a timer ISR
-                    // (interruptPlay). Publish under a critical section so the audio ISR never
-                    // observes 'active' alongside a stale/partially-copied ramAddress/counterMax,
-                    // or a torn fadeAction/counterFade pair.
-                    uint32_t primaskBeat = __get_PRIMASK();
-                    __disable_irq();
-                    if (aBD.active) {
-                        aBD.fadeAction = true;
-                        aBD.counterFade = 0;
-                        aBD.newBeatFlag = true;
-                    } else {
-                        memcpy(&aBD, &lD.tempBeatPlayData, sizeof(BeatPlayData));
-                        memset(&lD.tempBeatPlayData, 0, sizeof(BeatPlayData));
-                    }
-                    __set_PRIMASK(primaskBeat);
-                }
+                // publish the finished beat, its timing offset and (when it plays at once) the hand-off to the active note, in one step
+                layer_publishBeat(layerNum_, built, timed, timingMax);
             }
         }
     }
+}
+
+/* Generators (Generator.h) -------------------------------------------------*/
+
+bool Controller::layerGenOn(uint8_t layerNum_) const { return (layerNum_ < kGenLayers) && (genMix.type[layerNum_] != GEN_OFF); }
+
+void Controller::layerShortName(uint8_t layerNum_, char* out_, size_t size_) const {
+    /// @brief The layer's name for the lanes and the views, 12 characters: its instrument, or for a
+    /// layer that plays a generator GEN and the generator (so a noise layer reads GEN TAPE, not a
+    /// leftover sample's name).
+    if ((layerNum_ < kGenLayers) && (genMix.type[layerNum_] != GEN_OFF) && (genMix.type[layerNum_] < kGenTypeCount)) {
+        char name[16];
+        snprintf(name, sizeof name, "GEN %s", kGenTypeName[genMix.type[layerNum_]]);
+        snprintf(out_, size_, "%-12.12s", name);
+    } else {
+        snprintf(out_, size_, "%-12.12s", layerLibrary[layerNum_ < kLayerLibrarySize ? layerNum_ : 0].instLoadedData.nameShortL);
+    }
+}
+
+bool Controller::layer_canPlay(uint8_t layerNum_) const {
+    /// @brief A layer can play when its sample is loaded, or when GEN is on (no sample needed).
+    return (layerNum_ < kLayerLibrarySize) && (layerLibrary[layerNum_].samplePlay || layerGenOn(layerNum_));
+}
+
+void Controller::layer_playGen(uint8_t layerNum_, float fillVolMultiplier_) {
+    /// @brief The generator version of layer_playBeat: the same probability, LFOs, timing and
+    /// publication, with PITCH as the generator's frequency, DIRECTION as the sweep shape, and the
+    /// generator's LENGTH and SWEEP where a sample has START and END (their LFOs apply to them).
+    Layer& layer = layerLibrary[layerNum_];
+    LayerPlayData& lD = layerPlayData[layerNum_];
+    // Built apart and published in one step, as layer_playBeat does: this runs from the main loop (pad,
+    // MIDI) and from the sequencer's timer interrupt, which can land in the middle of the other call, and
+    // the audio interrupt copies lD.tempBeatPlayData while a new note is pending.
+    BeatPlayData built;
+    memset(&built, 0, sizeof(built));
+    BeatPlayData& tBD = built;
+
+    // The value of the LFO in a slot (0 = none, or switched off), as the sample path reads it.
+    auto lfoAt = [this](uint8_t slot_, float& data_, float& depth_) -> bool {
+        if ((slot_ == 0) || !lfoLibrary[slot_ - 1].active) return false;
+        Lfo& lfo = lfoLibrary[slot_ - 1];
+        data_ = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
+        depth_ = kNumberDataLibrary[lfo.depth].stdMultiplier;
+        return true;
+    };
+    float d = 0.0f, dep = 0.0f;
+    int16_t nLevel = layer.level, nPitch = layer.pitch, nDirection = layer.direction, nResolution = layer.resolution;
+    int16_t nLength = genMix.length[layerNum_], nSweep = genMix.sweep[layerNum_], nTiming = layer.timing, nProbability = layer.probability;
+
+    if (layer.style) {
+        // 1. PROBABILITY
+        if (lfoAt(layer.lfoProbability, d, dep)) nProbability = clamp(static_cast<int16_t>(layer.probability + round(100 * (d - 0.5) * dep)), (int16_t)kMinLayerProbability, (int16_t)kMaxLayerProbability);
+        const int random = rand() % 10000;
+        if (random >= kNumberDataLibrary[nProbability].stdMultiplier * 10000.0f) return;  // 0 % never plays (with > it played once in 10,000)
+
+        // 2. THE LAYER'S FIELDS, WITH THEIR LFOS
+        if (lfoAt(layer.lfoLevel, d, dep)) nLevel = clamp(static_cast<int16_t>(layer.level + round(50 * (d - 0.5) * dep)), (int16_t)kMinLayerLevel, (int16_t)kMaxLayerLevel);
+        if (lfoAt(layer.lfoPitch, d, dep)) nPitch = pitchWithLfo(layer.pitch, d, dep);
+        if (lfoAt(layer.lfoResolution, d, dep)) nResolution = clamp(static_cast<int16_t>(layer.resolution + round(24 * (d - 0.5) * dep)), (int16_t)kMinLayerResolution, (int16_t)kMaxLayerResolution);
+        if (lfoAt(layer.lfoDirection, d, dep)) nDirection = kLayerDirectionProbability[layer.direction][static_cast<uint8_t>(round(4 * (d - 0.5) * dep) + 2)];
+        if (lfoAt(layer.lfoStart, d, dep)) nLength = clamp(static_cast<int16_t>(genMix.length[layerNum_] + round(kGenLengthMax * (d - 0.5) * dep)), (int16_t)kGenLengthMin, (int16_t)kGenLengthMax);
+        if (lfoAt(layer.lfoEnd, d, dep)) nSweep = clamp(static_cast<int16_t>(genMix.sweep[layerNum_] + round(kGenSweepMax * (d - 0.5) * dep)), (int16_t)0, (int16_t)kGenSweepMax);
+        if (lfoAt(layer.lfoTiming, d, dep)) nTiming = clamp(static_cast<int16_t>(layer.timing + round(100 * (d - 0.5) * dep)), (int16_t)kMinLayerTiming, (int16_t)kMaxLayerTiming);
+
+        // What this hit used, for the instrument page (START and END show LENGTH and SWEEP).
+        const int16_t shown[8] = {nLevel, nPitch, nDirection, nResolution, nLength, nSweep, nTiming, nProbability};
+        for (uint8_t v = 0; v < 8; v++) {
+            if ((lD.shownValue[v] != shown[v]) || !(lD.shownValid & (1u << v))) {
+                lD.shownValue[v] = shown[v];
+                lD.shownChanged = true;
+            }
+        }
+        lD.shownValid = 0xFF;
+    } else {
+        // STYLE OFF: the generator plays plain (its own pitch, no sweep, no bitcrush) for its LENGTH.
+        nPitch = kPitchDefaultCode;
+        nDirection = 0;
+        nResolution = kMaxLayerResolution;
+        nSweep = 0;
+        nTiming = 0;
+    }
+    const bool timed = (nTiming != 0);
+    const uint16_t timingMax = timed ? static_cast<uint16_t>(kNumberDataLibrary[nTiming].stdMultiplier * 800) : static_cast<uint16_t>(0);
+
+    // 3. THE NOTE
+    io.midi.txVelocity[layerNum_] = midiMultiplierToVelocity(fillVolMultiplier_);
+    const uint32_t length = genLengthSamples(static_cast<uint8_t>(nLength), static_cast<float>(rhythm.tempo));
+    memset(&tBD, 0, sizeof(BeatPlayData));
+    tBD.active = true;
+    tBD.counterMax = length;
+    tBD.counterStart = 0;
+    tBD.counterEnd = length;
+    tBD.counter = 0.0f;
+    tBD.increment = 1.0f;
+    tBD.mixerInMode = layer.mixerInMode;
+    tBD.volumeMultiplier = kLayerVolumeCoef * kNumberDataLibrary[nLevel].powMultiplier * fillVolMultiplier_ * mixer.masterVolumeFloat;
+    tBD.resolutionCoef = kLayerResolutionDataLibrary[nResolution].data;
+    tBD.fadeFlag = true;  // the 50-sample fade at the end, as for a sample
+    tBD.counterFadeStart = (length > 50) ? length - 50 : 0;
+    tBD.genType = genMix.type[layerNum_];
+    tBD.genShape = static_cast<uint8_t>(nDirection);
+    tBD.genStart = true;
+    tBD.genRatio = pitchFactor(static_cast<uint8_t>(nPitch));
+    tBD.genOctaves = genSweepOctaves(static_cast<uint8_t>(nSweep));
+    tBD.genSeed = (++genSeedCount * 0x9E3779B9u) ^ ((layerNum_ + 1u) * 0x85EBCA6Bu);
+    lD.beatStartFlag = true;
+    lD.beatEndFlag = false;
+
+    // 4. PUBLISH (as layer_playBeat)
+    layer_publishBeat(layerNum_, built, timed, timingMax);
+}
+
+void Controller::layer_publishBeat(uint8_t layerNum_, const BeatPlayData& built_, bool timed_, uint16_t timingMax_) {
+    /// @brief Publishes a finished note as one step with interrupts off: its TIMING offset, the pending
+    /// copy and, when it plays at once, the hand-off to the active note. This runs from the main loop (pad,
+    /// MIDI) and from the sequencer's timer interrupt, which can land between any two of these writes for
+    /// the same layer, and the audio interrupt reads aBD every block: done piece by piece, the other call's
+    /// note or flags could end up under this note's timing, or the note could be lost.
+    LayerPlayData& lD = layerPlayData[layerNum_];
+    BeatPlayData& aBD = lD.activeBeatPlayData;
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    lD.tempBeatTimingFlag = timed_;
+    lD.tempBeatTimingCounter = 0;
+    lD.tempBeatTimingCounterMax = timingMax_;
+    memcpy(&lD.tempBeatPlayData, &built_, sizeof(BeatPlayData));
+    if (!timed_) {
+        if (aBD.active) {
+            aBD.fadeAction = true;
+            aBD.counterFade = 0;
+            aBD.newBeatFlag = true;  // the audio interrupt takes the pending note when the fade ends
+        } else {
+            memcpy(&aBD, &built_, sizeof(BeatPlayData));
+            memset(&lD.tempBeatPlayData, 0, sizeof(BeatPlayData));
+        }
+    }
+    __set_PRIMASK(primask);
+}
+
+void Controller::processAudioGenLayer(uint8_t layerNum_) {
+    /// @brief One block of a generator note (audio interrupt): the voice, then bitcrush, the fades
+    /// and the level, exactly as a sample gets them.
+    LayerPlayData& lD = layerPlayData[layerNum_];
+    BeatPlayData& aBD = lD.activeBeatPlayData;
+    GenVoice& voice = genDsp.voice[layerNum_];
+    if (aBD.genStart) {
+        genVoiceStart(voice, aBD.genType, aBD.genSeed, aBD.genRatio, aBD.genOctaves, aBD.genShape, aBD.counterEnd);
+        aBD.genStart = false;
+        io.midi.txTriggerNoteOn[layerNum_] = true;
+    }
+    float* out = audioLayer[layerNum_];
+    genVoiceRender(voice, out, I2S_BLOCK_SIZE);
+
+    const bool crush = (aBD.resolutionCoef != 0x00FFFFFF);
+    bool end = false;
+    for (uint16_t k = 0; k < I2S_BLOCK_SIZE; k++) {
+        float sample = out[k];
+        if (crush) sample = quantize24(sample, aBD.resolutionCoef);  // as for a sample: rounds (silence stays silence) and clamps
+        if (aBD.newBeatFlag && !aBD.fadeAction) aBD.fadeAction = true;
+        if (!aBD.fadeAction && aBD.fadeFlag && (aBD.counter >= static_cast<float>(aBD.counterFadeStart))) aBD.fadeAction = true;
+        if (aBD.fadeAction) {
+            sample *= kFadeVolumeMultiplier[aBD.counterFade];
+            if (aBD.counterFade < 49)
+                aBD.counterFade++;
+            else if (!aBD.newBeatFlag)
+                end = true;
+        }
+        out[k] = sample * aBD.volumeMultiplier;
+        aBD.counter += 1.0f;
+        if (end) {
+            for (uint16_t r = k + 1; r < I2S_BLOCK_SIZE; r++) out[r] = 0.0f;
+            break;
+        }
+    }
+    if (end) {
+        lD.beatStartFlag = false;
+        lD.beatEndFlag = true;
+        aBD.active = false;
+        aBD.counter = 0.0f;
+        io.midi.txTriggerNoteOff[layerNum_] = true;
+    }
+}
+
+void Controller::layerInst_setGen(uint8_t layerNum_, uint8_t type_) {
+    /// @brief GEN on a layer: OFF plays the sample; any other value plays that generator.
+    if ((layerNum_ >= kGenLayers) || (type_ >= kGenTypeCount)) return;
+    genMix.type[layerNum_] = type_;
+    lcd_drawLayerTab_InstData(layerNum_);  // the lane's name: GEN and the generator, or the instrument
+    if (selectedLayerNum != layerNum_) return;
+    if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_GenData(layerNum_);
+    if ((menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU)) lcd_drawLayerInst_SampleData(layerNum_);
+    if (menu == LAYER_INST_1_MENU) {
+        lcd_drawLayerInst1Headers(layerNum_);
+        lcd_drawLayerInst_StartData(layerNum_);
+        lcd_drawLayerInst_EndData(layerNum_);
+    }
+}
+
+void Controller::layerInst_stepGenLength(uint8_t layerNum_, bool up_) {
+    /// @brief LENGTH (in 16ths) of the layer's generator notes: page 2's first field while GEN is on.
+    uint8_t& v = genMix.length[layerNum_];
+    if (up_ && (v < kGenLengthMax)) v++;
+    if (!up_ && (v > kGenLengthMin)) v--;
+    if ((menu == LAYER_INST_1_MENU) && (selectedLayerNum == layerNum_)) lcd_drawLayerInst_StartData(layerNum_);
+}
+
+void Controller::layerInst_stepGenSweep(uint8_t layerNum_, bool up_) {
+    /// @brief SWEEP (0..100 = 0..4 octaves over the note): page 2's second field while GEN is on.
+    uint8_t& v = genMix.sweep[layerNum_];
+    if (up_ && (v < kGenSweepMax)) v++;
+    if (!up_ && (v > 0)) v--;
+    if ((menu == LAYER_INST_1_MENU) && (selectedLayerNum == layerNum_)) lcd_drawLayerInst_EndData(layerNum_);
+}
+
+void Controller::lcd_drawLayerInst_GenData(uint8_t layerNum_) {
+    /// @brief The GEN field (page 3, tab 7): the generator's name, or OFF.
+    char text[kMenuDataTextSize + 1];
+    snprintf(text, sizeof text, "%10s", kGenTypeName[(genMix.type[layerNum_] < kGenTypeCount) ? genMix.type[layerNum_] : 0]);
+    lcd_setMenuDataState(layerGenOn(layerNum_) ? YELLOW : WHITE);
+    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[7], kMenuDataY[7]);
+}
+
+void Controller::lcd_drawLayerInst1Headers(uint8_t layerNum_) {
+    /// @brief Page 2's first two headers: START and END, or the generator's LENGTH and SWEEP.
+    lcd_setMenuHeaderState(CYAN);
+    const bool gen = layerGenOn(layerNum_);
+    lcd.drawText(gen ? kHeaderGenLength : kHeaderStart, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
+    lcd.drawText(gen ? kHeaderGenSweep : kHeaderEnd, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
+}
+
+uint32_t Controller::file_genCrc(uint32_t crc_) {
+    /// @brief Feeds the GEN block (as written) into a CRC, so autosave sees generator edits.
+    uint8_t genData[kGenFileSize];
+    genWrite(genMix, genData);
+    return autosaveCrc32(crc_, genData, kGenFileSize);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -20265,6 +20548,13 @@ void Controller::layerInst_reset(uint8_t layerNum_) {
     /// Restores selection, playback-shape, modulation, routing, and toggle states.
 
     // 1. DEFAULT PARAMETER RESTORE
+    // GEN first: OFF, LENGTH and SWEEP back to their defaults (the layer plays its sample again), so the
+    // lane is drawn below with the name of the instrument.
+    if (layerNum_ < kGenLayers) {
+        genMix.length[layerNum_] = kGenLengthDefault;
+        genMix.sweep[layerNum_] = 0;
+        layerInst_setGen(layerNum_, 0);
+    }
     // Apply defaults through setter path to preserve side effects/UI updates.
     layerInst_setInstSelected(layerNum_, -1);
     layerInst_setInstLoaded(layerNum_);
@@ -20357,7 +20647,9 @@ void Controller::layerInst_menuUp() {
                     break;
 
                 case LAYER_INST_1_MENU:
-                    if (keyboard.shiftKeyPress) {
+                    if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {
+                        layerInst_stepGenLength(selectedLayerNum, true);
+                    } else if (keyboard.shiftKeyPress) {
                         (layer.lfoStart < kMaxLfo) ? layerInst_setLfoStart(selectedLayerNum, layer.lfoStart + 1) : layerInst_setLfoStart(selectedLayerNum, kMinLfo);
                     } else if (layer.start < kMaxLayerPosition)
                         layerInst_setStart(selectedLayerNum, layer.start + 1);
@@ -20382,7 +20674,9 @@ void Controller::layerInst_menuUp() {
                     break;
 
                 case LAYER_INST_1_MENU:
-                    if (keyboard.shiftKeyPress) {
+                    if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {
+                        layerInst_stepGenSweep(selectedLayerNum, true);
+                    } else if (keyboard.shiftKeyPress) {
                         (layer.lfoEnd < kMaxLfo) ? layerInst_setLfoEnd(selectedLayerNum, layer.lfoEnd + 1) : layerInst_setLfoEnd(selectedLayerNum, kMinLfo);
                     } else if (layer.end < kMaxLayerPosition) {
                         layerInst_setEnd(selectedLayerNum, layer.end + 1);
@@ -20477,7 +20771,9 @@ void Controller::layerInst_menuDown() {
                     break;
 
                 case LAYER_INST_1_MENU:
-                    if (keyboard.shiftKeyPress) {
+                    if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {
+                        layerInst_stepGenLength(selectedLayerNum, false);
+                    } else if (keyboard.shiftKeyPress) {
                         (layer.lfoStart > kMinLfo) ? layerInst_setLfoStart(selectedLayerNum, layer.lfoStart - 1) : layerInst_setLfoStart(selectedLayerNum, kMaxLfo);
                     } else if (layer.start > kMinLayerPosition)
                         layerInst_setStart(selectedLayerNum, layer.start - 1);
@@ -20502,7 +20798,9 @@ void Controller::layerInst_menuDown() {
                     break;
 
                 case LAYER_INST_1_MENU:
-                    if (keyboard.shiftKeyPress) {
+                    if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {
+                        layerInst_stepGenSweep(selectedLayerNum, false);
+                    } else if (keyboard.shiftKeyPress) {
                         (layer.lfoEnd > kMinLfo) ? layerInst_setLfoEnd(selectedLayerNum, layer.lfoEnd - 1) : layerInst_setLfoEnd(selectedLayerNum, kMaxLfo);
                     } else if (layer.end > kMinLayerPosition)
                         layerInst_setEnd(selectedLayerNum, layer.end - 1);
@@ -21608,6 +21906,21 @@ void Controller::layerInst_setStart(uint8_t layerNum_, uint8_t start_) {
     }
 }
 
+void Controller::layerInst_setStartEnd(uint8_t layerNum_, uint8_t start_, uint8_t end_) {
+    /// @brief Sets sample start and end together (a file load). The single setters each check against
+    /// the other's current value: a valid pair could be refused half (start 60 / end 100 over a
+    /// layer at 0 / 50 kept start 0).
+    if ((start_ < kMinLayerPosition) || (end_ > kMaxLayerPosition) || (start_ >= end_)) return;  // a damaged file keeps what is set
+    Layer& layer = layerLibrary[layerNum_];
+    layer.start = start_;
+    layer.end = end_;
+    if ((menu == LAYER_INST_1_MENU) && (selectedLayerNum == layer.number)) {
+        lcd_drawLayerInst_StartData(layerNum_);
+        lcd_drawLayerInst_EndData(layerNum_);
+        lcd_drawLayerInst_GraphData(layerNum_);
+    }
+}
+
 void Controller::layerInst_setEnd(uint8_t layerNum_, uint8_t end_) {
     /// @brief Sets layer sample end point under end > start constraint.
 
@@ -22536,7 +22849,8 @@ bool Controller::laneViewHidden() const {
     /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG, ROUTING,
     /// FILTER, EQ and instrument page 2 pages). Everything that draws into a lane checks it, and asks for the view to be
     /// refreshed instead.
-    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU);
+    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU) ||
+           (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (menuTab > 0));  // the load, save and clear tabs show the slots
 }
 
 void Controller::lcd_drawLaneView() {
@@ -22553,6 +22867,9 @@ void Controller::lcd_drawLaneView() {
     }
     dubReturnDrawn[0] = dubReturnDrawn[1] = 0;
     noteViewKey = 0;                                                  // and no step edit screen
+    hissViewKey = 0;                                                  // and no HISS page
+    fileViewKey = 0;                                                  // and no slot grid
+    fsDrawnSlot = -1;
     lcd_drawLaneViewData();
 }
 
@@ -22587,6 +22904,10 @@ void Controller::lcd_drawLaneViewData() {
         case NOTE_MENU:
             lcd_drawNoteViewData();
             break;
+        case FILE_MENU:
+        case DRUMKIT_MENU:
+            lcd_drawFileViewData();
+            break;
         default:
             break;
     }
@@ -22600,7 +22921,9 @@ void Controller::lcd_drawEuclidViewData() {
 
     // 1. TITLE (the selected layer) AND SUMMARY
     char line[48];
-    int len = snprintf(line, sizeof line, "LAYER %.2s  %.12s", kDataLayerNum[sel], layerLibrary[sel].instLoadedData.nameShortL);
+    char selName[16];
+    layerShortName(sel, selName, sizeof selName);
+    int len = snprintf(line, sizeof line, "LAYER %.2s  %.12s", kDataLayerNum[sel], selName);
     for (int i = (len > 0 ? len : 0); i < 22; i++) line[i] = ' ';  // fixed width: overwrites the old text
     lcd.setBackColor(BLACK);
     lcd.setFont(FONT_10x14);
@@ -22657,7 +22980,9 @@ void Controller::lcd_drawEuclidViewData() {
         lcd.setAlignment(LEFT);
         lcd.setForeColor(layerColor(l));
         lcd.drawText(kDataLayerNum[l], 2, kRingRowNumX, y);
-        lcd.drawText(layerLibrary[l].instLoadedData.nameShortL, 12, kRingRowNameX, y);
+        char rowName[16];
+        layerShortName(l, rowName, sizeof rowName);
+        lcd.drawText(rowName, 12, kRingRowNameX, y);
         char count[8];
         snprintf(count, sizeof count, "%2d", static_cast<int>(bank.lastActiveBeatNum + 1));
         lcd.drawText(count, 2, kRingRowCountX, y);
@@ -22692,6 +23017,7 @@ void Controller::lcd_updateLaneView() {
     if ((menu == LAYER_INST_1_MENU) && (sampleViewState() != sampleViewStateDrawn)) viewDirty = true;
     if ((menu == DUB_MENU) && (dubViewState() != dubViewStateDrawn)) viewDirty = true;
     if ((menu == NOTE_MENU) && (noteViewState() != noteViewStateDrawn)) viewDirty = true;
+    if (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (fileViewState() != fileViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -22976,7 +23302,9 @@ void Controller::lcd_drawRoutingViewData() {
         const RGB16Color c = (i < kLayerLibrarySize) ? layerColor(i) : GRAY_75;
         char name[16];
         if (i < kLayerLibrarySize) {
-            snprintf(name, sizeof name, "%.2s %-12.12s", kDataLayerNum[i], layerLibrary[i].instLoadedData.nameShortL);
+            char layerName[16];
+            layerShortName(i, layerName, sizeof layerName);
+            snprintf(name, sizeof name, "%.2s %-12.12s", kDataLayerNum[i], layerName);
         } else {
             snprintf(name, sizeof name, "%-15s", (i == kRouteSourceMetro) ? "MT METRONOME" : "LI LINE IN");
         }
@@ -23182,6 +23510,12 @@ uint32_t Controller::sampleViewState() const {
     mix(layer.pitch);
     mix(layer.sampleLoadedData.sampleSize);
     mix(static_cast<uint32_t>(layer.playSampleSector + 1));
+    // The generator view (GEN on) shows these as well: the note's length follows the tempo.
+    mix(genMix.type[selectedLayerNum]);
+    mix(genMix.length[selectedLayerNum]);
+    mix(genMix.sweep[selectedLayerNum]);
+    mix(layer.style ? 1u : 0u);
+    if (layerGenOn(static_cast<uint8_t>(selectedLayerNum))) mix(rhythm.tempo);
     const int8_t sector = layer.playSampleSector;
     mix((sector >= 0) && sampleSectorLibrary[sector].writeMode);
     for (const char* c = layer.sampleLoadedData.fileName; *c; c++) mix(static_cast<uint8_t>(*c));
@@ -23234,6 +23568,10 @@ void Controller::lcd_drawSampleViewData() {
     /// just the columns they crossed are drawn again.
     sampleViewStateDrawn = sampleViewState();
     if (selectedLayerNum < 0) return;
+    if (layerGenOn(static_cast<uint8_t>(selectedLayerNum))) {  // a generator plays instead of the sample: its own view
+        lcd_drawGenViewData();
+        return;
+    }
     const Layer& layer = layerLibrary[selectedLayerNum];
     uint8_t* const peaks = reinterpret_cast<uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS + 2048);
     const int8_t sector = layer.playSampleSector;
@@ -23303,6 +23641,214 @@ void Controller::lcd_drawSampleViewData() {
     lcd.drawText(line, static_cast<uint16_t>(len > 0 ? len : 0), kSampleX + kSampleCols, kSampleTitleY + 3);
 }
 
+/* Generator screens (GeneratorView.h, GeneratorScreens.h) -----------------------------*/
+
+// The firmware's Lcd for the generator screens: the drawing code is a template (it also runs on a PC).
+struct GsLcd {
+    Lcd& l;
+    void setFont(GsFont f) { l.setFont((f == GS_FONT_05x07) ? FONT_05x07 : ((f == GS_FONT_07x09) ? FONT_07x09 : FONT_10x14)); }
+    void setAlignment(GsAlign a) { l.setAlignment((a == GS_LEFT) ? LEFT : ((a == GS_CENTER) ? CENTER : RIGHT)); }
+    void setForeColor(uint16_t c) { l.setForeColor(c); }
+    void setBackColor(uint16_t c) { l.setBackColor(c); }
+    void drawPixel(uint16_t x, uint16_t y) { l.drawPixel(x, y); }
+    void drawVLine(uint16_t x, uint16_t y, int16_t len) { l.drawVLine(x, y, len); }
+    void drawLine(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) { l.drawLine(x0, y0, x1, y1); }
+    void drawRect(uint16_t x, uint16_t y, uint32_t w, uint32_t h) { l.drawRect(x, y, w, h); }
+    void fillRect(uint16_t x, uint16_t y, uint32_t w, uint32_t h) { l.fillRect(x, y, w, h); }
+    void clearRect(uint16_t x, uint16_t y, uint32_t w, uint32_t h) { l.clearRect(x, y, w, h); }
+    void drawText(const char* text, uint16_t length, uint16_t x, uint16_t y) { l.drawText(text, length, x, y); }
+};
+
+void Controller::lcd_drawGenViewData() {
+    /// @brief The GEN view (instrument page 2 while a generator plays instead of the sample): the
+    /// note's waveform as the real generator makes it, the sweep over the note, and the spectrum at
+    /// the start, the middle and the end. Drawn from nothing whenever a setting changes.
+    if (selectedLayerNum < 0) return;
+    IWDG1->KR = 0xAAAA;  // the peaks below render a few hundred thousand samples
+    const uint8_t l = static_cast<uint8_t>(selectedLayerNum);
+    const Layer& layer = layerLibrary[l];
+
+    // The note as layer_playGen plays it: with STYLE off it plays plain (its own pitch, no sweep).
+    GsGen in;
+    memset(&in, 0, sizeof in);
+    snprintf(in.layerNum, sizeof in.layerNum, "%.2s", kDataLayerNum[l]);
+    in.type = (genMix.type[l] < kGenTypeCount) ? genMix.type[l] : static_cast<uint8_t>(GEN_OFF);
+    in.plain = !layer.style;
+    const uint8_t pitchCode = in.plain ? kPitchDefaultCode : layer.pitch;
+    in.ratio = ::pitchFactor(pitchCode);
+    in.sweepPercent = in.plain ? static_cast<uint8_t>(0) : genMix.sweep[l];
+    in.octaves = genSweepOctaves(in.sweepPercent);
+    in.shape = in.plain ? static_cast<uint8_t>(0) : static_cast<uint8_t>(layer.direction & 3);
+    in.length16 = genMix.length[l];
+    in.length = genLengthSamples(in.length16, static_cast<float>(rhythm.tempo));
+
+    // The view is static: it is drawn again only when what it shows changed.
+    uint32_t key = 2166136261u;
+    auto mix = [&key](uint32_t v) { key = (key ^ v) * 16777619u; };
+    mix(l + 1u);
+    mix(in.type);
+    mix(pitchCode);
+    mix(in.plain ? 1u : 0u);
+    mix(in.sweepPercent);
+    mix(in.shape);
+    mix(in.length16);
+    mix(in.length);
+    if (key == 0) key = 1;
+    if (key == sampleViewKey) return;
+    sampleViewKey = key;
+
+    // The scratch RAM is shared by the full-area views (only one is open at a time, each is computed again
+    // when it is drawn from nothing).
+    static_assert(2 * kGvNoteCols <= 4096, "the GEN view's peaks and RMS fit the view scratch");
+    uint8_t* const peaks = reinterpret_cast<uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS);
+    uint8_t* const rms = peaks + kGvNoteCols;
+    genViewPeaks(in.type, in.ratio, in.octaves, in.shape, in.length, peaks, kGvNoteCols, static_cast<uint8_t>(kGvNoteHalf), rms);
+    GsLcd g{lcd};
+    gsDrawGen(g, in, peaks, rms);
+}
+
+/* Load and save screens (FileScreens.h, FileSummary.h) -------------------------------*/
+
+static_assert((kFileLibrarySize == kFsSlots) && (kDrumkitLibrarySize == kFsSlots), "the slot tables hold every slot");
+
+uint8_t Controller::slotStep(bool repeat_) {
+    /// @brief How far UP or DOWN moves the slot cursor: one slot per press; while the key is held, one
+    /// slot for the first 8 repeats, then ten at a time (the pad of ADD is SHIFT here, so no SHIFT).
+    if (!repeat_) {
+        slotRepeat = 0;
+        return 1;
+    }
+    if (slotRepeat < 255) slotRepeat++;
+    return (slotRepeat >= 8) ? static_cast<uint8_t>(10) : static_cast<uint8_t>(1);
+}
+
+uint32_t Controller::fileViewState() const {
+    /// @brief A fingerprint of everything the slot grid shows: the tab, the cursor, the slot states, the marked slot.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    const bool kit = (menu == DRUMKIT_MENU);
+    mix(kit ? 1u : 0u);
+    mix(static_cast<uint32_t>(menuTab + 1));
+    mix(static_cast<uint32_t>((kit ? drumkitMenuCounter : fileMenuCounter) + 2));
+    mix(static_cast<uint32_t>((kit ? kitSlotCurrent : fileSlotCurrent) + 2));
+    const uint8_t* states = kit ? kitSlotState : fileSlotState;
+    for (uint8_t i = 0; i < kFsSlots; i++) mix(states[i]);
+    return h | 1u;
+}
+
+bool Controller::sd_readSlotSummary(FsKind kind_, uint8_t slot_, FsSummary& out_) {
+    /// @brief Reads what a slot file shows (FileSummary.h): the kit block (tempo, MEASURE, BAR, the
+    /// names) and, for a song, the first bank of each layer. About 15 small reads, a few tens of
+    /// milliseconds; the watchdog is fed between them.
+    out_ = FsSummary();
+    char path[50];
+    snprintf(path, sizeof path, "%s%03u%s", (kind_ == FS_SONG) ? kFileStart : kDrumkitStart, static_cast<unsigned>(slot_ + 1), (kind_ == FS_SONG) ? kFileEnd : kDrumkitEnd);
+    bool ok = false;
+    keyboard_disable();
+    f_close(&sd.file);
+    if (f_open(&sd.file, path, FA_READ) == FR_OK) {
+        uint8_t kit[kDrumkitByteSize];
+        UINT got = 0;
+        if ((f_lseek(&sd.file, kFsHeaderBytes) == FR_OK) && (f_read(&sd.file, kit, kFsKitBytes, &got) == FR_OK) && (got == kFsKitBytes) && fsParseKit(kit, out_, kind_ == FS_SONG)) {
+            ok = true;
+            if (kind_ == FS_SONG) {
+                const uint32_t interval = fsSongInterval(out_.measure, out_.bar);
+                uint8_t bank[kFsBankBytes];
+                for (uint8_t l = 0; l < kFsLanes; l++) {
+                    IWDG1->KR = 0xAAAA;
+                    if ((f_lseek(&sd.file, fsFileLayerBankOffset(l)) != FR_OK) || (f_read(&sd.file, bank, kFsBankBytes, &got) != FR_OK) || (got != kFsBankBytes)) break;
+                    fsParseBank(bank, l, interval, out_);
+                }
+            }
+        }
+        f_close(&sd.file);
+    }
+    keyboard_enable();
+    return ok;
+}
+
+void Controller::fsSummaryFromMemory(FsSummary& out_) const {
+    /// @brief The song in memory as the card shows a slot (SAVE puts the two side by side): tempo,
+    /// MEASURE and BAR, the names, the first bank's beats, mapped by the same code as a file's.
+    out_ = FsSummary();
+    out_.valid = true;
+    out_.tempo = static_cast<uint16_t>(rhythm.tempo);
+    out_.measure = rhythm.measure;
+    out_.bar = rhythm.bar;
+    const uint32_t interval = fsSongInterval(rhythm.measure, rhythm.bar);
+    uint8_t bank[kFsBankBytes];
+    for (uint8_t l = 0; l < kFsLanes; l++) {
+        const Layer& layer = layerLibrary[l];
+        if (layer.instLoaded != -1) fsCleanName(reinterpret_cast<const uint8_t*>(layer.instLoadedData.nameLong), kFileNameSize, out_.inst[l], kFsNameSize);
+        if (layer.sampleLoaded != -1) fsCleanName(reinterpret_cast<const uint8_t*>(layer.sampleLoadedData.nameLong), kFileNameSize, out_.sample[l], kFsNameSize);
+        memset(bank, 0, sizeof bank);
+        bank[0] = 'b';
+        for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
+            const Beat& beat = layer.bankLibrary[0].beatLibrary[k];
+            const uint16_t at = static_cast<uint16_t>(1 + k * 4);
+            bank[at + 0] = static_cast<uint8_t>(beat.getData() >> 8);
+            bank[at + 1] = static_cast<uint8_t>(beat.getData() & 0xFF);
+            bank[at + 2] = static_cast<uint8_t>(beat.getStartInterval() >> 8);
+            bank[at + 3] = static_cast<uint8_t>(beat.getStartInterval() & 0xFF);
+        }
+        fsParseBank(bank, l, interval, out_);
+    }
+}
+
+void Controller::lcd_drawFileViewData() {
+    /// @brief The load, save and clear tabs of the FILE and DRUMKIT pages: all 100 slots as a grid and a
+    /// card for the selected one. A move of the cursor draws two cells and the card; anything else
+    /// (the tab, a state, the marked slot) draws the whole screen.
+    fileViewStateDrawn = fileViewState();
+    const bool kit = (menu == DRUMKIT_MENU);
+    int16_t slot = kit ? drumkitMenuCounter : fileMenuCounter;
+    if ((slot < 0) || (slot >= kFsSlots)) slot = 0;
+    const FsMode mode = (menuTab == 1) ? FS_LOAD : ((menuTab == 2) ? FS_SAVE : FS_CLEAR);
+    const FsKind kind = kit ? FS_KIT : FS_SONG;
+    const uint8_t* states = kit ? kitSlotState : fileSlotState;
+    const int16_t current = kit ? kitSlotCurrent : fileSlotCurrent;
+
+    // What the screen was drawn from, without the cursor.
+    uint32_t key = 2166136261u;
+    auto mix = [&key](uint32_t v) { key = (key ^ v) * 16777619u; };
+    mix(kit ? 1u : 0u);
+    mix(mode);
+    mix(static_cast<uint32_t>(current + 2));
+    for (uint8_t i = 0; i < kFsSlots; i++) mix(states[i]);
+    key |= 1u;
+    const bool full = (key != fileViewKey);
+    if (!full && (slot == fsDrawnSlot)) return;
+    IWDG1->KR = 0xAAAA;
+
+    FsView& v = fsView;
+    v.kind = kind;
+    v.mode = mode;
+    v.selected = static_cast<uint8_t>(slot);
+    v.current = current;
+    memcpy(v.state, states, kFsSlots);
+    // The card: a used slot's file is read (the last one read is kept).
+    if (v.state[slot] == FS_USED) {
+        if ((fsSummarySlot != slot) || (fsSummaryKind != static_cast<int8_t>(kind))) {
+            sd_readSlotSummary(kind, static_cast<uint8_t>(slot), v.sel);  // a file that does not read leaves sel.valid false: the card is empty
+            fsSummarySlot = slot;
+            fsSummaryKind = static_cast<int8_t>(kind);
+        }
+    } else {
+        v.sel.valid = false;
+        fsSummarySlot = -1;
+    }
+    if ((mode == FS_SAVE) && !kit) fsSummaryFromMemory(v.now);
+
+    GsLcd g{lcd};
+    if (full) {
+        fsDrawGrid(g, v);
+        fileViewKey = key;
+    } else {
+        fsMoveSelection(g, v, static_cast<uint8_t>(fsDrawnSlot));
+    }
+    fsDrawnSlot = slot;
+}
+
 /* DUB page (DubMix.h) --------------------------------------------------------------*/
 
 uint32_t Controller::dubViewState() const {
@@ -23320,7 +23866,10 @@ uint32_t Controller::dubViewState() const {
         mix(layerAudible(i) ? 1u : 0u);
         mix(layerLibrary[i].mute ? 1u : 0u);
         for (const char* c = layerLibrary[i].instLoadedData.nameShortL; *c; c++) mix(static_cast<uint8_t>(*c));
+        mix(genMix.type[i]);
     }
+    mix(dubPage);
+    if (dubPage == kDubPageHiss) return hissViewState();
     mix(effect[0].active);
     mix(effect[0].type);
     mix(effect[0].subEffect[effect[0].type].fData);
@@ -23396,7 +23945,9 @@ void Controller::lcd_drawDeskColumn(uint8_t column_) {
         pan = dubMix.pan[layer];
         panHeard = layerPanActive(layer);
         snprintf(line1, sizeof line1, "%.2s", kDataLayerNum[layer]);
-        snprintf(line2, sizeof line2, "%.9s", layerLibrary[layer].instLoadedData.nameShortL);
+        char layerName[16];
+        layerShortName(layer, layerName, sizeof layerName);
+        snprintf(line2, sizeof line2, "%.9s", layerName);
     } else if (column_ == kDubStrips) {
         on = echo.active;
         level = echo.subEffect[echo.type].fData;
@@ -23544,6 +24095,10 @@ void Controller::lcd_drawDubViewData() {
     /// @brief Redraws the dub desk: twelve columns (the ten layers, ECHO, VERB) across the whole
     /// lane area, like an old mixing console. A column is drawn again only when what it shows
     /// changed; the LED ladders are drawn by lcd_drawDubMeters.
+    if (dubPage == kDubPageHiss) {  // the third page shows the hiss bed, not the desk
+        lcd_drawHissViewData();
+        return;
+    }
     dubViewStateDrawn = dubViewState();
     const Effect& echo = effect[0];
     for (uint8_t col = 0; col < kDeskColumns; col++) {
@@ -23561,6 +24116,7 @@ void Controller::lcd_drawDubViewData() {
             mix(layerLibrary[col].mute ? 1u : 0u);
             mix((col == dubStripSel) ? 1u : 0u);
             for (const char* c = layerLibrary[col].instLoadedData.nameShortL; *c; c++) mix(static_cast<uint8_t>(*c));
+            mix(genMix.type[col]);
         } else if (col == kDubStrips) {
             mix(echo.active);
             mix(echo.type);
@@ -23591,6 +24147,65 @@ void Controller::lcd_drawDubMeters() {
         dubMeterDrawn[i] = lit;
         lcd_drawDeskSegments(i, lit, audible);
     }
+}
+
+/* HISS page: the bed's screen (GeneratorView.h, GeneratorScreens.h) -----------------------*/
+
+uint32_t Controller::hissViewState() const {
+    /// @brief A fingerprint of what the HISS page shows besides its live meters.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(genMix.hissType);
+    mix(genMix.hissLevel);
+    mix(genMix.hissTone);
+    mix(genMix.hissDuck);
+    return h | 1u;
+}
+
+// The bed's live numbers: is it sounding (or fading out), the duck gain, the peaks of its last block.
+static void hissLiveNumbers(const GenMix& mix_, const GenDsp& dsp_, bool& bedOn_, float& gain_, float& peakL_, float& peakR_) {
+    bedOn_ = (mix_.hissType != HISS_OFF) || (dsp_.hiss.amp > 0.0f);
+    gain_ = dsp_.hiss.gain;
+    peakL_ = peakR_ = 0.0f;
+    if (!bedOn_) return;
+    for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
+        peakL_ = fmaxf(peakL_, fabsf(dsp_.hissL[i]));
+        peakR_ = fmaxf(peakR_, fabsf(dsp_.hissR[i]));
+    }
+}
+
+void Controller::lcd_drawHissViewData() {
+    /// @brief The HISS page's screen: one second of the bed as it sounds (left above, right below,
+    /// in dBFS), its spectrum with the TONE low-pass, and the duck meter. Drawn from nothing when
+    /// a setting changes; the live bars are lcd_drawHissLive's.
+    dubViewStateDrawn = dubViewState();
+    const uint32_t key = hissViewState();
+    if (key == hissViewKey) return;
+    hissViewKey = key;
+    IWDG1->KR = 0xAAAA;  // the texture renders a second of the bed
+    GsHiss in = {genMix.hissType, genMix.hissLevel, genMix.hissTone, genMix.hissDuck};
+    static_assert(4 * kHvTextureCols <= 4096, "the HISS page's peaks and RMS fit the view scratch");
+    uint8_t* const peaksL = reinterpret_cast<uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS);
+    uint8_t* const peaksR = peaksL + kHvTextureCols;
+    uint8_t* const rmsL = peaksR + kHvTextureCols;
+    uint8_t* const rmsR = rmsL + kHvTextureCols;
+    hissViewTexture(in.type, in.level, in.tone, peaksL, peaksR, kHvTextureCols, static_cast<uint8_t>(kHvTextureHalf), rmsL, rmsR, &in.levelDb);
+    bool bedOn;
+    float gain, peakL, peakR;
+    hissLiveNumbers(genMix, genDsp, bedOn, gain, peakL, peakR);
+    GsLcd g{lcd};
+    gsDrawHiss(g, in, peaksL, peaksR, rmsL, rmsR, hissLive, bedOn, gain, peakL, peakR);
+}
+
+void Controller::lcd_drawHissLive() {
+    /// @brief The HISS page's live part, 25 times a second: the bed's left and right level bars and
+    /// the duck bar. Only what changed is drawn.
+    const GsHiss in = {genMix.hissType, genMix.hissLevel, genMix.hissTone, genMix.hissDuck};
+    bool bedOn;
+    float gain, peakL, peakR;
+    hissLiveNumbers(genMix, genDsp, bedOn, gain, peakL, peakR);
+    GsLcd g{lcd};
+    gsDrawHissLive(g, in, hissLive, bedOn, gain, peakL, peakR);
 }
 
 /* NOTE: the step edit screen (NoteView.h) ----------------------------------------*/
@@ -23678,6 +24293,7 @@ void Controller::lcd_drawNoteViewData() {
     const uint32_t keyParts[6] = {static_cast<uint32_t>(selectedLayerNum + 1), activeSongBank, songInterval, barInterval, measureInterval, static_cast<uint32_t>(bank.lastActiveBeatNum + 2)};
     for (uint8_t k = 0; k < 6; k++) key = (key ^ keyParts[k]) * 16777619u;
     for (const char* c = layer.instLoadedData.nameShortL; *c; c++) key = (key ^ static_cast<uint8_t>(*c)) * 16777619u;
+    key = (key ^ genMix.type[selectedLayerNum]) * 16777619u;
     if (key == 0) key = 1;
     bool full = (key != noteViewKey);
 
@@ -23705,7 +24321,9 @@ void Controller::lcd_drawNoteViewData() {
         noteViewKey = key;
         lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
         char title[48];
-        snprintf(title, sizeof title, "LAYER %.2s  %.12s   BANK %u", kDataLayerNum[selectedLayerNum], layer.instLoadedData.nameShortL, static_cast<unsigned>(activeSongBank + 1));
+        char titleName[16];
+        layerShortName(static_cast<uint8_t>(selectedLayerNum), titleName, sizeof titleName);
+        snprintf(title, sizeof title, "LAYER %.2s  %.12s   BANK %u", kDataLayerNum[selectedLayerNum], titleName, static_cast<unsigned>(activeSongBank + 1));
         lcd.setFont(FONT_07x09);
         lcd.setAlignment(LEFT);
         lcd.setForeColor(CYAN);
@@ -23830,7 +24448,8 @@ void Controller::lcd_drawDubMenu() {
     lcd_setMenuHeaderState(CYAN);
     lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
     for (uint8_t f = 0; f < 8; f++) {
-        const uint8_t fn = (dubPage == 1) ? static_cast<uint8_t>(kDubPage2Function[f]) : static_cast<uint8_t>(ENC_DUB_LEVEL + f);
+        const uint8_t fn = (dubPage == kDubPageHiss) ? static_cast<uint8_t>(kDubPage3Function[f])
+                           : ((dubPage == 1) ? static_cast<uint8_t>(kDubPage2Function[f]) : static_cast<uint8_t>(ENC_DUB_LEVEL + f));
         lcd_setMenuHeaderState(CYAN);
         lcd.drawText(kEncoderFuncDataLibrary[fn].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[f], kMenuHeaderY[f]);
         lcd_setMenuSignState(CYAN);
@@ -23843,13 +24462,21 @@ void Controller::lcd_drawDub_Data() {
     /// @brief Draws the DUB values: the selected strip (top row) and the desk (bottom row).
     const DubStrip& strip = dubMix.strip[dubStripSel];
     char text[8][kMenuDataTextSize + 1];
-    if (dubPage == 1) {
+    if (dubPage >= 1) {
         for (uint8_t f = 0; f < 8; f++) snprintf(text[f], sizeof text[f], "%10s", "");
-        char label[8];
-        panLabel(label, sizeof label, dubMix.pan[dubStripSel]);
-        snprintf(text[0], sizeof text[0], "%10s", label);
-        snprintf(text[1], sizeof text[1], "%10u", static_cast<unsigned>(strip.fx));
-        snprintf(text[4], sizeof text[4], "%10u", static_cast<unsigned>(dubMix.echoWidth));
+        if (dubPage == kDubPageHiss) {
+            // The hiss bed (Generator.h; its screen is the lane area).
+            snprintf(text[0], sizeof text[0], "%10s", kHissTypeName[(genMix.hissType < kHissTypeCount) ? genMix.hissType : 0]);
+            snprintf(text[1], sizeof text[1], "%10u", static_cast<unsigned>(genMix.hissLevel));
+            snprintf(text[2], sizeof text[2], "%10u", static_cast<unsigned>(genMix.hissTone));
+            snprintf(text[3], sizeof text[3], "%10u", static_cast<unsigned>(genMix.hissDuck));
+        } else {
+            char label[8];
+            panLabel(label, sizeof label, dubMix.pan[dubStripSel]);
+            snprintf(text[0], sizeof text[0], "%10s", label);
+            snprintf(text[1], sizeof text[1], "%10u", static_cast<unsigned>(strip.fx));
+            snprintf(text[4], sizeof text[4], "%10u", static_cast<unsigned>(dubMix.echoWidth));
+        }
         lcd_setMenuDataState(WHITE);
         for (uint8_t f = 0; f < 8; f++) lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[f], kMenuDataY[f]);
         lcd_setMenuHeaderState(CYAN);
@@ -23933,6 +24560,19 @@ void Controller::dub_step(EncoderFunc function_, bool up_) {
             // Steps of 5 %, to 100 %.
             if (up_) dubMix.echoWidth = static_cast<uint8_t>((dubMix.echoWidth + 5 > kDubMaxWidth) ? kDubMaxWidth : dubMix.echoWidth + 5);
             if (!up_) dubMix.echoWidth = (dubMix.echoWidth >= 5) ? static_cast<uint8_t>(dubMix.echoWidth - 5) : 0;
+            break;
+        case ENC_DUB_HISS:
+            if (up_) genMix.hissType = static_cast<uint8_t>((genMix.hissType + 1) % kHissTypeCount);
+            if (!up_) genMix.hissType = static_cast<uint8_t>((genMix.hissType + kHissTypeCount - 1) % kHissTypeCount);
+            break;
+        case ENC_DUB_HISSLEVEL:
+            stepSend(genMix.hissLevel);
+            break;
+        case ENC_DUB_HISSTONE:
+            stepSend(genMix.hissTone);
+            break;
+        case ENC_DUB_HISSDUCK:
+            stepSend(genMix.hissDuck);
             break;
         case ENC_DUB_VERBRTN:
             reverb_setWet(up_ ? (reverb.wet < kMaxReverbWet ? reverb.wet + 1 : reverb.wet) : (reverb.wet > kMinReverbWet ? reverb.wet - 1 : reverb.wet));
@@ -24830,8 +25470,10 @@ uint16_t Controller::layerSong_quantizeInterval(uint16_t interval_) const {
     return startInterval;
 }
 
-void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_) {
+void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_, bool draw_) {
     /// @brief Inserts a beat into target bank with quantization, ordering, and UI sync.
+    /// draw_ false (the sequencer interrupt, which must not draw): the beat is stored and the selection
+    /// bookkeeping done, the lanes are redrawn later by update() (precountDrawMask).
 
     Layer& layer = layerLibrary[layerNum_];
     Bank& bank = layer.bankLibrary[bankTab_];
@@ -24892,7 +25534,7 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
 
                     // Keep previous beat highlight only if it was selected in active menu.
                     ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_) && (beatNum - 1 == selectedBeatNum)) ? sel = true : sel = false;
-                    lcd_drawBeat(layerNum_, bankTab_, beatNum - 1, sel);
+                    if (draw_) lcd_drawBeat(layerNum_, bankTab_, beatNum - 1, sel);
                 }
 
                 // Resolve end interval for inserted beat.
@@ -24912,7 +25554,15 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
             bank.beatLibrary[beatNum].setVelocity(velocity_);  // 0 = from the pattern (BeatNote.h)
             layerSong_calculateLastActiveBeatNum(layerNum_, bankTab_);
             layerSong_calculatePlayBeatNum(layerNum_, bankTab_, playInterval);
-            if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_) && (selected_)) {
+            if (!draw_) {
+                // Called from the sequencer interrupt: no drawing here. The selection follows the
+                // insertion as below; update() redraws the layer's lanes and its song page.
+                if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_) && (selected_)) {
+                    if (selectedBeatNum >= beatNum) selectedBeatNum += 1;
+                    selectedBeatNum = beatNum;
+                }
+                precountDrawMask = static_cast<uint16_t>(precountDrawMask | (1u << layerNum_));
+            } else if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_) && (selected_)) {
                 // Shift current selection right if insertion occurred before it.
                 if (selectedBeatNum >= beatNum) selectedBeatNum += 1;
                 if (selectedBeatNum != -1) lcd_drawBeat(layerNum_, bankTab_, selectedBeatNum, false);
@@ -25778,7 +26428,7 @@ void Controller::stop() {
         metronome.precounter = 0;
         metronome.countDownFlag = false;
         metronome.countDown = 0;
-        lcd_clearCountDown();
+        countDownClearFlag = true;  // drawn by update(): stop() also runs in the sequencer interrupt
     }
 
     // 3. BANK SHIFT CANCEL
@@ -25786,7 +26436,7 @@ void Controller::stop() {
     if (bankShiftFlag) {
         bankShiftFlag = false;
         targetSongBank = activeSongBank;
-        lcd_drawSongBankTab(activeSongBank, false);
+        bankTabRedrawFlag = true;  // drawn by update(): stop() also runs in the sequencer interrupt
     }
 
     // 4. TRANSPORT FLAG RESET
@@ -25859,7 +26509,7 @@ void Controller::reset() {
             metronome.precounter = 0;
             metronome.countDownFlag = false;
             metronome.countDown = 0;
-            lcd_clearCountDown();
+            countDownClearFlag = true;  // drawn by update(): reset() also runs in the sequencer interrupt
         }
 
         // 4. BANK SHIFT CANCEL
@@ -25867,7 +26517,7 @@ void Controller::reset() {
         if (bankShiftFlag) {
             bankShiftFlag = false;
             targetSongBank = activeSongBank;
-            lcd_drawSongBankTab(activeSongBank, false);
+            bankTabRedrawFlag = true;  // drawn by update(): reset() also runs in the sequencer interrupt
         }
 
         // 5. TRANSPORT FLAG RESET
@@ -26180,7 +26830,13 @@ void Controller::lcd_drawLayerMeters() {
         lcd.setForeColor(clip ? RED : GRAY_25);
         lcd.fillRect(x + kMeterBarWidth, y, kMeterWidth - kMeterBarWidth, kMeterHeight);
     }
-    if ((menu == DUB_MENU) && (laneViewShown == DUB_MENU)) lcd_drawDubMeters();
+    if ((menu == DUB_MENU) && (laneViewShown == DUB_MENU)) {
+        if (dubPage == kDubPageHiss) {
+            lcd_drawHissLive();
+        } else {
+            lcd_drawDubMeters();
+        }
+    }
 }
 
 void Controller::lcd_drawStatusLine() {
@@ -26407,6 +27063,12 @@ void Controller::processAudioLayer() {
         // Skip processing if the layer is inactive
         if (!aBD.active) continue;
 
+        // A generator note (Generator.h) instead of a sample.
+        if (aBD.genType != GEN_OFF) {
+            processAudioGenLayer(i);
+            continue;
+        }
+
         float* targetBuffer = audioLayer[i];
         // A stereo sample also fills the right buffer (its right plane is stereoOffset bytes further on).
         const bool stereo = (aBD.stereoOffset != 0);
@@ -26597,6 +27259,8 @@ void Controller::processAudioLayer() {
 
 // Stereo work memory (right channels, route gains): DTCM RAM, zeroed in main().
 StereoDsp stereoDsp __attribute__((section(".dtcm")));
+// Generator voices and the hiss bed: DTCM RAM, zeroed in main().
+GenDsp genDsp __attribute__((section(".dtcm")));
 
 void Controller::processAudioRouting() {
     /// @brief Routes every source to its destination node and runs the modules in order,
@@ -26908,10 +27572,22 @@ void Controller::processAudioSend(uint32_t* outputBuffer) {
     float previewBlock[I2S_BLOCK_SIZE];
     previewRender(previewRing, previewVoice, previewBlock, I2S_BLOCK_SIZE, kLayerVolumeCoef * kNumberDataLibrary[(previewLevel <= 100) ? previewLevel : 100].powMultiplier);
 
+    // Hiss bed (Generator.h): stereo, before master volume, ducked by the loudest layer of the block.
+    const bool hissOn = (genMix.hissType != HISS_OFF) || (genDsp.hiss.amp > 0.0f);
+    if (hissOn) {
+        float key = 0.0f;
+        if (genMix.hissDuck > 0) {
+            for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+                for (uint16_t j = 0; j < I2S_BLOCK_SIZE; j++) key = fmaxf(key, fabsf(audioLayer[l][j]));
+            }
+        }
+        hissRender(genDsp.hiss, genMix.hissType, genMix.hissLevel, genMix.hissTone, genMix.hissDuck, key, genDsp.hissL, genDsp.hissR, I2S_BLOCK_SIZE);
+    }
+
     for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
         // One NaN or infinity here would sit in the master low-pass for good and silence the output.
-        float outL = finiteOrZero(audioSend_L[i] + previewBlock[i]);
-        float outR = finiteOrZero(audioSend_R[i] + previewBlock[i]);
+        float outL = finiteOrZero(audioSend_L[i] + previewBlock[i] + (hissOn ? genDsp.hissL[i] : 0.0f));
+        float outR = finiteOrZero(audioSend_R[i] + previewBlock[i] + (hissOn ? genDsp.hissR[i] : 0.0f));
 
         // Apply master volume gains
         outL *= mixer.volumeLeftFloat;
@@ -27795,7 +28471,7 @@ void Controller::interruptPlay() {
                     if (precountPendingBeat[i]) {
                         const uint8_t velocity = static_cast<uint8_t>(precountPendingBeat[i] - 1);
                         precountPendingBeat[i] = 0;
-                        layerSong_setBeat(i, activeSongBank, playInterval, 0, 0, 0, 0, true, velocity);
+                        layerSong_setBeat(i, activeSongBank, playInterval, 0, 0, 0, 0, true, velocity, false);  // no drawing in the interrupt
                     }
                 }
             }
@@ -27849,7 +28525,7 @@ void Controller::interruptPlay() {
                         if (noteDueInterval(beat.getStartInterval(), beat.getNote(), songInterval) == playInterval) {
                             // Condition and chance first (they also feed PRE), then the level:
                             // FLAT 100 / GHOST 50 unless the beat has its own velocity; MUTED stays silent.
-                            if (note_plays(i, beat.getNote()) && layerAudible(i) && (layer.samplePlay) && (beat.getFillPattern() != 2)) {
+                            if (note_plays(i, beat.getNote()) && layerAudible(i) && layer_canPlay(i) && (beat.getFillPattern() != 2)) {
                                 const uint8_t level = noteLevel(beat.getVelocity(), (beat.getFillPattern() == 0) ? 100 : 50);
                                 fillVolMultiplier = kNumberDataLibrary[level].powMultiplier;
                             }
@@ -27870,7 +28546,7 @@ void Controller::interruptPlay() {
                             // The whole fill plays or not (condition and chance at its first hit);
                             // its own velocity scales every hit.
                             if (playBeatMicroNum == 0) noteFillSkip[i] = !note_plays(i, beat.getNote());
-                            if (!noteFillSkip[i] && layerAudible(i) && (layer.samplePlay) && ((playBeatMicroNum == 0) || ((playBeatMicroNum != 0) && (layer.fill)))) {
+                            if (!noteFillSkip[i] && layerAudible(i) && layer_canPlay(i) && ((playBeatMicroNum == 0) || ((playBeatMicroNum != 0) && (layer.fill)))) {
                                 fillVolMultiplier = kNumberDataLibrary[beatMicro.getLevel()].powMultiplier;
                                 if (beat.getVelocity() != 0) fillVolMultiplier *= kNumberDataLibrary[noteLevel(beat.getVelocity(), 100)].powMultiplier;
                                 if (fillVolMultiplier > 0.0f) layer_playBeat(layer.number, fillVolMultiplier);

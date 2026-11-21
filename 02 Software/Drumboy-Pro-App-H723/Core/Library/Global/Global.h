@@ -19,6 +19,9 @@
 #include "SampleView.h"
 #include "DubMix.h"
 #include "DubView.h"
+#include "Generator.h"
+#include "GeneratorView.h"
+#include "GeneratorScreens.h"
 #include "NoteView.h"
 #include "Pan.h"
 #include "UndoLog.h"
@@ -110,6 +113,18 @@ void swap(T& a, T& b) {
 #include "PingPong.h"  // ping-pong echo
 #include "SamplePool.h"  // the sample memory pool (up to 20 s per sample)
 #include "Routing.h"  // RouteNode, routing helpers
+
+// Publishes values that the audio interrupt reads together (the coefficients of one biquad): interrupts
+// are off for the few stores inside the scope, so no audio block runs with half old and half new
+// coefficients (a mix of two stable filters can ring or click). Keep the scope to plain stores: no
+// maths, no calls.
+struct IrqGuard {
+    uint32_t primask;
+    IrqGuard() : primask(__get_PRIMASK()) { __disable_irq(); }
+    ~IrqGuard() { __set_PRIMASK(primask); }
+    IrqGuard(const IrqGuard&) = delete;
+    IrqGuard& operator=(const IrqGuard&) = delete;
+};
 
 template <typename T>
 int sgn(T val) {
@@ -417,6 +432,15 @@ struct StereoDsp {
 };
 extern StereoDsp stereoDsp;
 
+// Generator voices and the hiss bed (Generator.h): DTCM RAM, zeroed in main().
+struct GenDsp {
+    GenVoice voice[10];
+    HissBed hiss;
+    float hissL[I2S_BLOCK_SIZE];
+    float hissR[I2S_BLOCK_SIZE];
+};
+extern GenDsp genDsp;
+
 #define RAM_VIEW_SCRATCH_ADDRESS                    0xC0FF3000u
 static_assert((RAM_VIEW_SCRATCH_ADDRESS >= 0xC0FF2EA4u) && (RAM_VIEW_SCRATCH_ADDRESS + 4096u <= 0xC0FFFFF0u), "view scratch must fit the free tail of the SDRAM");
 
@@ -647,6 +671,9 @@ const RGB16Color GRAY_95                            = 0xF79E;
 
 /*----------------------------------------------------------------------------*/
 
+static_assert((kGsBlack == BLACK) && (kGsWhite == WHITE) && (kGsYellow == YELLOW) && (kGsGreen == GREEN) && (kGsCyan == CYAN) && (kGsMagenta == MAGENTA) &&
+                  (kGsGray25 == GRAY_25) && (kGsGray50 == GRAY_50) && (kGsGray75 == GRAY_75),
+              "GeneratorScreens.h uses the colours of Global.h");
 const RGB16Color kLayerColorPalette[]               = {WHITE, GRAY_75, WHITE, GRAY_75, WHITE, GRAY_75, WHITE, GRAY_75, WHITE, GRAY_75};
 
 const RGB16Color kBeatSelectedColor                 = MAGENTA;
@@ -767,6 +794,7 @@ const uint16_t kLayerBoxHeight                      = 10;
 const uint16_t kLayerLineX                          = 20;
 const uint16_t kLayerLineY[10][2]                   = {{130, 161}, {161, 192}, {192, 223}, {223, 254}, {254, 285}, {285, 316}, {316, 347}, {347, 378}, {378, 409}, {409, 440}};
 const uint16_t kLayerLineWidth                      = 920;
+static_assert((kGsAreaX == kLayerLineX) && (kGsAreaW == kLayerLineWidth), "GeneratorScreens.h draws in the lane area");
 
 const uint16_t kLayerTextY[10]                      = {141, 172, 203, 234, 265, 296, 327, 358, 389, 420};
 const uint16_t kLayerTextNumberX                    = 30;
@@ -911,6 +939,9 @@ const char kHeaderMidiOut[]                         = "MIDI OUT  ";
 const char kHeaderMix[]                             = "MIX       ";
 const char kHeaderNew[]                             = "NEW       ";
 const char kHeaderPan[]                             = "PAN       ";
+const char kHeaderGen[]                             = "GEN       ";
+const char kHeaderGenLength[]                       = "LENGTH    ";
+const char kHeaderGenSweep[]                        = "SWEEP     ";
 const char kHeaderPattern[]                         = "PATTERN   ";
 const char kHeaderPhase[]                           = "PHASE     ";
 const char kHeaderPitch[]                           = "PITCH     ";
@@ -1297,6 +1328,12 @@ typedef enum {
     ENC_DUB_FX                                      = 0x8A,
     ENC_DUB_WIDTH                                   = 0x8B,
 
+    ENC_INST_2_GEN                                  = 0x8C,  // layer GEN (page 3, Generator.h): a generator instead of the sample
+    ENC_DUB_HISS                                    = 0x8D,  // DUB page 2: the hiss bed (Generator.h)
+    ENC_DUB_HISSLEVEL                               = 0x8E,
+    ENC_DUB_HISSTONE                                = 0x8F,
+    ENC_DUB_HISSDUCK                                = 0x90,
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1336,7 +1373,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // LAYER_INST_1_MENU = 0x10
     {ENC_INST_1_INST, ENC_INST_1_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_1_START, ENC_INST_1_END, ENC_INST_1_TIMING, ENC_INST_1_PROB},
     // LAYER_INST_2_MENU = 0x11
-    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_INST_2_STYLE, ENC_INST_2_PAN, ENC_FNC_NONE},
+    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_INST_2_STYLE, ENC_INST_2_PAN, ENC_INST_2_GEN},
     // LAYER_SONG_MENU = 0x12
     // Tabs 2-3 hold the fill graph.
     {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_SONG_MOVE, ENC_SONG_SHIFT},
@@ -1361,6 +1398,9 @@ const EncoderFunc encoderLocalFunction[][8] = {
 // DUB page 2 (the next step in the MIXER cycle): the selected strip's pan and FX send on the top row,
 // the echo's width on the bottom row.
 const EncoderFunc kDubPage2Function[8] = {ENC_DUB_PAN, ENC_DUB_FX, ENC_FNC_NONE, ENC_FNC_NONE, ENC_DUB_WIDTH, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE};
+// DUB page 3, HISS (Generator.h; the lane area shows the bed, GeneratorView.h): type, level, tone and ducking.
+const EncoderFunc kDubPage3Function[8] = {ENC_DUB_HISS, ENC_DUB_HISSLEVEL, ENC_DUB_HISSTONE, ENC_DUB_HISSDUCK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE};
+const uint8_t kDubPageHiss = 2;  // dubPage of the HISS page (0 and 1 are the desk)
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1539,7 +1579,13 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
 
     {ENC_DUB_PAN,             ENC_RES_M, "PAN       ", "DUB   ", "   ", false},
     {ENC_DUB_FX,              ENC_RES_M, "FX SEND   ", "DUB   ", "  %", false},
-    {ENC_DUB_WIDTH,           ENC_RES_M, "ECHO WIDTH", "DUB   ", "  %", false}
+    {ENC_DUB_WIDTH,           ENC_RES_M, "ECHO WIDTH", "DUB   ", "  %", false},
+
+    {ENC_INST_2_GEN,          ENC_RES_S, "GEN       ", "LAYER ", "   ", false},
+    {ENC_DUB_HISS,            ENC_RES_S, "HISS      ", "DUB   ", "   ", false},
+    {ENC_DUB_HISSLEVEL,       ENC_RES_M, "HISS LEVEL", "DUB   ", "  %", false},
+    {ENC_DUB_HISSTONE,        ENC_RES_M, "HISS TONE ", "DUB   ", "  %", false},
+    {ENC_DUB_HISSDUCK,        ENC_RES_M, "HISS DUCK ", "DUB   ", "  %", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -2613,12 +2659,17 @@ struct Lpf {
         float cosOmega = cosFast(normFreq);
         float alpha = sinOmega / (2.0f * Q);
         float norm = 1.0f / (1.0f + alpha);
-        
-        a0 = ((1.0f - cosOmega) * 0.5f) * norm;
-        a1 = (1.0f - cosOmega) * norm;
-        a2 = ((1.0f - cosOmega) * 0.5f) * norm;
-        b1 = (-2.0f * cosOmega) * norm;
-        b2 = (1.0f - alpha) * norm;
+
+        const float n0 = ((1.0f - cosOmega) * 0.5f) * norm;
+        const float n1 = (1.0f - cosOmega) * norm;
+        const float nb1 = (-2.0f * cosOmega) * norm;
+        const float nb2 = (1.0f - alpha) * norm;
+        IrqGuard guard;  // the audio interrupt reads the five together
+        a0 = n0;
+        a1 = n1;
+        a2 = n0;
+        b1 = nb1;
+        b2 = nb2;
     }
 };
 
@@ -2913,6 +2964,7 @@ struct Filter {
         BiquadCoef first, second;
         const uint8_t count = filterDesign(type, slope, (float)kFilterFrequencyDataLibrary[frequency].data, kFilterResonanceDataLibrary[resonance].data,
                                            AUDIO_SAMPLE_RATE, first, second);
+        IrqGuard guard;  // the audio interrupt reads all of them in one block
         b0 = first.b0;
         b1 = first.b1;
         b2 = first.b2;
@@ -3259,11 +3311,13 @@ struct Eq {
 
         float invA0 = 1.0f / a0_tmp;
 
-        filter.b0 = b0_tmp * invA0;
-        filter.b1 = b1_tmp * invA0;
-        filter.b2 = b2_tmp * invA0;
-        filter.a1 = a1_tmp * invA0;
-        filter.a2 = a2_tmp * invA0;
+        const float nb0 = b0_tmp * invA0, nb1 = b1_tmp * invA0, nb2 = b2_tmp * invA0, na1 = a1_tmp * invA0, na2 = a2_tmp * invA0;
+        IrqGuard guard;  // the audio interrupt reads the five together
+        filter.b0 = nb0;
+        filter.b1 = nb1;
+        filter.b2 = nb2;
+        filter.a1 = na1;
+        filter.a2 = na2;
     }
 
     void cleanMemory() {
@@ -4681,11 +4735,15 @@ struct Overdrive {
         float K = tanf(M_PI * tone / (float)AUDIO_SAMPLE_RATE);
         float norm = 1.0f / (1.0f + K / Q + K * K);
 
-        a0 = K * K * norm;
-        a1 = 2.0f * a0;
-        a2 = a0;
-        b1 = 2.0f * (K * K - 1.0f) * norm;
-        b2 = (1.0f - K / Q + K * K) * norm;
+        const float n0 = K * K * norm;
+        const float nb1 = 2.0f * (K * K - 1.0f) * norm;
+        const float nb2 = (1.0f - K / Q + K * K) * norm;
+        IrqGuard guard;  // the audio interrupt reads the five together
+        a0 = n0;
+        a1 = 2.0f * n0;
+        a2 = n0;
+        b1 = nb1;
+        b2 = nb2;
     }
 
     void cleanMemory() {
@@ -4924,11 +4982,15 @@ struct Distortion {
         float K = tanf(M_PI * tone / (float)AUDIO_SAMPLE_RATE);
         float norm = 1.0f / (1.0f + K / Q + K * K);
 
-        a0 = K * K * norm;
-        a1 = 2.0f * a0;
-        a2 = a0;
-        b1 = 2.0f * (K * K - 1.0f) * norm;
-        b2 = (1.0f - K / Q + K * K) * norm;
+        const float n0 = K * K * norm;
+        const float nb1 = 2.0f * (K * K - 1.0f) * norm;
+        const float nb2 = (1.0f - K / Q + K * K) * norm;
+        IrqGuard guard;  // the audio interrupt reads the five together
+        a0 = n0;
+        a1 = 2.0f * n0;
+        a2 = n0;
+        b1 = nb1;
+        b2 = nb2;
     }
 
     void cleanMemory() {
@@ -6757,6 +6819,14 @@ struct BeatPlayData {
     uint8_t directionPhase;
 
     MixerInMode mixerInMode;
+
+    // GEN (Generator.h): a generator note instead of a sample. genType 0 = a sample.
+    uint8_t genType;
+    uint8_t genShape;                               // the sweep shape (the layer's DIRECTION)
+    bool genStart;                                  // the audio code starts the voice at the first block
+    float genRatio;                                 // the PITCH factor
+    float genOctaves;                               // SWEEP in octaves
+    uint32_t genSeed;
 };
 
 struct LayerPlayData {

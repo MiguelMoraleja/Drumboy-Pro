@@ -21,5 +21,14 @@ Release/
 02 Software/Drumboy-Pro-App-H723/build/
 02 Software/Drumboy-Pro-App-H723/build-*/
 
-# Host test build output
+# Host test build output (also a test built by hand next to its source: make test_x without BUILD=)
 02 Software/tests/build/
+02 Software/tests/test_*
+!02 Software/tests/test_*.cpp
+!02 Software/tests/test_*.h
+!02 Software/tests/test_*.sh
+!02 Software/tests/test_*.py
+!02 Software/tests/test_*.txt
+
+# Stray dependency files of a compile run by hand in the firmware folder (the Makefile writes its own into build/)
+02 Software/Drumboy-Pro-App-H723/*.d

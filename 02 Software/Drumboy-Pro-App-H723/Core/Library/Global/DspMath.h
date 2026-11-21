@@ -32,11 +32,12 @@ DSPINLINE float softKneeClip(float x) {
 // A NaN or an infinity is not caught by a float compare in the firmware build (-Ofast implies
 // -ffinite-math-only), so it is tested in the bits: the exponent all ones. Used where one bad value would
 // poison a filter's history for good (the master low-pass, the samples loaded from a file).
-DSPINLINE float finiteOrZero(float x) {
+DSPINLINE bool isFiniteBits(float x) {
     uint32_t bits;
     memcpy(&bits, &x, sizeof bits);
-    return ((bits & 0x7F800000u) == 0x7F800000u) ? 0.0f : x;
+    return (bits & 0x7F800000u) != 0x7F800000u;
 }
+DSPINLINE float finiteOrZero(float x) { return isFiniteBits(x) ? x : 0.0f; }
 
 // Bit depth reduction of a sample in [-1, 1] to the kept bits of a 24-bit offset-binary code (mask = the kept
 // bits, 0x00FFFFFF for all). It rounds to the nearest step, so the centre code stays the centre: digital

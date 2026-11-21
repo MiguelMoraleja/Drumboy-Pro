@@ -294,9 +294,13 @@ class Controller {
     int16_t fsDrawnSlot = -1;                   // the cursor as drawn (-1 = the screen is not drawn)
     uint32_t fileViewKey = 0;                   // what the grid was drawn from, without the cursor (0 = nothing)
     uint32_t fileViewStateDrawn = 0;
+    uint32_t quantizeViewKey = 0;               // what the quantize screen was drawn from (0 = nothing)
+    uint32_t quantizeViewStateDrawn = 0;
     uint8_t slotRepeat = 0;                     // consecutive repeats of a held UP or DOWN: after 8 the step is ten slots
     uint8_t slotStep(bool repeat_);
     uint32_t fileViewState() const;
+    uint32_t quantizeViewState() const;
+    void lcd_drawQuantizeViewData();
     void lcd_drawFileViewData();
     bool sd_readSlotSummary(FsKind kind_, uint8_t slot_, FsSummary& out_);
     void fsSummaryFromMemory(FsSummary& out_) const;

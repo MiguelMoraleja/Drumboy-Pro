@@ -6401,7 +6401,9 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
                                 uint8_t startInterval0 = data[offsetBeat + 2];
                                 uint8_t startInterval1 = data[offsetBeat + 3];
                                 uint16_t startInterval = ((uint16_t)startInterval0 << 8) + startInterval1;
-                                if (startInterval < songInterval) layerSong_setBeat(i, j, startInterval, fillType, fillPattern, fillTime, fillLevel, true, 0, true, 0);  // strength 0: the saved position as it is (a hit recorded with STRENGTH below 100 sits off the grid)  // a beat past the song end (damaged file) is dropped
+                                // A beat past the song end (a damaged file) is dropped. Strength 0: the saved position as it is
+                                // (a hit recorded with STRENGTH below 100 sits off the grid).
+                                if (startInterval < songInterval) layerSong_setBeat(i, j, startInterval, fillType, fillPattern, fillTime, fillLevel, true, 0, true, 0);
                             }
                         }
 
@@ -22910,7 +22912,8 @@ bool Controller::laneViewHidden() const {
     /// FILTER, EQ and instrument page 2 pages). Everything that draws into a lane checks it, and asks for the view to be
     /// refreshed instead.
     return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU) ||
-           (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (menuTab > 0));  // the load, save and clear tabs show the slots
+           (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (menuTab > 0)) ||  // the load, save and clear tabs show the slots
+           ((menu == RHYTHM_MENU) && (menuTab >= 3));                              // the QUANTIZE and STRENGTH fields show the grids
 }
 
 void Controller::lcd_drawLaneView() {
@@ -22929,6 +22932,7 @@ void Controller::lcd_drawLaneView() {
     noteViewKey = 0;                                                  // and no step edit screen
     hissViewKey = 0;                                                  // and no HISS page
     fileViewKey = 0;                                                  // and no slot grid
+    quantizeViewKey = 0;                                              // and no quantize screen
     fsDrawnSlot = -1;
     lcd_drawLaneViewData();
 }
@@ -22967,6 +22971,9 @@ void Controller::lcd_drawLaneViewData() {
         case FILE_MENU:
         case DRUMKIT_MENU:
             lcd_drawFileViewData();
+            break;
+        case RHYTHM_MENU:
+            lcd_drawQuantizeViewData();
             break;
         default:
             break;
@@ -23078,6 +23085,7 @@ void Controller::lcd_updateLaneView() {
     if ((menu == DUB_MENU) && (dubViewState() != dubViewStateDrawn)) viewDirty = true;
     if ((menu == NOTE_MENU) && (noteViewState() != noteViewStateDrawn)) viewDirty = true;
     if (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (fileViewState() != fileViewStateDrawn)) viewDirty = true;
+    if ((menu == RHYTHM_MENU) && (quantizeViewState() != quantizeViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -24266,6 +24274,24 @@ void Controller::lcd_drawHissLive() {
     hissLiveNumbers(genMix, genDsp, bedOn, gain, peakL, peakR);
     GsLcd g{lcd};
     gsDrawHissLive(g, in, hissLive, bedOn, gain, peakL, peakR);
+}
+
+/* QUANTIZE: the grids as a full-area view (QuantizeView.h, QuantizeScreens.h) -----------*/
+
+uint32_t Controller::quantizeViewState() const {
+    /// @brief A fingerprint of what the quantize screen shows: the grid, the strength and the selected field. Never 0.
+    return 0x01000000u | (static_cast<uint32_t>(menuTab == 4) << 16) | (static_cast<uint32_t>(rhythm.quantizeStrength) << 8) | rhythm.quantize;
+}
+
+void Controller::lcd_drawQuantizeViewData() {
+    /// @brief The RHYTHM page's QUANTIZE and STRENGTH screen: every grid as a row of points over two beats, the
+    /// chosen one lit, what it is, and what the strength does to a hit played late. Drawn from nothing whenever
+    /// the grid, the strength or the selected field changes.
+    quantizeViewStateDrawn = quantizeViewState();
+    if (quantizeViewStateDrawn == quantizeViewKey) return;
+    quantizeViewKey = quantizeViewStateDrawn;
+    GsLcd g{lcd};
+    qsDrawScreen(g, QsInput{rhythm.quantize, rhythm.quantizeStrength, menuTab == 4});
 }
 
 /* NOTE: the step edit screen (NoteView.h) ----------------------------------------*/
@@ -26246,7 +26272,7 @@ void Controller::layerSong_paste() {
                 uint8_t fillPattern = layerSongCopy.beatLibrary[i].getFillPattern();
                 uint8_t fillTime = layerSongCopy.beatLibrary[i].getFillTime();
                 uint8_t fillLevel = layerSongCopy.beatLibrary[i].getFillLevel();
-                if (startInterval < songInterval) layerSong_setBeat(selectedLayerNum, activeSongBank, startInterval, fillType, fillPattern, fillTime, fillLevel, true);
+                if (startInterval < songInterval) layerSong_setBeat(selectedLayerNum, activeSongBank, startInterval, fillType, fillPattern, fillTime, fillLevel, true, 0, true, 0);  // strength 0: a pasted beat keeps its position
             }
 
             // 4. SELECTION & UI REFRESH

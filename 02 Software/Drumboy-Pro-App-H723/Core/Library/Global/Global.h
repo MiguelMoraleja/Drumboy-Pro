@@ -23,6 +23,8 @@
 #include "Generator.h"
 #include "GeneratorView.h"
 #include "GeneratorScreens.h"
+#include "QuantizeView.h"
+#include "QuantizeScreens.h"
 #include "NoteView.h"
 #include "Pan.h"
 #include "UndoLog.h"

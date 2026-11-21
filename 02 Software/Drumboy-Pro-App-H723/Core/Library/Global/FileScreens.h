@@ -229,7 +229,7 @@ inline void fsDrawCard(G& g, const FsView& v_) {
         g.setFont(GS_FONT_05x07);
         g.setForeColor(kGsGray75);
         gsDraw(g, "IN MEMORY", kFsCardX, cardY);
-        gsDraw(g, used ? "IN THE SLOT NOW" : "THE SLOT IS FREE", kFsCardX + 212, cardY);
+        gsDraw(g, used ? "IN THE SLOT NOW" : ((v_.state[v_.selected] == FS_BAD) ? "THE SLOT: NOT READABLE" : "THE SLOT IS FREE"), kFsCardX + 212, cardY);
         fsThumb(g, v_.now, kFsCardX + 2, cardY + 14, 2, 9, 1, kFsThumbCols, kGsGray50);
         if (used && v_.sel.valid) fsThumb(g, v_.sel, kFsCardX + 214, cardY + 14, 2, 9, 1, kFsThumbCols, kGsGray50);
         g.setFont(GS_FONT_05x07);
@@ -259,6 +259,8 @@ inline void fsDrawCard(G& g, const FsView& v_) {
     } else if (v_.mode == FS_SAVE) {
         if (used) {
             fsBanner(g, kFsCardX, by, kFsCardW, kGsYellow, "ADD REPLACES THIS SLOT, THEN ADD AGAIN", "THE OLD FILE STAYS UNTIL THE NEW ONE IS CHECKED");
+        } else if (v_.state[v_.selected] == FS_BAD) {
+            fsBanner(g, kFsCardX, by, kFsCardW, kGsYellow, "ADD REPLACES THIS FILE, THEN ADD AGAIN", "IT CAN NOT BE READ. THE NEW FILE IS CHECKED AFTER WRITING");
         } else {
             fsBanner(g, kFsCardX, by, kFsCardW, kGsGreen, "ADD SAVES HERE, THEN ADD AGAIN", "THE NEW FILE IS CHECKED AFTER WRITING");
         }

@@ -88,7 +88,8 @@ int main() {
     const Case cases[] = {{"grid_load_song", FS_SONG, FS_LOAD, 12, 17},       {"grid_save_over", FS_SONG, FS_SAVE, 12, 12},     {"grid_save_free", FS_SONG, FS_SAVE, 62, 12},
                           {"grid_clear", FS_SONG, FS_CLEAR, 12, -1},          {"grid_load_empty", FS_SONG, FS_LOAD, 63, 17},    {"grid_load_bad", FS_SONG, FS_LOAD, 57, 17},
                           {"grid_load_kit", FS_KIT, FS_LOAD, 7, 3},           {"grid_save_kit", FS_KIT, FS_SAVE, 7, 3},          {"grid_first", FS_SONG, FS_LOAD, 0, 0},
-                          {"grid_last", FS_SONG, FS_LOAD, 99, 99}};
+                          {"grid_last", FS_SONG, FS_LOAD, 99, 99},           {"grid_save_bad", FS_SONG, FS_SAVE, 57, 17},      {"grid_clear_bad", FS_SONG, FS_CLEAR, 57, -1},
+                          {"grid_save_kit_bad", FS_KIT, FS_SAVE, 57, 3},      {"grid_clear_kit_bad", FS_KIT, FS_CLEAR, 57, -1}, {"grid_clear_empty", FS_SONG, FS_CLEAR, 63, -1}};
     for (const Case& c : cases) {
         FakeLcd lcd;
         lcd.dirtyArea();
@@ -96,6 +97,21 @@ int main() {
         fsDrawGrid(lcd, v);
         checkScreen(lcd, c.name);
         lcd.dump(c.name);
+        // The banner says what ADD does, and ADD does that (Controller::file_clearSelect and drumkit_clearSelect act on
+        // every slot that is not empty, used or not readable; review: an unreadable slot offered CLEAR but ADD did nothing).
+        const bool bad = (v.state[c.selected] == FS_BAD), empty = (v.state[c.selected] == FS_EMPTY);
+        auto has = [&](const char* text) {
+            for (const TextBox& t : lcd.texts)
+                if (t.text == text) return true;
+            return false;
+        };
+        if (c.mode == FS_CLEAR) {
+            CHECK(has("ADD CLEARS THIS SLOT, THEN ADD AGAIN") == !empty, "%s: the CLEAR banner offers CLEAR exactly when the slot holds a file", c.name);
+            CHECK(has("THIS SLOT IS ALREADY EMPTY") == empty, "%s: the empty banner", c.name);
+        }
+        if (c.mode == FS_SAVE && bad) {
+            CHECK(has("ADD REPLACES THIS FILE, THEN ADD AGAIN") && !has("ADD SAVES HERE, THEN ADD AGAIN") && (c.kind == FS_KIT || has("THE SLOT: NOT READABLE")), "%s: an unreadable slot is replaced, not free", c.name);
+        }
     }
     // Every slot as the selected one, every mode and kind: always inside the area, always legal text.
     for (int kind = 0; kind < 2; kind++)

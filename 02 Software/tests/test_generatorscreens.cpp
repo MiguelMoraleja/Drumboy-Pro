@@ -140,8 +140,8 @@ static GsHiss makeHiss(uint8_t type, uint8_t level, uint8_t tone, uint8_t duck) 
 
 struct HissFrame {
     std::vector<uint8_t> l, r, rl, rr;
-    HissFrame(const GsHiss& in) : l(kHvTextureCols), r(kHvTextureCols), rl(kHvTextureCols), rr(kHvTextureCols) {
-        hissViewTexture(in.type, in.level, in.tone, l.data(), r.data(), kHvTextureCols, static_cast<uint8_t>(kHvTextureHalf), rl.data(), rr.data());
+    HissFrame(GsHiss& in) : l(kHvTextureCols), r(kHvTextureCols), rl(kHvTextureCols), rr(kHvTextureCols) {
+        hissViewTexture(in.type, in.level, in.tone, l.data(), r.data(), kHvTextureCols, static_cast<uint8_t>(kHvTextureHalf), rl.data(), rr.data(), &in.levelDb);
     }
 };
 
@@ -149,8 +149,9 @@ static void testHissScreens() {
     const GsHiss cases[] = {makeHiss(HISS_TAPE, 30, 70, 0),   makeHiss(HISS_VINYL, 60, 50, 40), makeHiss(HISS_PINK, 100, 100, 100), makeHiss(HISS_WHITE, 10, 0, 25),
                             makeHiss(HISS_OFF, 30, 70, 0),     makeHiss(HISS_VINYL, 0, 70, 60),  makeHiss(HISS_TAPE, 100, 100, 1)};
     int n = 0;
-    for (const GsHiss& in : cases) {
+    for (const GsHiss& original : cases) {
         for (int state = 0; state < 3; state++) {
+            GsHiss in = original;  // the frame measures the level into it
             FakeLcd lcd;
             lcd.dirtyArea();
             GsHissLive live;
@@ -161,6 +162,13 @@ static void testHissScreens() {
             snprintf(what, sizeof what, "HISS %s case %d state %d", kHissTypeName[in.type], n, state);
             checkScreen(lcd, what);
             if (state == 0) {
+                // The summary line keeps the LEVEL setting, also when the bed is off or silent (review: it said LEVEL 0).
+                char want[24];
+                snprintf(want, sizeof want, "LEVEL %u  ", static_cast<unsigned>(in.level));
+                bool found = false;
+                for (const TextBox& t : lcd.texts)
+                    if (t.text.compare(0, strlen(want), want) == 0) found = true;
+                CHECK(found, "%s: the summary line starts with '%s'", what, want);
                 char name[48];
                 snprintf(name, sizeof name, "hiss_%s_%d", kHissTypeName[in.type], n);
                 lcd.dump(name);
@@ -173,7 +181,7 @@ static void testHissScreens() {
 // The live part draws only what changed: after any sequence of updates the picture is the one a fresh
 // drawing with the last values gives.
 static void testLiveIncremental() {
-    const GsHiss in = makeHiss(HISS_VINYL, 50, 60, 40);
+    GsHiss in = makeHiss(HISS_VINYL, 50, 60, 40);
     HissFrame f(in);
     const float gains[] = {1.0f, 0.9f, 0.55f, 0.7f, 0.6f, 1.0f, 0.6f, 0.0f, 0.3f};
     const float peaksL[] = {0.0f, 0.05f, 0.2f, 0.01f, 0.5f, 0.001f, 0.0f, 0.3f, 0.02f};

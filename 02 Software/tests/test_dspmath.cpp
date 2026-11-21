@@ -51,6 +51,14 @@ int main() {
     float negInf;
     std::memcpy(&negInf, &bits, 4);
     CHECK(finiteOrZero(nanValue) == 0.0f && finiteOrZero(infValue) == 0.0f && finiteOrZero(negInf) == 0.0f, "NaN and infinities become zero");
+    CHECK(!isFiniteBits(nanValue) && !isFiniteBits(infValue) && !isFiniteBits(negInf) && isFiniteBits(0.0f) && isFiniteBits(-3.5f) && isFiniteBits(1e38f) && isFiniteBits(1e-45f), "isFiniteBits");
+    // Out-of-range input stays inside [-1, 1] (a generator layer's bit depth reduction relies on it: a hand-made
+    // copy of the old truncating code turned 1.3 into -0.75 and cast a negative float to an unsigned integer).
+    for (uint32_t keep : {4u, 8u, 16u, 24u}) {
+        const uint32_t m = (0x00FFFFFFu << (24 - keep)) & 0x00FFFFFFu;
+        const float top = 1.0f - 2.0f / static_cast<float>(1u << keep);  // the highest level this many bits can hold
+        CHECK(quantize24(1.3f, m) > top - 0.001f && quantize24(1.3f, m) <= 1.0f && quantize24(-1.7f, m) < -0.999f && quantize24(-1.7f, m) >= -1.0f, "%u bits: out-of-range input is clamped (%f, %f)", keep, quantize24(1.3f, m), quantize24(-1.7f, m));
+    }
 
     // Bit depth reduction.
     CHECK(std::fabs(quantize24(0.0f, 0x00FFFFFFu)) < 1e-6f, "full resolution: silence");

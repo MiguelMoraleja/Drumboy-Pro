@@ -388,13 +388,75 @@ static void testHiss() {
             for (int c = 0; c < 280; c++) CHECK(std::isfinite(hissViewSpectrumDb(type, tone, gvHzAtColumn(static_cast<uint16_t>(c), 280))), "hiss %u tone %u col %d", type, tone, c);
         }
     }
-    // The level text: LEVEL 100 = -18 dBFS, 50 = -30 dBFS.
-    CHECK(fabsf(hissViewLevelDb(100) + 18.06f) < 0.1f, "100: %f", hissViewLevelDb(100));
-    CHECK(fabsf(hissViewLevelDb(50) + 30.1f) < 0.1f, "50: %f", hissViewLevelDb(50));
-    CHECK(hissViewLevelDb(0) < -150.0f, "0 is silence");
+}
+
+// The level the HISS screen prints is what the bed measures (review: the old text said -18 dBFS for every
+// type, but each type's source has its own loudness: VINYL is about 11 dB quieter than the number said).
+static float measureHissDb(uint8_t type, uint8_t level, uint8_t tone) {
+    HissBed bed;
+    memset(&bed, 0, sizeof bed);
+    double sum = 0.0;
+    uint32_t count = 0;
+    float l[32], r[32];
+    for (uint32_t at = 0; at < 44100; at += 32) {
+        hissRender(bed, type, level, tone, 0, 0.0f, l, r, 32);
+        for (uint16_t i = 0; (i < 32) && (at + i < 44100); i++) {
+            sum += static_cast<double>(l[i]) * l[i] + static_cast<double>(r[i]) * r[i];
+            count += 2;
+        }
+    }
+    return (sum > 0.0) ? static_cast<float>(10.0 * log10(sum / count)) : -200.0f;
+}
+
+static void testHissLevelMeasured() {
+    // The same figure from an independent measurement of the bed, for every type, level and tone.
+    for (uint8_t type = HISS_TAPE; type < kHissTypeCount; type++) {
+        for (uint8_t level : {20, 50, 100}) {
+            for (uint8_t tone : {30, 70, 100}) {
+                std::vector<uint8_t> a(kHvTextureCols), b(kHvTextureCols);
+                float db = 0.0f;
+                hissViewTexture(type, level, tone, a.data(), b.data(), kHvTextureCols, static_cast<uint8_t>(kHvTextureHalf), nullptr, nullptr, &db);
+                const float want = measureHissDb(type, level, tone);
+                CHECK(fabsf(db - want) < 0.1f, "type %u level %u tone %u: screen %.2f dBFS, measured %.2f", type, level, tone, db, want);
+            }
+        }
+    }
+    // What the bed measures at LEVEL 100, TONE 70 (a change of a generator's sound shows up here on purpose).
+    const struct {
+        uint8_t type;
+        float db;
+    } at100[] = {{HISS_TAPE, -21.8f}, {HISS_VINYL, -28.8f}, {HISS_PINK, -20.8f}, {HISS_WHITE, -21.1f}};
+    for (const auto& t : at100) {
+        std::vector<uint8_t> a(kHvTextureCols), b(kHvTextureCols);
+        float db = 0.0f;
+        hissViewTexture(t.type, 100, 70, a.data(), b.data(), kHvTextureCols, static_cast<uint8_t>(kHvTextureHalf), nullptr, nullptr, &db);
+        CHECK(fabsf(db - t.db) < 1.0f, "%s at LEVEL 100: %.2f dBFS, expected about %.1f", kHissTypeName[t.type], db, t.db);
+    }
+    // Louder with LEVEL; silent when off or at LEVEL 0 (-200); not touched when the pointer is not given.
+    float previous = -300.0f;
+    for (uint8_t level : {5, 20, 40, 60, 80, 100}) {
+        std::vector<uint8_t> a(kHvTextureCols), b(kHvTextureCols);
+        float db = 0.0f;
+        hissViewTexture(HISS_PINK, level, 70, a.data(), b.data(), kHvTextureCols, static_cast<uint8_t>(kHvTextureHalf), nullptr, nullptr, &db);
+        CHECK(db > previous, "LEVEL %u: %.2f is not louder than %.2f", level, db, previous);
+        previous = db;
+    }
+    for (uint8_t type : {static_cast<uint8_t>(HISS_OFF), static_cast<uint8_t>(77)}) {
+        std::vector<uint8_t> a(kHvTextureCols), b(kHvTextureCols);
+        float db = 0.0f;
+        hissViewTexture(type, 100, 70, a.data(), b.data(), kHvTextureCols, static_cast<uint8_t>(kHvTextureHalf), nullptr, nullptr, &db);
+        CHECK(db == -200.0f, "type %u is silent", type);
+    }
+    std::vector<uint8_t> a(kHvTextureCols), b(kHvTextureCols);
+    float db = 0.0f;
+    hissViewTexture(HISS_TAPE, 0, 70, a.data(), b.data(), kHvTextureCols, static_cast<uint8_t>(kHvTextureHalf), nullptr, nullptr, &db);
+    CHECK(db == -200.0f, "LEVEL 0 is silent (%f)", db);
 }
 
 static void testDuckMeter() {
+    // NaN and infinity count as no gain (they are tested in the bits: the firmware's -ffast-math folds a float compare away).
+    CHECK(hissViewGainPx(NAN, 100) == 0 && hissViewGainPx(INFINITY, 100) == 0 && hissViewGainPx(-INFINITY, 100) == 0 && hissViewGainPx(-0.5f, 100) == 0 && hissViewGainPx(1.5f, 100) == 100,
+          "gain meter: NaN, infinity, negative and above 1");
     CHECK(hissViewGainPx(1.0f, 520) == 520, "no duck: full");
     CHECK(hissViewGainPx(0.5f, 520) == 260, "half");
     CHECK(hissViewGainPx(0.0f, 520) == 0, "none");
@@ -414,6 +476,7 @@ int main() {
     testSpectrumShapes();
     testLines();
     testHiss();
+    testHissLevelMeasured();
     testDuckMeter();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

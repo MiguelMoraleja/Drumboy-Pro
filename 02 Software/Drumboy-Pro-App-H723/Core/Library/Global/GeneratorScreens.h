@@ -76,7 +76,7 @@ inline void gsSpectrumCurve(G& g, const float* db_, uint16_t cols_, uint16_t x_,
     uint16_t px = 0, py = 0;
     for (uint16_t c = 0; c < cols_; c++) {
         const float rel = db_[c] - reference_;
-        if (!(rel > -kGvSpecRangeDb)) {  // also NaN
+        if (!isFiniteBits(rel) || (rel <= -kGvSpecRangeDb)) {  // NaN and infinity are tested in the bits (-ffast-math folds a compare away)
             havePrevious = false;
             continue;
         }
@@ -281,6 +281,7 @@ inline void gsDrawGen(G& g, const GsGen& in_, const uint8_t* peaks_, const uint8
 
 struct GsHiss {
     uint8_t type, level, tone, duck;  // HissType, then LEVEL, TONE, DUCK 0..100
+    float levelDb = -200.0f;          // the RMS level the bed measures (hissViewTexture); -200 = silent or off
 };
 
 // What the live part has drawn (so only changes are drawn): the duck bar in pixels, the two level bars.
@@ -386,11 +387,10 @@ inline void gsDrawHiss(G& g, const GsHiss& in_, const uint8_t* peaksL_, const ui
     g.drawText(line, static_cast<uint16_t>(strlen(line)), kGvTitleX, kGvTitleY);
     char tone[16];
     gvFormatHz(tone, sizeof tone, hissToneHz(in_.tone));
-    const float levelDb = hissViewLevelDb(in_.level);
-    if (levelDb > -100.0f) {
-        snprintf(line, sizeof line, "LEVEL %u  %d DBFS  TONE %s  DUCK %u", static_cast<unsigned>(in_.level), static_cast<int>(lroundf(levelDb)), tone, static_cast<unsigned>(in_.duck));
+    if (in_.levelDb > -100.0f) {
+        snprintf(line, sizeof line, "LEVEL %u  %d DBFS RMS  TONE %s  DUCK %u", static_cast<unsigned>(in_.level), static_cast<int>(lroundf(in_.levelDb)), tone, static_cast<unsigned>(in_.duck));
     } else {
-        snprintf(line, sizeof line, "LEVEL 0  SILENT  TONE %s  DUCK %u", tone, static_cast<unsigned>(in_.duck));
+        snprintf(line, sizeof line, "LEVEL %u  SILENT  TONE %s  DUCK %u", static_cast<unsigned>(in_.level), tone, static_cast<unsigned>(in_.duck));  // OFF keeps its LEVEL
     }
     g.setFont(GS_FONT_07x09);
     g.setAlignment(GS_RIGHT);

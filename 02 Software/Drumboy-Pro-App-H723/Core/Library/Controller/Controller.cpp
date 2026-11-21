@@ -5362,6 +5362,13 @@ SdResult Controller::sd_reinitialize() {
         lcd_drawSdAlert(SD_ANALYZE);
         samplePool_releaseAll();
         sd_getLibraries();
+        // The slots may hold other files now: forget the grid's cached card and the marks of the slot last
+        // loaded or saved (they described the old card).
+        fsSummarySlot = -1;
+        fsSummaryKind = -1;
+        fileSlotCurrent = -1;
+        kitSlotCurrent = -1;
+        fileViewKey = 0;
         lcd_clearSdAlert();
         for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
             Layer& l = layerLibrary[i];
@@ -6410,6 +6417,9 @@ SdResult Controller::sd_loadFile(uint8_t fileNum_) {
             }
             chainRead(songChain, chainData, static_cast<uint16_t>(got));
             file_readNotes(fileName);  // per-note settings after the chain (BeatNote.h)
+            // The GEN block came with it: the lanes were named before it was read (they are hidden behind
+            // the FILE screen; after an autosave restore they are visible).
+            for (uint8_t j = 0; j < kLayerLibrarySize; j++) lcd_drawLayerTab_InstData(j);
             chainRestart(songChain, chainPlay);
             songStepSel = 0;
             if (songChain.active) layerSong_selectBank(chainCurrentBank(songChain, chainPlay));
@@ -14502,11 +14512,13 @@ void Controller::file_saveAction() {
 }
 
 void Controller::file_clearSelect() {
-    /// @brief Opens clear confirmation alert when selected slot is not inactive.
+    /// @brief Opens clear confirmation alert when the selected slot holds a file (used, or not readable).
 
     // 1. PRECONDITION CHECK
-    // Show clear confirmation only for non-empty/non-inactive slots.
-    if (fileStatus != FILE_INACTIVE) {
+    // The same table the load and save screen draws its banner from: a used slot and an unreadable one (a
+    // file cut short by a power cut) can be cleared, an empty one has nothing to clear. (fileStatus calls a
+    // cut-short file inactive, like the blank template, so it cannot tell them apart.)
+    if ((fileMenuCounter >= 0) && (fileMenuCounter < static_cast<int8_t>(kFsSlots)) && (fileSlotState[fileMenuCounter] != FS_EMPTY)) {
         // 2. ALERT STATE CONFIGURATION
         // Configure clear action prompt and enable alert rendering.
         alertFlag = true;
@@ -14919,11 +14931,11 @@ void Controller::drumkit_saveAction() {
 }
 
 void Controller::drumkit_clearSelect() {
-    /// @brief Opens clear confirmation alert when selected drumkit slot is not inactive.
+    /// @brief Opens clear confirmation alert when the selected drumkit slot holds a file (used, or not readable).
 
     // 1. PRECONDITION CHECK
-    // Show clear confirmation only for non-empty/non-inactive slots.
-    if (drumkitStatus != FILE_INACTIVE) {
+    // As for songs: the slot table the screen's banner comes from decides.
+    if ((drumkitMenuCounter >= 0) && (drumkitMenuCounter < static_cast<int8_t>(kFsSlots)) && (kitSlotState[drumkitMenuCounter] != FS_EMPTY)) {
         // 2. ALERT STATE CONFIGURATION
         // Configure clear action prompt and enable alert rendering.
         alertFlag = true;
@@ -20356,17 +20368,11 @@ void Controller::processAudioGenLayer(uint8_t layerNum_) {
     float* out = audioLayer[layerNum_];
     genVoiceRender(voice, out, I2S_BLOCK_SIZE);
 
-    const float kScale24 = 16777215.0f;
-    const float kInvScale24 = 1.0f / 16777215.0f;
     const bool crush = (aBD.resolutionCoef != 0x00FFFFFF);
     bool end = false;
     for (uint16_t k = 0; k < I2S_BLOCK_SIZE; k++) {
         float sample = out[k];
-        if (crush) {
-            uint32_t v = static_cast<uint32_t>(((sample + 1.0f) * 0.5f) * kScale24);
-            v &= aBD.resolutionCoef;
-            sample = (static_cast<float>(v) * kInvScale24) * 2.0f - 1.0f;
-        }
+        if (crush) sample = quantize24(sample, aBD.resolutionCoef);  // as for a sample: rounds (silence stays silence) and clamps
         if (aBD.newBeatFlag && !aBD.fadeAction) aBD.fadeAction = true;
         if (!aBD.fadeAction && aBD.fadeFlag && (aBD.counter >= static_cast<float>(aBD.counterFadeStart))) aBD.fadeAction = true;
         if (aBD.fadeAction) {
@@ -20542,6 +20548,13 @@ void Controller::layerInst_reset(uint8_t layerNum_) {
     /// Restores selection, playback-shape, modulation, routing, and toggle states.
 
     // 1. DEFAULT PARAMETER RESTORE
+    // GEN first: OFF, LENGTH and SWEEP back to their defaults (the layer plays its sample again), so the
+    // lane is drawn below with the name of the instrument.
+    if (layerNum_ < kGenLayers) {
+        genMix.length[layerNum_] = kGenLengthDefault;
+        genMix.sweep[layerNum_] = 0;
+        layerInst_setGen(layerNum_, 0);
+    }
     // Apply defaults through setter path to preserve side effects/UI updates.
     layerInst_setInstSelected(layerNum_, -1);
     layerInst_setInstLoaded(layerNum_);
@@ -24170,13 +24183,13 @@ void Controller::lcd_drawHissViewData() {
     if (key == hissViewKey) return;
     hissViewKey = key;
     IWDG1->KR = 0xAAAA;  // the texture renders a second of the bed
-    const GsHiss in = {genMix.hissType, genMix.hissLevel, genMix.hissTone, genMix.hissDuck};
+    GsHiss in = {genMix.hissType, genMix.hissLevel, genMix.hissTone, genMix.hissDuck};
     static_assert(4 * kHvTextureCols <= 4096, "the HISS page's peaks and RMS fit the view scratch");
     uint8_t* const peaksL = reinterpret_cast<uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS);
     uint8_t* const peaksR = peaksL + kHvTextureCols;
     uint8_t* const rmsL = peaksR + kHvTextureCols;
     uint8_t* const rmsR = rmsL + kHvTextureCols;
-    hissViewTexture(in.type, in.level, in.tone, peaksL, peaksR, kHvTextureCols, static_cast<uint8_t>(kHvTextureHalf), rmsL, rmsR);
+    hissViewTexture(in.type, in.level, in.tone, peaksL, peaksR, kHvTextureCols, static_cast<uint8_t>(kHvTextureHalf), rmsL, rmsR, &in.levelDb);
     bool bedOn;
     float gain, peakL, peakR;
     hissLiveNumbers(genMix, genDsp, bedOn, gain, peakL, peakR);

@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "DspMath.h"  // finiteOrZero: a float compare does not catch NaN in the firmware build
 #include "Generator.h"
 
 /* Layout --------------------------------------------------------------------*/
@@ -329,17 +330,18 @@ inline float hissViewSpectrumDb(uint8_t type_, uint8_t tone_, float hz_) {
     }
 }
 
-// The bed's level as dBFS (RMS): what LEVEL (0..100) asks for.
-inline float hissViewLevelDb(uint8_t level_) { return gvDb(hissAmplitude(level_)); }
-
 // The bed's texture: one second of it (kHvSeconds) as peaks in dBFS, left and right, cols_ columns.
-// out*_[c] = 0..half_ (half_ = 0 dBFS, 0 = -kHvTextureFloorDb or less).
-inline void hissViewTexture(uint8_t type_, uint8_t level_, uint8_t tone_, uint8_t* outL_, uint8_t* outR_, uint16_t cols_, uint8_t half_, uint8_t* rmsL_ = nullptr, uint8_t* rmsR_ = nullptr) {
+// out*_[c] = 0..half_ (half_ = 0 dBFS, 0 = -kHvTextureFloorDb or less). levelDb_: the RMS level of the
+// whole second, both channels, in dBFS (what the bed measures; LEVEL only sets the target and each type's
+// source has its own loudness: -200 when the bed is off or silent).
+inline void hissViewTexture(uint8_t type_, uint8_t level_, uint8_t tone_, uint8_t* outL_, uint8_t* outR_, uint16_t cols_, uint8_t half_, uint8_t* rmsL_ = nullptr, uint8_t* rmsR_ = nullptr,
+                            float* levelDb_ = nullptr) {
     for (uint16_t c = 0; c < cols_; c++) {
         outL_[c] = outR_[c] = 0;
         if (rmsL_) rmsL_[c] = 0;
         if (rmsR_) rmsR_[c] = 0;
     }
+    if (levelDb_) *levelDb_ = -200.0f;
     if ((type_ == HISS_OFF) || (type_ >= kHissTypeCount) || (cols_ == 0)) return;
     auto height = [half_](float linear_) {
         const float f = (gvDb(linear_) + kHvTextureFloorDb) / kHvTextureFloorDb;
@@ -352,9 +354,11 @@ inline void hissViewTexture(uint8_t type_, uint8_t level_, uint8_t tone_, uint8_
     float l[32], r[32];
     const uint32_t total = 44100;
     uint16_t column = 0;
-    float peakL = 0.0f, peakR = 0.0f, sumL = 0.0f, sumR = 0.0f;
-    uint32_t count = 0;
+    float peakL = 0.0f, peakR = 0.0f, sumL = 0.0f, sumR = 0.0f, totalSquares = 0.0f;
+    uint32_t count = 0, totalCount = 0;
     auto finish = [&](uint16_t c_) {
+        totalSquares += sumL + sumR;  // a column's sum is small: the total keeps its precision in a float
+        totalCount += 2 * count;
         outL_[c_] = height(peakL);
         outR_[c_] = height(peakR);
         const float n = (count > 0) ? static_cast<float>(count) : 1.0f;
@@ -381,11 +385,16 @@ inline void hissViewTexture(uint8_t type_, uint8_t level_, uint8_t tone_, uint8_
         }
     }
     finish(column);
+    if (levelDb_ && (totalCount > 0)) {
+        const float rms = sqrtf(totalSquares / static_cast<float>(totalCount));
+        *levelDb_ = (rms > 1e-9f) ? gvDb(rms) : -200.0f;
+    }
 }
 
 // The duck meter: the bed's gain (1 = not ducked) as a bar of w_ pixels, and where the floor DUCK allows sits.
 inline uint16_t hissViewGainPx(float gain_, uint16_t w_) {
-    if (!(gain_ > 0.0f)) gain_ = 0.0f;  // also catches NaN
+    gain_ = finiteOrZero(gain_);  // NaN and infinity are tested in the bits (-ffast-math folds a compare away)
+    if (gain_ < 0.0f) gain_ = 0.0f;
     if (gain_ > 1.0f) gain_ = 1.0f;
     return static_cast<uint16_t>(gain_ * static_cast<float>(w_) + 0.5f);
 }

@@ -353,6 +353,28 @@ static void testWatchdogTick() {
     CHECK(ticks == 0, "no tick function, no ticks");
 }
 
+// A slot path whose .tmp or .new name does not fit the 64-byte buffers: an atomic save refuses (the slot is
+// untouched), it does not fall back to writing the slot in place (review). A direct save still works.
+static void testLongPathRefused() {
+    mockFs().reset();
+    char longPath[120];
+    snprintf(longPath, sizeof longPath, "System/File/%s/File_001.rwf", "a_folder_name_that_makes_the_side_paths_too_long_for_the_buffer");
+    const auto old = makeContent(1), fresh = makeContent(2);
+    putFile(longPath, old);
+    FIL f;
+    const uint32_t head = static_cast<uint32_t>(strlen(kRef));
+    auto fill = [&](SaveWriter& out) {
+        out.write(fresh.data(), head);
+        out.writeBlocks(fresh.data() + head, kBody);
+        out.write(fresh.data() + head + kBody, static_cast<uint32_t>(fresh.size()) - head - kBody);
+    };
+    CHECK(!slotSave(&f, longPath, true, fill), "an atomic save with side paths that do not fit is refused");
+    CHECK(fileIs(longPath, old), "the slot is untouched");
+    CHECK(mockFs().files.size() == 1, "no side file was left");
+    CHECK(slotSave(&f, longPath, false, fill), "a direct save (autosave) does not need the side paths");
+    CHECK(fileIs(longPath, fresh), "the direct save wrote the file");
+}
+
 static void testWriterCounting() {
     mockFs().reset();
     FIL f;
@@ -390,6 +412,7 @@ int main() {
     testWriterCounting();
     testLeftoverNewIsKept();
     testWatchdogTick();
+    testLongPathRefused();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

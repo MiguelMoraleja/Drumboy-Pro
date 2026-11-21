@@ -112,8 +112,9 @@ template <typename Fill>
 inline bool slotSave(FIL* f_, const char* finalPath_, bool atomic_, Fill fill_, SaveTick tick_ = nullptr) {
     char tempPath[64], readyPath[64];
     const bool viaTemp = atomic_ && atomicTempPath(tempPath, sizeof tempPath, finalPath_) && atomicReadyPath(readyPath, sizeof readyPath, finalPath_);
-    const char* target = viaTemp ? tempPath : finalPath_;
     f_close(f_);
+    if (atomic_ && !viaTemp) return false;  // the side paths do not fit: refuse, never fall back to writing the slot in place
+    const char* target = viaTemp ? tempPath : finalPath_;
     if (viaTemp) {
         // An earlier save may have failed at its last step and left its verified .new file with the slot
         // deleted: put it back first, so a second failure now cannot lose the only good copy.

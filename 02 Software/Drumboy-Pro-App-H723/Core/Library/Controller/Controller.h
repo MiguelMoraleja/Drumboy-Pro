@@ -406,7 +406,7 @@ class Controller {
     float pingWidth = 0.0f;                                 // ping-pong width of the echo in this block (0 = centred; audio interrupt)
     float effectDelta = 0.0f;                               // right minus left of the effect's last sample (audio interrupt)
     float fxDryScale = 1.0f;                                // 0 in DUB mode: effects and reverb run without their DRY
-    uint8_t dubPage = 0;                                    // 0: the first DUB page, 1: the second (pan, FX send, echo width)
+    uint8_t dubPage = 0;                                    // 0: the first DUB page, 1: the second (pan, FX send, echo width), 2: HISS (the bed, GeneratorView.h)
     uint8_t dubStripSel = 0;                                // the strip the DUB page edits (a pad press selects it)
     uint32_t dubStripDrawn[kDubStrips] = {0};               // the desk: what each strip shows (a fingerprint), 0 = nothing
     uint32_t dubReturnDrawn[2] = {0, 0};
@@ -415,6 +415,14 @@ class Controller {
     uint32_t dubViewState() const;
     void lcd_drawDubViewData();
     void lcd_drawDubMeters();
+    // Generator screens (GeneratorView.h): the GEN view on instrument page 2, the HISS page (DUB page 3)
+    void layerShortName(uint8_t layerNum_, char* out_, size_t size_) const;  // 12 characters: the instrument, or GEN and the generator
+    uint32_t hissViewState() const;
+    void lcd_drawGenViewData();
+    void lcd_drawHissViewData();
+    void lcd_drawHissLive();
+    uint32_t hissViewKey = 0;                                // what the HISS page was drawn from (0 = nothing)
+    GsHissLive hissLive;                                     // what the HISS page's live part has drawn
     void lcd_drawDeskKnob(uint16_t cx_, uint16_t cy_, uint8_t percent_, RGB16Color color_);
     void lcd_drawDeskColumn(uint8_t column_);
     void lcd_drawDeskSegments(uint8_t column_, uint8_t lit_, bool audible_);

@@ -20,6 +20,8 @@
 #include "DubMix.h"
 #include "DubView.h"
 #include "Generator.h"
+#include "GeneratorView.h"
+#include "GeneratorScreens.h"
 #include "NoteView.h"
 #include "Pan.h"
 #include "UndoLog.h"
@@ -669,6 +671,9 @@ const RGB16Color GRAY_95                            = 0xF79E;
 
 /*----------------------------------------------------------------------------*/
 
+static_assert((kGsBlack == BLACK) && (kGsWhite == WHITE) && (kGsYellow == YELLOW) && (kGsGreen == GREEN) && (kGsCyan == CYAN) && (kGsMagenta == MAGENTA) &&
+                  (kGsGray25 == GRAY_25) && (kGsGray50 == GRAY_50) && (kGsGray75 == GRAY_75),
+              "GeneratorScreens.h uses the colours of Global.h");
 const RGB16Color kLayerColorPalette[]               = {WHITE, GRAY_75, WHITE, GRAY_75, WHITE, GRAY_75, WHITE, GRAY_75, WHITE, GRAY_75};
 
 const RGB16Color kBeatSelectedColor                 = MAGENTA;
@@ -789,6 +794,7 @@ const uint16_t kLayerBoxHeight                      = 10;
 const uint16_t kLayerLineX                          = 20;
 const uint16_t kLayerLineY[10][2]                   = {{130, 161}, {161, 192}, {192, 223}, {223, 254}, {254, 285}, {285, 316}, {316, 347}, {347, 378}, {378, 409}, {409, 440}};
 const uint16_t kLayerLineWidth                      = 920;
+static_assert((kGsAreaX == kLayerLineX) && (kGsAreaW == kLayerLineWidth), "GeneratorScreens.h draws in the lane area");
 
 const uint16_t kLayerTextY[10]                      = {141, 172, 203, 234, 265, 296, 327, 358, 389, 420};
 const uint16_t kLayerTextNumberX                    = 30;
@@ -1390,8 +1396,11 @@ const EncoderFunc encoderLocalFunction[][8] = {
     {ENC_DUB_LEVEL, ENC_DUB_BUS, ENC_DUB_ECHO, ENC_DUB_VERB, ENC_DUB_MODE, ENC_DUB_FEEDBACK, ENC_DUB_ECHORTN, ENC_DUB_VERBRTN}};
 
 // DUB page 2 (the next step in the MIXER cycle): the selected strip's pan and FX send on the top row,
-// the echo's width and the hiss bed (type, level, tone) on the bottom row, the hiss ducking top right.
-const EncoderFunc kDubPage2Function[8] = {ENC_DUB_PAN, ENC_DUB_FX, ENC_FNC_NONE, ENC_DUB_HISSDUCK, ENC_DUB_WIDTH, ENC_DUB_HISS, ENC_DUB_HISSLEVEL, ENC_DUB_HISSTONE};
+// the echo's width on the bottom row.
+const EncoderFunc kDubPage2Function[8] = {ENC_DUB_PAN, ENC_DUB_FX, ENC_FNC_NONE, ENC_FNC_NONE, ENC_DUB_WIDTH, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE};
+// DUB page 3, HISS (Generator.h; the lane area shows the bed, GeneratorView.h): type, level, tone and ducking.
+const EncoderFunc kDubPage3Function[8] = {ENC_DUB_HISS, ENC_DUB_HISSLEVEL, ENC_DUB_HISSTONE, ENC_DUB_HISSDUCK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE};
+const uint8_t kDubPageHiss = 2;  // dubPage of the HISS page (0 and 1 are the desk)
 
 struct EncoderFuncData {
     EncoderFunc function;

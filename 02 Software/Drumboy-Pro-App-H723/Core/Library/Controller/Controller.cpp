@@ -2740,10 +2740,12 @@ void Controller::keyboard_action() {
                                 break;
 
                             case KEY_MIXER:
-                                // MIXER, then DUB (two pages), then ROUTING, then the mixer again.
+                                // MIXER, then DUB (three pages: the desk, its second page, the HISS bed), then ROUTING,
+                                // then the mixer again.
                                 if (!alertFlag) {
-                                    if ((menu == DUB_MENU) && (dubPage == 0)) {
-                                        dubPage = 1;
+                                    if ((menu == DUB_MENU) && (dubPage < kDubPageHiss)) {
+                                        dubPage++;
+                                        if (dubPage == kDubPageHiss) viewFull = true;  // the HISS screen replaces the desk
                                         lcd_drawDubMenu();
                                         encoder_update();
                                     } else if (menu == DUB_MENU) {
@@ -3467,6 +3469,7 @@ void Controller::encoder_update() {
             enc.mode = ENC_MODE_LOCAL;
             enc.function = encoderLocalFunction[menuSafe][i];
             if ((menuSafe == DUB_MENU) && (dubPage == 1)) enc.function = kDubPage2Function[i];
+            if ((menuSafe == DUB_MENU) && (dubPage == kDubPageHiss)) enc.function = kDubPage3Function[i];
         }
 
         // 2. COUNTER STATE RESET
@@ -13326,13 +13329,11 @@ void Controller::lcd_drawLayerTab_InstData(uint8_t layerNum_) {
     // Configure layer-tab text style.
     lcd_setLayerTabState(layerNum_);
 
-    // 2. CONTEXT LOAD
-    // Load layer reference for text lookup.
-    Layer& layer = layerLibrary[layerNum_];
-
-    // 3. VALUE DRAW
-    // Draw loaded instrument short label.
-    lcd.drawText(layer.instLoadedData.nameShortL, 12, kLayerTextInstX, kLayerTextY[layerNum_]);
+    // 2. VALUE DRAW
+    // Draw the loaded instrument's short label (a GEN layer shows its generator).
+    char name[16];
+    layerShortName(layerNum_, name, sizeof name);
+    lcd.drawText(name, 12, kLayerTextInstX, kLayerTextY[layerNum_]);
 }
 
 void Controller::lcd_drawLayerTab_Mute(uint8_t layerNum_) {
@@ -20192,6 +20193,19 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
 
 bool Controller::layerGenOn(uint8_t layerNum_) const { return (layerNum_ < kGenLayers) && (genMix.type[layerNum_] != GEN_OFF); }
 
+void Controller::layerShortName(uint8_t layerNum_, char* out_, size_t size_) const {
+    /// @brief The layer's name for the lanes and the views, 12 characters: its instrument, or for a
+    /// layer that plays a generator GEN and the generator (so a noise layer reads GEN TAPE, not a
+    /// leftover sample's name).
+    if ((layerNum_ < kGenLayers) && (genMix.type[layerNum_] != GEN_OFF) && (genMix.type[layerNum_] < kGenTypeCount)) {
+        char name[16];
+        snprintf(name, sizeof name, "GEN %s", kGenTypeName[genMix.type[layerNum_]]);
+        snprintf(out_, size_, "%-12.12s", name);
+    } else {
+        snprintf(out_, size_, "%-12.12s", layerLibrary[layerNum_ < kLayerLibrarySize ? layerNum_ : 0].instLoadedData.nameShortL);
+    }
+}
+
 bool Controller::layer_canPlay(uint8_t layerNum_) const {
     /// @brief A layer can play when its sample is loaded, or when GEN is on (no sample needed).
     return (layerNum_ < kLayerLibrarySize) && (layerLibrary[layerNum_].samplePlay || layerGenOn(layerNum_));
@@ -20348,6 +20362,7 @@ void Controller::layerInst_setGen(uint8_t layerNum_, uint8_t type_) {
     /// @brief GEN on a layer: OFF plays the sample; any other value plays that generator.
     if ((layerNum_ >= kGenLayers) || (type_ >= kGenTypeCount)) return;
     genMix.type[layerNum_] = type_;
+    lcd_drawLayerTab_InstData(layerNum_);  // the lane's name: GEN and the generator, or the instrument
     if (selectedLayerNum != layerNum_) return;
     if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_GenData(layerNum_);
     if ((menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU)) lcd_drawLayerInst_SampleData(layerNum_);
@@ -22804,6 +22819,7 @@ void Controller::lcd_drawLaneView() {
     }
     dubReturnDrawn[0] = dubReturnDrawn[1] = 0;
     noteViewKey = 0;                                                  // and no step edit screen
+    hissViewKey = 0;                                                  // and no HISS page
     lcd_drawLaneViewData();
 }
 
@@ -22851,7 +22867,9 @@ void Controller::lcd_drawEuclidViewData() {
 
     // 1. TITLE (the selected layer) AND SUMMARY
     char line[48];
-    int len = snprintf(line, sizeof line, "LAYER %.2s  %.12s", kDataLayerNum[sel], layerLibrary[sel].instLoadedData.nameShortL);
+    char selName[16];
+    layerShortName(sel, selName, sizeof selName);
+    int len = snprintf(line, sizeof line, "LAYER %.2s  %.12s", kDataLayerNum[sel], selName);
     for (int i = (len > 0 ? len : 0); i < 22; i++) line[i] = ' ';  // fixed width: overwrites the old text
     lcd.setBackColor(BLACK);
     lcd.setFont(FONT_10x14);
@@ -22908,7 +22926,9 @@ void Controller::lcd_drawEuclidViewData() {
         lcd.setAlignment(LEFT);
         lcd.setForeColor(layerColor(l));
         lcd.drawText(kDataLayerNum[l], 2, kRingRowNumX, y);
-        lcd.drawText(layerLibrary[l].instLoadedData.nameShortL, 12, kRingRowNameX, y);
+        char rowName[16];
+        layerShortName(l, rowName, sizeof rowName);
+        lcd.drawText(rowName, 12, kRingRowNameX, y);
         char count[8];
         snprintf(count, sizeof count, "%2d", static_cast<int>(bank.lastActiveBeatNum + 1));
         lcd.drawText(count, 2, kRingRowCountX, y);
@@ -23227,7 +23247,9 @@ void Controller::lcd_drawRoutingViewData() {
         const RGB16Color c = (i < kLayerLibrarySize) ? layerColor(i) : GRAY_75;
         char name[16];
         if (i < kLayerLibrarySize) {
-            snprintf(name, sizeof name, "%.2s %-12.12s", kDataLayerNum[i], layerLibrary[i].instLoadedData.nameShortL);
+            char layerName[16];
+            layerShortName(i, layerName, sizeof layerName);
+            snprintf(name, sizeof name, "%.2s %-12.12s", kDataLayerNum[i], layerName);
         } else {
             snprintf(name, sizeof name, "%-15s", (i == kRouteSourceMetro) ? "MT METRONOME" : "LI LINE IN");
         }
@@ -23433,6 +23455,12 @@ uint32_t Controller::sampleViewState() const {
     mix(layer.pitch);
     mix(layer.sampleLoadedData.sampleSize);
     mix(static_cast<uint32_t>(layer.playSampleSector + 1));
+    // The generator view (GEN on) shows these as well: the note's length follows the tempo.
+    mix(genMix.type[selectedLayerNum]);
+    mix(genMix.length[selectedLayerNum]);
+    mix(genMix.sweep[selectedLayerNum]);
+    mix(layer.style ? 1u : 0u);
+    if (layerGenOn(static_cast<uint8_t>(selectedLayerNum))) mix(rhythm.tempo);
     const int8_t sector = layer.playSampleSector;
     mix((sector >= 0) && sampleSectorLibrary[sector].writeMode);
     for (const char* c = layer.sampleLoadedData.fileName; *c; c++) mix(static_cast<uint8_t>(*c));
@@ -23485,6 +23513,10 @@ void Controller::lcd_drawSampleViewData() {
     /// just the columns they crossed are drawn again.
     sampleViewStateDrawn = sampleViewState();
     if (selectedLayerNum < 0) return;
+    if (layerGenOn(static_cast<uint8_t>(selectedLayerNum))) {  // a generator plays instead of the sample: its own view
+        lcd_drawGenViewData();
+        return;
+    }
     const Layer& layer = layerLibrary[selectedLayerNum];
     uint8_t* const peaks = reinterpret_cast<uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS + 2048);
     const int8_t sector = layer.playSampleSector;
@@ -23554,6 +23586,71 @@ void Controller::lcd_drawSampleViewData() {
     lcd.drawText(line, static_cast<uint16_t>(len > 0 ? len : 0), kSampleX + kSampleCols, kSampleTitleY + 3);
 }
 
+/* Generator screens (GeneratorView.h, GeneratorScreens.h) -----------------------------*/
+
+// The firmware's Lcd for the generator screens: the drawing code is a template (it also runs on a PC).
+struct GsLcd {
+    Lcd& l;
+    void setFont(GsFont f) { l.setFont((f == GS_FONT_05x07) ? FONT_05x07 : ((f == GS_FONT_07x09) ? FONT_07x09 : FONT_10x14)); }
+    void setAlignment(GsAlign a) { l.setAlignment((a == GS_LEFT) ? LEFT : ((a == GS_CENTER) ? CENTER : RIGHT)); }
+    void setForeColor(uint16_t c) { l.setForeColor(c); }
+    void setBackColor(uint16_t c) { l.setBackColor(c); }
+    void drawPixel(uint16_t x, uint16_t y) { l.drawPixel(x, y); }
+    void drawVLine(uint16_t x, uint16_t y, int16_t len) { l.drawVLine(x, y, len); }
+    void drawLine(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) { l.drawLine(x0, y0, x1, y1); }
+    void drawRect(uint16_t x, uint16_t y, uint32_t w, uint32_t h) { l.drawRect(x, y, w, h); }
+    void fillRect(uint16_t x, uint16_t y, uint32_t w, uint32_t h) { l.fillRect(x, y, w, h); }
+    void clearRect(uint16_t x, uint16_t y, uint32_t w, uint32_t h) { l.clearRect(x, y, w, h); }
+    void drawText(const char* text, uint16_t length, uint16_t x, uint16_t y) { l.drawText(text, length, x, y); }
+};
+
+void Controller::lcd_drawGenViewData() {
+    /// @brief The GEN view (instrument page 2 while a generator plays instead of the sample): the
+    /// note's waveform as the real generator makes it, the sweep over the note, and the spectrum at
+    /// the start, the middle and the end. Drawn from nothing whenever a setting changes.
+    if (selectedLayerNum < 0) return;
+    const uint8_t l = static_cast<uint8_t>(selectedLayerNum);
+    const Layer& layer = layerLibrary[l];
+
+    // The note as layer_playGen plays it: with STYLE off it plays plain (its own pitch, no sweep).
+    GsGen in;
+    memset(&in, 0, sizeof in);
+    snprintf(in.layerNum, sizeof in.layerNum, "%.2s", kDataLayerNum[l]);
+    in.type = (genMix.type[l] < kGenTypeCount) ? genMix.type[l] : static_cast<uint8_t>(GEN_OFF);
+    in.plain = !layer.style;
+    const uint8_t pitchCode = in.plain ? kPitchDefaultCode : layer.pitch;
+    in.ratio = ::pitchFactor(pitchCode);
+    in.sweepPercent = in.plain ? static_cast<uint8_t>(0) : genMix.sweep[l];
+    in.octaves = genSweepOctaves(in.sweepPercent);
+    in.shape = in.plain ? static_cast<uint8_t>(0) : static_cast<uint8_t>(layer.direction & 3);
+    in.length16 = genMix.length[l];
+    in.length = genLengthSamples(in.length16, static_cast<float>(rhythm.tempo));
+
+    // The view is static: it is drawn again only when what it shows changed.
+    uint32_t key = 2166136261u;
+    auto mix = [&key](uint32_t v) { key = (key ^ v) * 16777619u; };
+    mix(l + 1u);
+    mix(in.type);
+    mix(pitchCode);
+    mix(in.plain ? 1u : 0u);
+    mix(in.sweepPercent);
+    mix(in.shape);
+    mix(in.length16);
+    mix(in.length);
+    if (key == 0) key = 1;
+    if (key == sampleViewKey) return;
+    sampleViewKey = key;
+
+    // The scratch RAM is shared by the full-area views (only one is open at a time, each is computed again
+    // when it is drawn from nothing).
+    static_assert(2 * kGvNoteCols <= 4096, "the GEN view's peaks and RMS fit the view scratch");
+    uint8_t* const peaks = reinterpret_cast<uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS);
+    uint8_t* const rms = peaks + kGvNoteCols;
+    genViewPeaks(in.type, in.ratio, in.octaves, in.shape, in.length, peaks, kGvNoteCols, static_cast<uint8_t>(kGvNoteHalf), rms);
+    GsLcd g{lcd};
+    gsDrawGen(g, in, peaks, rms);
+}
+
 /* DUB page (DubMix.h) --------------------------------------------------------------*/
 
 uint32_t Controller::dubViewState() const {
@@ -23571,7 +23668,10 @@ uint32_t Controller::dubViewState() const {
         mix(layerAudible(i) ? 1u : 0u);
         mix(layerLibrary[i].mute ? 1u : 0u);
         for (const char* c = layerLibrary[i].instLoadedData.nameShortL; *c; c++) mix(static_cast<uint8_t>(*c));
+        mix(genMix.type[i]);
     }
+    mix(dubPage);
+    if (dubPage == kDubPageHiss) return hissViewState();
     mix(effect[0].active);
     mix(effect[0].type);
     mix(effect[0].subEffect[effect[0].type].fData);
@@ -23647,7 +23747,9 @@ void Controller::lcd_drawDeskColumn(uint8_t column_) {
         pan = dubMix.pan[layer];
         panHeard = layerPanActive(layer);
         snprintf(line1, sizeof line1, "%.2s", kDataLayerNum[layer]);
-        snprintf(line2, sizeof line2, "%.9s", layerLibrary[layer].instLoadedData.nameShortL);
+        char layerName[16];
+        layerShortName(layer, layerName, sizeof layerName);
+        snprintf(line2, sizeof line2, "%.9s", layerName);
     } else if (column_ == kDubStrips) {
         on = echo.active;
         level = echo.subEffect[echo.type].fData;
@@ -23795,6 +23897,10 @@ void Controller::lcd_drawDubViewData() {
     /// @brief Redraws the dub desk: twelve columns (the ten layers, ECHO, VERB) across the whole
     /// lane area, like an old mixing console. A column is drawn again only when what it shows
     /// changed; the LED ladders are drawn by lcd_drawDubMeters.
+    if (dubPage == kDubPageHiss) {  // the third page shows the hiss bed, not the desk
+        lcd_drawHissViewData();
+        return;
+    }
     dubViewStateDrawn = dubViewState();
     const Effect& echo = effect[0];
     for (uint8_t col = 0; col < kDeskColumns; col++) {
@@ -23812,6 +23918,7 @@ void Controller::lcd_drawDubViewData() {
             mix(layerLibrary[col].mute ? 1u : 0u);
             mix((col == dubStripSel) ? 1u : 0u);
             for (const char* c = layerLibrary[col].instLoadedData.nameShortL; *c; c++) mix(static_cast<uint8_t>(*c));
+            mix(genMix.type[col]);
         } else if (col == kDubStrips) {
             mix(echo.active);
             mix(echo.type);
@@ -23842,6 +23949,64 @@ void Controller::lcd_drawDubMeters() {
         dubMeterDrawn[i] = lit;
         lcd_drawDeskSegments(i, lit, audible);
     }
+}
+
+/* HISS page: the bed's screen (GeneratorView.h, GeneratorScreens.h) -----------------------*/
+
+uint32_t Controller::hissViewState() const {
+    /// @brief A fingerprint of what the HISS page shows besides its live meters.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(genMix.hissType);
+    mix(genMix.hissLevel);
+    mix(genMix.hissTone);
+    mix(genMix.hissDuck);
+    return h | 1u;
+}
+
+// The bed's live numbers: is it sounding (or fading out), the duck gain, the peaks of its last block.
+static void hissLiveNumbers(const GenMix& mix_, const GenDsp& dsp_, bool& bedOn_, float& gain_, float& peakL_, float& peakR_) {
+    bedOn_ = (mix_.hissType != HISS_OFF) || (dsp_.hiss.amp > 0.0f);
+    gain_ = dsp_.hiss.gain;
+    peakL_ = peakR_ = 0.0f;
+    if (!bedOn_) return;
+    for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
+        peakL_ = fmaxf(peakL_, fabsf(dsp_.hissL[i]));
+        peakR_ = fmaxf(peakR_, fabsf(dsp_.hissR[i]));
+    }
+}
+
+void Controller::lcd_drawHissViewData() {
+    /// @brief The HISS page's screen: one second of the bed as it sounds (left above, right below,
+    /// in dBFS), its spectrum with the TONE low-pass, and the duck meter. Drawn from nothing when
+    /// a setting changes; the live bars are lcd_drawHissLive's.
+    dubViewStateDrawn = dubViewState();
+    const uint32_t key = hissViewState();
+    if (key == hissViewKey) return;
+    hissViewKey = key;
+    const GsHiss in = {genMix.hissType, genMix.hissLevel, genMix.hissTone, genMix.hissDuck};
+    static_assert(4 * kHvTextureCols <= 4096, "the HISS page's peaks and RMS fit the view scratch");
+    uint8_t* const peaksL = reinterpret_cast<uint8_t*>(RAM_VIEW_SCRATCH_ADDRESS);
+    uint8_t* const peaksR = peaksL + kHvTextureCols;
+    uint8_t* const rmsL = peaksR + kHvTextureCols;
+    uint8_t* const rmsR = rmsL + kHvTextureCols;
+    hissViewTexture(in.type, in.level, in.tone, peaksL, peaksR, kHvTextureCols, static_cast<uint8_t>(kHvTextureHalf), rmsL, rmsR);
+    bool bedOn;
+    float gain, peakL, peakR;
+    hissLiveNumbers(genMix, genDsp, bedOn, gain, peakL, peakR);
+    GsLcd g{lcd};
+    gsDrawHiss(g, in, peaksL, peaksR, rmsL, rmsR, hissLive, bedOn, gain, peakL, peakR);
+}
+
+void Controller::lcd_drawHissLive() {
+    /// @brief The HISS page's live part, 25 times a second: the bed's left and right level bars and
+    /// the duck bar. Only what changed is drawn.
+    const GsHiss in = {genMix.hissType, genMix.hissLevel, genMix.hissTone, genMix.hissDuck};
+    bool bedOn;
+    float gain, peakL, peakR;
+    hissLiveNumbers(genMix, genDsp, bedOn, gain, peakL, peakR);
+    GsLcd g{lcd};
+    gsDrawHissLive(g, in, hissLive, bedOn, gain, peakL, peakR);
 }
 
 /* NOTE: the step edit screen (NoteView.h) ----------------------------------------*/
@@ -23929,6 +24094,7 @@ void Controller::lcd_drawNoteViewData() {
     const uint32_t keyParts[6] = {static_cast<uint32_t>(selectedLayerNum + 1), activeSongBank, songInterval, barInterval, measureInterval, static_cast<uint32_t>(bank.lastActiveBeatNum + 2)};
     for (uint8_t k = 0; k < 6; k++) key = (key ^ keyParts[k]) * 16777619u;
     for (const char* c = layer.instLoadedData.nameShortL; *c; c++) key = (key ^ static_cast<uint8_t>(*c)) * 16777619u;
+    key = (key ^ genMix.type[selectedLayerNum]) * 16777619u;
     if (key == 0) key = 1;
     bool full = (key != noteViewKey);
 
@@ -23956,7 +24122,9 @@ void Controller::lcd_drawNoteViewData() {
         noteViewKey = key;
         lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
         char title[48];
-        snprintf(title, sizeof title, "LAYER %.2s  %.12s   BANK %u", kDataLayerNum[selectedLayerNum], layer.instLoadedData.nameShortL, static_cast<unsigned>(activeSongBank + 1));
+        char titleName[16];
+        layerShortName(static_cast<uint8_t>(selectedLayerNum), titleName, sizeof titleName);
+        snprintf(title, sizeof title, "LAYER %.2s  %.12s   BANK %u", kDataLayerNum[selectedLayerNum], titleName, static_cast<unsigned>(activeSongBank + 1));
         lcd.setFont(FONT_07x09);
         lcd.setAlignment(LEFT);
         lcd.setForeColor(CYAN);
@@ -24081,7 +24249,8 @@ void Controller::lcd_drawDubMenu() {
     lcd_setMenuHeaderState(CYAN);
     lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
     for (uint8_t f = 0; f < 8; f++) {
-        const uint8_t fn = (dubPage == 1) ? static_cast<uint8_t>(kDubPage2Function[f]) : static_cast<uint8_t>(ENC_DUB_LEVEL + f);
+        const uint8_t fn = (dubPage == kDubPageHiss) ? static_cast<uint8_t>(kDubPage3Function[f])
+                           : ((dubPage == 1) ? static_cast<uint8_t>(kDubPage2Function[f]) : static_cast<uint8_t>(ENC_DUB_LEVEL + f));
         lcd_setMenuHeaderState(CYAN);
         lcd.drawText(kEncoderFuncDataLibrary[fn].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[f], kMenuHeaderY[f]);
         lcd_setMenuSignState(CYAN);
@@ -24094,18 +24263,21 @@ void Controller::lcd_drawDub_Data() {
     /// @brief Draws the DUB values: the selected strip (top row) and the desk (bottom row).
     const DubStrip& strip = dubMix.strip[dubStripSel];
     char text[8][kMenuDataTextSize + 1];
-    if (dubPage == 1) {
+    if (dubPage >= 1) {
         for (uint8_t f = 0; f < 8; f++) snprintf(text[f], sizeof text[f], "%10s", "");
-        char label[8];
-        panLabel(label, sizeof label, dubMix.pan[dubStripSel]);
-        snprintf(text[0], sizeof text[0], "%10s", label);
-        snprintf(text[1], sizeof text[1], "%10u", static_cast<unsigned>(strip.fx));
-        snprintf(text[4], sizeof text[4], "%10u", static_cast<unsigned>(dubMix.echoWidth));
-        // The hiss bed (Generator.h).
-        snprintf(text[3], sizeof text[3], "%10u", static_cast<unsigned>(genMix.hissDuck));
-        snprintf(text[5], sizeof text[5], "%10s", kHissTypeName[(genMix.hissType < kHissTypeCount) ? genMix.hissType : 0]);
-        snprintf(text[6], sizeof text[6], "%10u", static_cast<unsigned>(genMix.hissLevel));
-        snprintf(text[7], sizeof text[7], "%10u", static_cast<unsigned>(genMix.hissTone));
+        if (dubPage == kDubPageHiss) {
+            // The hiss bed (Generator.h; its screen is the lane area).
+            snprintf(text[0], sizeof text[0], "%10s", kHissTypeName[(genMix.hissType < kHissTypeCount) ? genMix.hissType : 0]);
+            snprintf(text[1], sizeof text[1], "%10u", static_cast<unsigned>(genMix.hissLevel));
+            snprintf(text[2], sizeof text[2], "%10u", static_cast<unsigned>(genMix.hissTone));
+            snprintf(text[3], sizeof text[3], "%10u", static_cast<unsigned>(genMix.hissDuck));
+        } else {
+            char label[8];
+            panLabel(label, sizeof label, dubMix.pan[dubStripSel]);
+            snprintf(text[0], sizeof text[0], "%10s", label);
+            snprintf(text[1], sizeof text[1], "%10u", static_cast<unsigned>(strip.fx));
+            snprintf(text[4], sizeof text[4], "%10u", static_cast<unsigned>(dubMix.echoWidth));
+        }
         lcd_setMenuDataState(WHITE);
         for (uint8_t f = 0; f < 8; f++) lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[f], kMenuDataY[f]);
         lcd_setMenuHeaderState(CYAN);
@@ -26459,7 +26631,13 @@ void Controller::lcd_drawLayerMeters() {
         lcd.setForeColor(clip ? RED : GRAY_25);
         lcd.fillRect(x + kMeterBarWidth, y, kMeterWidth - kMeterBarWidth, kMeterHeight);
     }
-    if ((menu == DUB_MENU) && (laneViewShown == DUB_MENU)) lcd_drawDubMeters();
+    if ((menu == DUB_MENU) && (laneViewShown == DUB_MENU)) {
+        if (dubPage == kDubPageHiss) {
+            lcd_drawHissLive();
+        } else {
+            lcd_drawDubMeters();
+        }
+    }
 }
 
 void Controller::lcd_drawStatusLine() {

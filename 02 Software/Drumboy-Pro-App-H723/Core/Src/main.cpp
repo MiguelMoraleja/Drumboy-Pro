@@ -75,6 +75,7 @@ int main() {
         extern uint32_t __dtcm_start, __dtcm_end;
         for (uint32_t* w = &__dtcm_start; w < &__dtcm_end; w++) *w = 0;
     }
+    controller.dtcmInit();  // what lives there and needs its constructor (the reverb)
 
     // Enable FPU (Floating Point Unit)
     SCB->CPACR |= ((3UL << 10 * 2) | (3UL << 11 * 2));

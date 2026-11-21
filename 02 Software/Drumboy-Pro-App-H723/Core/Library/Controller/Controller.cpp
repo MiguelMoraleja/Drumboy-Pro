@@ -1,6 +1,8 @@
 #include "Controller.h"
 #include "Version.h"
 
+#include <new>
+
 // Edited copy of the selected layer's bank. Beat-list edits (BeatList.h) are made here and
 // swapped in by layerSong_commitBank() with the sequencer interrupt held off, so playback
 // never sees a half-edited bank.
@@ -8,6 +10,11 @@ static Bank layerSongScratch;
 
 // Layer's beats when the EUCLID page was opened: the base for MERGE and what CLEAR restores.
 static Bank euclidSnapshot;
+
+// The reverb's 72 KB (its delay lines) live in the DTCM RAM, not in the Controller object: the main RAM (RAM_D1)
+// had 1.4 KB left, no DMA touches the reverb, and the DTCM is also faster than the cached main RAM. main() zeroes
+// the whole DTCM after the static constructors have run, so the object is built in place by dtcmInit().
+alignas(8) static uint8_t reverbStorage[sizeof(Reverb)] __attribute__((section(".dtcm")));
 
 Controller::Controller()
 
@@ -18,7 +25,7 @@ Controller::Controller()
       eq(),
       filter{{0}, {1}},
       effect{{0}, {1}},
-      reverb(),
+      reverb(*reinterpret_cast<Reverb*>(reverbStorage)),
 
       /* --- SECTION 2: AUDIO BUFFERS (BLOCK PROCESSING) -------------------- */
 
@@ -192,6 +199,12 @@ Controller::Controller()
       sampleFadeOut(true) {}
 
 Controller::~Controller() {}
+
+void Controller::dtcmInit() {
+    /// @brief Builds the objects that live in the DTCM RAM, which main() has just zeroed. Same as the
+    /// reverb() the Controller's initializer list used to run: zero-filled, then its default values.
+    new (&reverb) Reverb();
+}
 
 void Controller::initialize() {
     /// @brief Orchestrates the complete cold-boot sequence.

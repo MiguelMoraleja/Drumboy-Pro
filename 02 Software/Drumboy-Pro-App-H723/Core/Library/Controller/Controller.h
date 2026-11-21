@@ -73,7 +73,7 @@ class Controller {
     Eq eq;                                                              // Global Equalizer
     Filter filter[kFilterLibrarySize];                                  // Multimode filters for instrument layers
     Effect effect[kEffectLibrarySize];                                  // Multi-effects (Delay, Chorus, etc.)
-    Reverb reverb;                                                      // Global Reverb engine
+    Reverb& reverb;                                                     // Global Reverb engine: 72 KB that live in the DTCM RAM (Controller.cpp reverbStorage, built by dtcmInit())
 
     /* Preset Data Buffers --------------------------------------- */
 
@@ -585,6 +585,7 @@ class Controller {
     /* Main Functions -------------------------------------------- */
 
     void initialize();
+    void dtcmInit();  // builds what lives in the DTCM RAM (the reverb); main() calls it right after it has zeroed the DTCM
     void update();
     void test();
 

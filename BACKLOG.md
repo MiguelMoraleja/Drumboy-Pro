@@ -1017,7 +1017,7 @@ The sample's own START and END are kept and come back when GEN is OFF. The gener
 - A layer that plays a generator reads **GEN TAPE** and so on in the lane, the EUCLID and DUB views and the NOTE page title.
 - How it is built: the numbers are in `GeneratorView.h` (host test `test_generatorview`: the analytic spectra are compared with a measurement of the real generator, the peaks are deterministic, the sweep shapes, the lines, the hiss texture and the duck meter) and the drawing is a template in `GeneratorScreens.h`, run by the firmware's Lcd and by `test_generatorscreens` on a pixel buffer with the firmware's own font tables: every pixel is inside the lane area, only characters the font has are used (it has no `=`, `(` or `)`, and its `%` is unreadable at 7x9: the small font draws it), no two texts overlap, every pixel of the area is painted, and the live part's incremental drawing equals a fresh drawing. The pictures are in the app's Generators tab. Full redraws cost a few tens of milliseconds (the burst rendering); they happen when a setting changes, at most every 80 ms.
 
-**Memory note.** `RAM_D1` (the 320 KB of AXI RAM) has about 1.4 KB left in V1.18. The next features must move data to the DTCM RAM (128 KB, 4.4 KB used) or shrink something; DMA buffers must stay in the AXI RAM.
+**Memory note.** `RAM_D1` (the 320 KB of AXI RAM) had 1.4 KB left with the generators; item 67 moves the reverb out of it.
 
 **Status: merged into V1.18 (test build, not released); waiting for the hardware test.** Host tests cover the file block, lengths, sweep shapes, every generator (finite, bounded, audible, fades in, reproducible, extremes), the noise colours, PITCH and sweeps, the siren's pitch and warble, the laser's direction, the crackle density, and the hiss bed's level, stereo, ducking, release, glide and fade-out.
 
@@ -1028,3 +1028,16 @@ The sample's own START and END are kept and come back when GEN is OFF. The gener
 **Review (code-review, high) before the merge into V1.18:** two bugs found and fixed: `layer_playGen` built the note in `tempBeatPlayData` while the sequencer interrupt could call it for the same layer (now built apart and published at once, as `layer_playBeat`), and its probability test used `>` where the sample path uses `>=` (a 0 % note played once in 10,000). The hiss page's texture first kept 20 KB of arrays on the 16 KB stack (found while building the screen) and now streams column by column.
 
 **Done when.** A PINK layer with LENGTH 16 and a long reverb plays a hiss swell every bar; a SIREN thrown into the echo warbles; a TAPE bed with DUCK 60 breathes with the kick; a V1.16 song loads with no generators and sounds the same; page 2 of a GEN layer shows its note, sweep and spectrum and the HISS page shows the bed and a duck meter that moves with the kick.
+
+### 67. RAM: the reverb lives in the DTCM RAM (V1.18)
+
+**Why.** The main RAM (`RAM_D1`, the 320 KB of AXI SRAM) had 1.4 KB left once the generators and their screens were in. The linker refused a build that added 4.5 KB of static buffers; the next features (the load and save screen, item 60) would not have fitted.
+
+**What was in it** (the `Controller` object is 252 KB): `layerLibrary` 153 KB (the beats of 10 layers: 5 banks of 64 beats with their fills), `reverb` 72 KB (its delay lines), the SD file objects 12 KB, the effects 4 KB, the rest small; and two static DMA buffers outside the object (24 KB for sample loading, 12 KB for the preview).
+
+**Change.** The reverb is a reference member (`Reverb& reverb`) into a buffer in the DTCM RAM (`reverbStorage`, section `.dtcm`). `main()` zeroes the whole DTCM after the static constructors have run, so the object is built in place (`Controller::dtcmInit()`, placement new, the same zero-fill and default values the initializer list gave it) right after that. Nothing else changed: no DMA touches the reverb, and the DTCM is also faster than the cached main RAM (single-cycle, no cache misses), which helps the reverb's eight combs and four all-passes. Same algorithm, same numbers: it sounds the same (the owner's rule).
+
+**Now.** `RAM_D1`: 73.5 KB free (was 1.4 KB). DTCM: 76.5 KB used of 128 KB, 54.5 KB free. Where to look for more room if it is needed again: the 24 KB and 12 KB DMA buffers can only move to another DMA-capable RAM (the D2 SRAMs are free, but the SDMMC2 internal DMA reaching them has to be checked in the reference manual), `layerLibrary` could drop the per-bank fill tables that are mostly empty, and anything the CPU alone touches (the effects' small state, the filter states) can follow the reverb into the DTCM.
+
+**Status: built in V1.18 (test build, not released).** **Done when** the reverb sounds exactly as before (tail, DECAY, SIZE, DAMPING, PRE-DELAY, SURROUND, a song with the reverb on loads and plays the same) and the CPU meter shows the same or lower.
+

@@ -296,7 +296,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.19 (testing)</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.19</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -2400,7 +2400,7 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
-  { v: "V1.19", date: "2026-11-21", status: "Testing, not published", pub: false,
+  { v: "V1.19", date: "2026-11-21", status: "GitHub release v1.19 · tested", pub: true,
     nw: ["Quantize modes (backlog 59): the RHYTHM page's QUANTIZE field adds the triplet grids 1:32T, 1:16T, 1:8T and 1:4T, the mixed grids 1:16+T and 1:8+T (a hit snaps to the nearer point of the straight and the triplet grid) and OFF (no snap), after the seven straight grids of before (same order, same behaviour). A triplet step is rounded to a whole interval, but three of them are exactly one beat (no drift)",
          "A screen for QUANTIZE and STRENGTH: while either field of the RHYTHM page is selected the lanes give way to every grid as a row of points over two beats (the chosen one lit), what the grid is, and what STRENGTH does to a hit played late and where it lands (see the picture in the Euclid tab)",
          "STRENGTH, the fifth field of the RHYTHM page: how far a recorded hit moves to its grid point, 0 to 100 % in steps of 5 (100 snaps as always, 50 goes halfway, 0 keeps the playing). It is saved with the song (a QNT block after the GEN block, which older firmware never reads); a new song and a song without the block start at 100",

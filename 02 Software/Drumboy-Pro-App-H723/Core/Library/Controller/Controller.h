@@ -8,6 +8,7 @@
 #include "Euclid.h"
 #include "Global.h"
 #include "Lcd.h"
+#include "SlotFile.h"
 #include "fatfs.h"
 #include "main.h"
 #include "sdmmc.h"
@@ -333,7 +334,7 @@ class Controller {
     uint32_t file_stateCrc();
     uint16_t file_noteEntryCount();
     uint32_t file_noteCrc(uint32_t crc_);
-    bool file_writeNotes();
+    void file_writeNotes(SaveWriter& out_);
     void file_readNotes(const char* fileName_);
     uint16_t layerSong_quantizeInterval(uint16_t interval_) const;
     // Trig conditions (BeatNote.h): loops of the active bank, each layer's PRE, fills skipped whole.
@@ -706,6 +707,7 @@ class Controller {
     SdResult sd_checkFileExist(const char* fileAddress);
     SdResult sd_checkFolderExist(const char* folderAddress);
     SdResult sd_loadImage(const char* fileAddress, uint32_t paletteAddress, uint32_t dataAddress, uint16_t paletteSize, uint16_t width, uint16_t height, RGBMode mode);
+    void sd_recoverSaves();
     void sd_getLibraries();
     SdResult sd_getFileLibrary();
     SdResult sd_getDrumkitLibrary();

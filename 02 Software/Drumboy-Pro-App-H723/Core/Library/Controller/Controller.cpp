@@ -5507,9 +5507,33 @@ SdResult Controller::sd_loadImage(const char* fileAddress, uint32_t paletteAddre
     return result;
 }
 
+void Controller::sd_recoverSaves() {
+    /// @brief Start-up: for every song and drumkit slot, deletes a half-written .tmp file and puts a
+    /// verified .new file in place of the slot (SlotFile.h). Cheap: one failed open per missing file.
+    keyboard_disable();
+    char path[50];
+    for (uint8_t i = 0; i < kFileLibrarySize; i++) {
+        IWDG1->KR = 0xAAAA;
+        snprintf(path, sizeof path, "%s%03d%s", kFileStart, i + 1, kFileEnd);
+        slotRecover(&sd.file, path, kFileRef, kFileByteSize);
+    }
+    for (uint8_t i = 0; i < kDrumkitLibrarySize; i++) {
+        IWDG1->KR = 0xAAAA;
+        snprintf(path, sizeof path, "%s%03d%s", kDrumkitStart, i + 1, kDrumkitEnd);
+        slotRecover(&sd.file, path, kDrumkitRef, kDrumkitByteSize);
+    }
+    f_close(&sd.file);
+    keyboard_enable();
+}
+
 void Controller::sd_getLibraries() {
     /// @brief Rebuilds all SD-backed runtime library caches in a deterministic sequence.
     /// Refreshes project, drumkit, instrument, and sample indexes before integrity validation.
+
+    // 0. INTERRUPTED SAVES
+    // A power cut or a crash during a SAVE can leave File_NNN.tmp / .new files: finish or drop them
+    // before the slots are counted (AtomicSave.h).
+    sd_recoverSaves();
 
     // 1. CACHE DIRECTORY RESET
     // Remove temporary index artifacts to force a clean rebuild pass.
@@ -5856,18 +5880,6 @@ IWDG1->KR = 0xAAAA;  // a rescan of a big card takes longer than the watchdog
     lcd.setForeColor(BLACK);
     lcd.drawText("2", 1, 50, 50);
     keyboard_enable();
-}
-
-// A slot file is complete when it holds its header, its body and the "EOF" marker the save writes last.
-// A file cut short (power lost during a save, a full card) is not: it is treated as an empty slot instead
-// of being loaded as zeros (every level 0, an empty song) over the user's current work. f_ is open.
-static bool slotFileComplete(FIL* f_, uint32_t headerBytes_, uint32_t bodyBytes_) {
-    const uint32_t eofAt = headerBytes_ + bodyBytes_;
-    if (f_size(f_) < eofAt + 3u) return false;
-    char tail[3] = {0, 0, 0};
-    UINT got = 0;
-    if ((f_lseek(f_, eofAt) != FR_OK) || (f_read(f_, tail, 3, &got) != FR_OK) || (got != 3)) return false;
-    return (tail[0] == 'E') && (tail[1] == 'O') && (tail[2] == 'F');
 }
 
 SdResult Controller::sd_checkFile(uint8_t fileNum_) {
@@ -6872,13 +6884,12 @@ uint32_t Controller::file_noteCrc(uint32_t crc_) {
     return crc_;
 }
 
-bool Controller::file_writeNotes() {
-    /// @brief Writes the BTX block (BeatNote.h) at the current file position: one 7-byte entry
-    /// per beat with note settings. Older firmware stops reading before it.
+void Controller::file_writeNotes(SaveWriter& out_) {
+    /// @brief Writes the BTX block (BeatNote.h) through out_: one 7-byte entry per beat with note
+    /// settings. Older firmware stops reading before it.
     uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
     noteWriteHeader(buffer, file_noteEntryCount());
     uint16_t used = kNoteHeaderSize;
-    bool ok = true;
     for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
         for (uint8_t b = 0; b < kBankLibrarySize; b++) {
             const Bank& bank = layerLibrary[l].bankLibrary[b];
@@ -6886,8 +6897,7 @@ bool Controller::file_writeNotes() {
                 const Beat& beat = bank.beatLibrary[k];
                 if (!beat.getActive() || noteIsDefault(beat.getVelocity(), beat.getNote())) continue;
                 if (static_cast<size_t>(used + kNoteEntrySize) > sizeof buffer) {
-                    UINT written = 0;
-                    ok = ok && (f_write(&sd.file, buffer, used, &written) == FR_OK) && (written == used);
+                    out_.write(buffer, used);
                     used = 0;
                 }
                 noteWriteEntry(buffer + used, NoteEntry{l, b, beat.getStartInterval(), beat.getVelocity(), beat.getNote()});
@@ -6895,9 +6905,7 @@ bool Controller::file_writeNotes() {
             }
         }
     }
-    UINT written = 0;
-    ok = ok && (f_write(&sd.file, buffer, used, &written) == FR_OK) && (written == used);
-    return ok;
+    out_.write(buffer, used);
 }
 
 void Controller::file_readNotes(const char* fileName_) {
@@ -6989,72 +6997,36 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
     }
 
     // 5. FILE WRITE PIPELINE
-    // Write header, drumkit block, song blocks, and EOF marker.
+    // The song goes to File_NNN.tmp and is checked (every write complete, the file reads back with
+    // the same CRC-32); only then does it replace the slot: a save that fails or is cut off leaves
+    // the old file (AtomicSave.h). The autosave files are written in place, they have their own seal.
     if (sd_checkFile(fileNum_) == SD_OK) {
-        if (f_open(&sd.file, fileName, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
-            if (f_write(&sd.file, kFileRef, strlen(kFileRef), &sd.byteswritten) == FR_OK) {
-                // 5.1 DRUMKIT BLOCK WRITE
-                // Stream encoded drumkit payload in 512-byte chunks.
-                const uint16_t writeByteSize = 512;
-                uint16_t writeCountTotal = (kDrumkitByteSize / writeByteSize);
-                uint16_t remainderByteSize = (kDrumkitByteSize % writeByteSize);
-                uint32_t pointerOffset = 0;
-                uint32_t errorCount = 0;
-                for (uint16_t i = 0; i < writeCountTotal; i++) {
-                    if (f_write(&sd.file, (data + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    pointerOffset += 512;
-                }
+        const bool saved = slotSave(&sd.file, fileName, fileNameOverride == nullptr, [&](SaveWriter& out) {
+            out.write(kFileRef, strlen(kFileRef));
 
-                // 5.2 DRUMKIT TAIL WRITE
-                // Write final non-512-aligned remainder.
-                if (remainderByteSize) {
-                    if (f_write(&sd.file, (data + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                }
-
-                // 5.3 SONG ENCODE + WRITE
-                // Encode each layer's banks/beats and write serialized song payload.
-                for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
-                    file_encodeLayerSong(l, data);
-
-                    // Write song payload in 512-byte chunks
-                    writeCountTotal = (kSongByteSize / writeByteSize);
-                    remainderByteSize = (kSongByteSize % writeByteSize);
-                    pointerOffset = 0;
-                    for (uint16_t i = 0; i < writeCountTotal; i++) {
-                        if (f_write(&sd.file, (data + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                        pointerOffset += 512;
-                    }
-
-                    // Write song tail remainder
-                    if (remainderByteSize) {
-                        if (f_write(&sd.file, (data + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    }
-                }
-
-                // 5.4 EOF COMMIT
-                // Commit EOF marker only when all previous writes succeeded.
-                if (errorCount == 0) {
-                    if (f_write(&sd.file, eof, strlen(eof), &sd.byteswritten) == FR_OK) {
-                        // Song mode chain after "EOF" (older firmware stops reading at "EOF").
-                        uint8_t chainData[kChainFileSize];
-                        chainWrite(songChain, chainData);
-                        // Per-note settings after the chain (BeatNote.h).
-                        if ((f_write(&sd.file, chainData, kChainFileSize, &sd.byteswritten) == FR_OK) && file_writeNotes()) {
-                            // The DUB block after the notes (DubMix.h).
-                            uint8_t dubData[kDubFileSize];
-                            dubWrite(dubMix, dubData);
-                            if (f_write(&sd.file, dubData, kDubFileSize, &sd.byteswritten) == FR_OK) {
-                                // The EUC block after the DUB block (Euclid.h): each layer's EUCLID settings.
-                                uint8_t eucData[kEuclidFileSize];
-                                euclidWriteBlock(euclidSet, eucData);
-                                if ((f_write(&sd.file, eucData, kEuclidFileSize, &sd.byteswritten) == FR_OK) && (sd.byteswritten == kEuclidFileSize)) result = SD_OK;
-                            }
-                        }
-                    }
-                }
+            // 5.1 DRUMKIT BLOCK, then each layer's banks/beats as the song payload
+            out.writeBlocks(data, kDrumkitByteSize);
+            for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+                file_encodeLayerSong(l, data);
+                out.writeBlocks(data, kSongByteSize);
             }
-        }
-        f_close(&sd.file);
+
+            // 5.2 EOF marker, then what older firmware does not read (it stops at "EOF"):
+            // the song mode chain, the per-note settings (BeatNote.h), the DUB block (DubMix.h)
+            // and each layer's EUCLID settings (Euclid.h)
+            out.write(eof, strlen(eof));
+            uint8_t chainData[kChainFileSize];
+            chainWrite(songChain, chainData);
+            out.write(chainData, kChainFileSize);
+            file_writeNotes(out);
+            uint8_t dubData[kDubFileSize];
+            dubWrite(dubMix, dubData);
+            out.write(dubData, kDubFileSize);
+            uint8_t eucData[kEuclidFileSize];
+            euclidWriteBlock(euclidSet, eucData);
+            out.write(eucData, kEuclidFileSize);
+        });
+        if (saved) result = SD_OK;
     }
 
     // 6. INPUT RESTORATION
@@ -7088,64 +7060,15 @@ SdResult Controller::sd_clearFile(uint8_t fileNum_) {
     }
 
     // 3. FILE RE-CREATION
-    // Re-create the target slot to wipe any previous project data.
+    // The default template replaces the slot the same atomic way as a save (AtomicSave.h).
     if (sd_checkFile(fileNum_) == SD_OK) {
-        if (f_open(&sd.file, fileName, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
-            // 4. HEADER WRITE
-            // Write standard project signature header.
-            if (f_write(&sd.file, kFileRef, strlen(kFileRef), &sd.byteswritten) == FR_OK) {
-                const uint16_t writeByteSize = 512;  // Chunk size for SD block writing
-                uint16_t writeCountTotal;
-                uint16_t remainderByteSize;
-                uint32_t pointerOffset = 0;
-                uint32_t errorCount = 0;
-
-                // 5. DEFAULT PAYLOAD WRITE
-                // Stream default drumkit/song templates in fixed-size blocks.
-
-                // 5.1 DRUMKIT BLOCK WRITE
-                // Write default drumkit data in 512-byte chunks.
-                writeCountTotal = (kDrumkitByteSize / writeByteSize);
-                remainderByteSize = (kDrumkitByteSize % writeByteSize);
-                for (uint16_t i = 0; i < writeCountTotal; i++) {
-                    if (f_write(&sd.file, (kDataDrumkit + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    pointerOffset += 512;
-                }
-
-                // 5.2 DRUMKIT TAIL WRITE
-                // Write final non-512-aligned drumkit remainder.
-                if (remainderByteSize) {
-                    if (f_write(&sd.file, (kDataDrumkit + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                }
-
-                // 5.3 SONG BLOCK WRITE
-                // Iterate all layers and write default sequencer templates.
-                writeCountTotal = (kSongByteSize / writeByteSize);
-                remainderByteSize = (kSongByteSize % writeByteSize);
-                for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
-                    pointerOffset = 0;
-                    for (uint16_t i = 0; i < writeCountTotal; i++) {
-                        if (f_write(&sd.file, (kDataSong + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                        pointerOffset += 512;
-                    }
-
-                    // 5.4 SONG TAIL WRITE
-                    // Write final non-512-aligned song remainder.
-                    if (remainderByteSize) {
-                        if (f_write(&sd.file, (kDataSong + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    }
-                }
-
-                // 5.5 EOF COMMIT
-                // Seal the file with EOF only if all previous writes succeeded.
-                if (errorCount == 0) {
-                    if (f_write(&sd.file, eof, strlen(eof), &sd.byteswritten) == FR_OK) {
-                        result = SD_OK;
-                    }
-                }
-            }
-        }
-        f_close(&sd.file);
+        const bool cleared = slotSave(&sd.file, fileName, true, [&](SaveWriter& out) {
+            out.write(kFileRef, strlen(kFileRef));
+            out.writeBlocks(kDataDrumkit, kDrumkitByteSize);
+            for (uint8_t l = 0; l < kLayerLibrarySize; l++) out.writeBlocks(kDataSong, kSongByteSize);
+            out.write(eof, strlen(eof));
+        });
+        if (cleared) result = SD_OK;
     }
 
     // 6. INPUT RESTORATION
@@ -7730,38 +7653,15 @@ SdResult Controller::sd_saveDrumkit(uint8_t kitNum_) {
     }
 
     // 5. FILE WRITE PIPELINE
-    // Write header, drumkit block, and EOF marker.
+    // Header, drumkit block and EOF marker go to Drumkit_NNN.tmp, are checked and then replace
+    // the slot (AtomicSave.h).
     if (sd_checkDrumkit(kitNum_) == SD_OK) {
-        if (f_open(&sd.file, drumkitName, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
-            if (f_write(&sd.file, kDrumkitRef, strlen(kDrumkitRef), &sd.byteswritten) == FR_OK) {
-                // 5.1 DRUMKIT BLOCK WRITE
-                // Stream encoded drumkit payload in 512-byte chunks.
-                const uint16_t writeByteSize = 512;
-                uint16_t writeCountTotal = (kDrumkitByteSize / writeByteSize);
-                uint16_t remainderByteSize = (kDrumkitByteSize % writeByteSize);
-                uint32_t pointerOffset = 0;
-                uint32_t errorCount = 0;
-                for (uint16_t i = 0; i < writeCountTotal; i++) {
-                    if (f_write(&sd.file, (data + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    pointerOffset += 512;
-                }
-
-                // 5.2 DRUMKIT TAIL WRITE
-                // Write final non-512-aligned remainder.
-                if (remainderByteSize) {
-                    if (f_write(&sd.file, (data + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                }
-
-                // 5.3 EOF COMMIT
-                // Commit EOF marker only when all previous writes succeeded.
-                if (errorCount == 0) {
-                    if (f_write(&sd.file, eof, strlen(eof), &sd.byteswritten) == FR_OK) {
-                        result = SD_OK;
-                    }
-                }
-            }
-        }
-        f_close(&sd.file);
+        const bool saved = slotSave(&sd.file, drumkitName, true, [&](SaveWriter& out) {
+            out.write(kDrumkitRef, strlen(kDrumkitRef));
+            out.writeBlocks(data, kDrumkitByteSize);
+            out.write(eof, strlen(eof));
+        });
+        if (saved) result = SD_OK;
     }
 
     // 6. INPUT RESTORATION
@@ -7795,45 +7695,14 @@ SdResult Controller::sd_clearDrumkit(uint8_t kitNum_) {
     }
 
     // 3. FILE RE-CREATION
-    // Re-create the target slot to wipe any previous drumkit data.
+    // The default template replaces the slot the same atomic way as a save (AtomicSave.h).
     if (sd_checkDrumkit(kitNum_) == SD_OK) {
-        if (f_open(&sd.file, drumkitName, FA_WRITE | FA_CREATE_ALWAYS) == FR_OK) {
-            // 4. HEADER WRITE
-            // Write standard drumkit signature header.
-            if (f_write(&sd.file, kDrumkitRef, strlen(kDrumkitRef), &sd.byteswritten) == FR_OK) {
-                const uint16_t writeByteSize = 512;  // Block-aligned size for SD efficiency
-                const uint16_t drumkitByteSize = kDrumkitByteSize;
-                uint16_t writeCountTotal = (drumkitByteSize / writeByteSize);
-                uint16_t remainderByteSize = (drumkitByteSize % writeByteSize);
-                uint32_t pointerOffset = 0;
-                uint32_t errorCount = 0;
-
-                // 5. DEFAULT PAYLOAD WRITE
-                // Stream default drumkit template in fixed-size blocks.
-
-                // 5.1 DRUMKIT BLOCK WRITE
-                // Write default drumkit data in 512-byte chunks.
-                for (uint16_t i = 0; i < writeCountTotal; i++) {
-                    if (f_write(&sd.file, (kDataDrumkit + pointerOffset), writeByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                    pointerOffset += 512;
-                }
-
-                // 5.2 DRUMKIT TAIL WRITE
-                // Write final non-512-aligned drumkit remainder.
-                if (remainderByteSize) {
-                    if (f_write(&sd.file, (kDataDrumkit + pointerOffset), remainderByteSize, &sd.byteswritten) != FR_OK) errorCount += 1;
-                }
-
-                // 5.3 EOF COMMIT
-                // Seal the file with EOF only if all previous writes succeeded.
-                if (errorCount == 0) {
-                    if (f_write(&sd.file, eof, strlen(eof), &sd.byteswritten) == FR_OK) {
-                        result = SD_OK;
-                    }
-                }
-            }
-        }
-        f_close(&sd.file);
+        const bool cleared = slotSave(&sd.file, drumkitName, true, [&](SaveWriter& out) {
+            out.write(kDrumkitRef, strlen(kDrumkitRef));
+            out.writeBlocks(kDataDrumkit, kDrumkitByteSize);
+            out.write(eof, strlen(eof));
+        });
+        if (cleared) result = SD_OK;
     }
 
     // 6. INPUT RESTORATION

@@ -5,6 +5,7 @@
 // own slot with micro hits inside its beat) and against the beats' fill settings, which
 // must survive moves, rotations and inserts.
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -26,7 +27,7 @@ static int failures = 0, checks = 0;
     } while (0)
 
 static const uint16_t kQuarter = 800;                                   // kMeasureInterval
-static const uint16_t kSteps[] = {50, 100, 200, 400, 800, 1600, 3200};  // kQuantizeInterval
+static const uint16_t kSteps[] = {50, 100, 200, 400, 800, 1600, 3200};  // the straight grids of Quantize.h
 static std::mt19937 rng(1234);
 
 static uint32_t rnd(uint32_t n) { return std::uniform_int_distribution<uint32_t>(0, n - 1)(rng); }
@@ -334,12 +335,132 @@ static void testPosition() {
     CHECK(beatListWrapShift(1600, 3200) == 1600 && beatListWrapShift(-1600, 3200) == 1600, "half turn is positive");
 }
 
+// --- Triplet and mixed grids (Quantize.h) -----------------------------------------------------------------
+
+static std::vector<uint16_t> startsOf(const Bank& b) {
+    std::vector<uint16_t> v;
+    for (int16_t i = 0; i <= b.lastActiveBeatNum; i++) v.push_back(b.beatLibrary[i].getStartInterval());
+    return v;
+}
+
+static Bank bankOf(std::initializer_list<uint16_t> starts, uint16_t song) {
+    Bank bank;
+    for (uint16_t s : starts) beatListAdd(bank, s, song);
+    beatListRebuild(bank, song);
+    return bank;
+}
+
+static void testTripletGrids() {
+    const uint16_t song = 3200;
+    const QuantizeSpec t8 = quantizeSpec(9);  // 1:8T: 0, 267, 533, 800 ...
+    // MOVE: three steps of 1:8T make exactly one beat (no drift), and back again.
+    Bank b = bankOf({0}, song);
+    uint16_t expect[] = {267, 533, 800, 1067, 1333, 1600};
+    for (uint16_t e : expect) {
+        beatListMove(b, 0, true, t8, song);
+        CHECK(b.beatLibrary[0].getStartInterval() == e, "1:8T move forward to %u, expected %u", b.beatLibrary[0].getStartInterval(), e);
+        checkBank(b, song, "triplet move");
+    }
+    for (int i = 4; i >= 0; i--) {
+        beatListMove(b, 0, false, t8, song);
+        CHECK(b.beatLibrary[0].getStartInterval() == expect[i], "1:8T move back to %u", b.beatLibrary[0].getStartInterval());
+    }
+    // A beat between the points goes to the next point in the direction.
+    b = bankOf({300}, song);
+    beatListMove(b, 0, true, t8, song);
+    CHECK(b.beatLibrary[0].getStartInterval() == 533, "off-grid 300 forward on 1:8T: %u", b.beatLibrary[0].getStartInterval());
+    b = bankOf({300}, song);
+    beatListMove(b, 0, false, t8, song);
+    CHECK(b.beatLibrary[0].getStartInterval() == 267, "off-grid 300 back on 1:8T: %u", b.beatLibrary[0].getStartInterval());
+    // Wrap: from the last 1:8T point (3067 = 11.5 x 267: 12 points per 3200 / 267 -> 3200 is 12 points) forward to 0.
+    b = bankOf({3200 - 267}, song);  // 2933 = P(11)
+    beatListMove(b, 0, true, t8, song);
+    CHECK(b.beatLibrary[0].getStartInterval() == 0, "wrap forward at the song end: %u", b.beatLibrary[0].getStartInterval());
+    beatListMove(b, 0, false, t8, song);
+    CHECK(b.beatLibrary[0].getStartInterval() == 2933, "wrap back from 0 to the last point: %u", b.beatLibrary[0].getStartInterval());
+
+    // MIXED 1:16+T: the points of 1:16 (200) and of 1:16T (133.3): 0, 133, 200, 267, 400, 533, 600, 667, 800.
+    const QuantizeSpec mix = quantizeSpec(11);
+    b = bankOf({0}, song);
+    const uint16_t mixed[] = {133, 200, 267, 400, 533, 600, 667, 800};
+    for (uint16_t e : mixed) {
+        beatListMove(b, 0, true, mix, song);
+        CHECK(b.beatLibrary[0].getStartInterval() == e, "mixed move forward to %u, expected %u", b.beatLibrary[0].getStartInterval(), e);
+    }
+
+    // INSERT after: the middle of a gap, on the grid. 0 and 800 on 1:8T: the middle 400 -> floor point 267.
+    b = bankOf({0, 800}, song);
+    CHECK(beatListInsertAfter(b, 0, t8, song) == 1 && b.beatLibrary[1].getStartInterval() == 267, "insert in a triplet gap: %u", b.beatLibrary[1].getStartInterval());
+    b = bankOf({0, 267}, song);  // a gap of one point: nowhere to go
+    CHECK(beatListInsertAfter(b, 0, t8, song) == -1, "no free point in a one-step gap");
+    b = bankOf({0, 400}, song);  // 400 is not a 1:8T point: middle 200 -> floor 0 -> next point 267 < 400
+    CHECK(beatListInsertAfter(b, 0, t8, song) == 1 && b.beatLibrary[1].getStartInterval() == 267, "insert next to an off-grid beat: %u", b.beatLibrary[1].getStartInterval());
+
+    // SHIFT ALL on a triplet grid: beats on the points move to the next points, exactly, and back again.
+    b = bankOf({0, 267, 533}, song);
+    for (int step = 1; step <= 9; step++) {
+        beatListShift(b, true, t8, song);
+        std::vector<uint16_t> want;
+        for (uint32_t k : {0u, 1u, 2u}) want.push_back(static_cast<uint16_t>(quantizePoint(9, (k + step) % 12)));
+        std::sort(want.begin(), want.end());
+        CHECK(startsOf(b) == want, "triplet shift %d", step);
+        checkBank(b, song, "triplet shift");
+    }
+    for (int step = 0; step < 9; step++) beatListShift(b, false, t8, song);
+    CHECK(startsOf(b) == (std::vector<uint16_t>{0, 267, 533}), "shifting back restores the bank");
+    // A beat between the points: the whole bank rotates by the rounded step (and back).
+    b = bankOf({0, 300}, song);
+    beatListShift(b, true, t8, song);
+    CHECK(startsOf(b) == (std::vector<uint16_t>{267, 567}), "off-grid bank rotates by the rounded step");
+    beatListShift(b, false, t8, song);
+    CHECK(startsOf(b) == (std::vector<uint16_t>{0, 300}), "and back");
+    // A straight grid is the plain rotation, as before.
+    b = bankOf({0, 100, 700}, song);
+    beatListShift(b, true, quantizeSpec(2), song);
+    CHECK(startsOf(b) == (std::vector<uint16_t>{200, 300, 900}), "1:16 rotates by 200");
+    beatListShift(b, false, quantizeSpec(2), song);
+    CHECK(startsOf(b) == (std::vector<uint16_t>{0, 100, 700}), "and back");
+    // The tracked beat's new start is reported (the song page keeps it selected).
+    b = bankOf({0, 267, 533}, song);
+    CHECK(beatListShift(b, true, t8, song, 1) == 533, "tracked beat on the grid");
+    b = bankOf({0, 300}, song);
+    CHECK(beatListShift(b, true, t8, song, 1) == 567, "tracked beat in a rotated bank");
+    b = bankOf({0, 100, 700}, song);
+    CHECK(beatListShift(b, true, quantizeSpec(2), song, 2) == 900 && beatListShift(b, true, quantizeSpec(2), song, -1) == -1, "tracked beat on a straight grid, and none");
+    b = bankOf({0, 2933}, song);
+    CHECK(beatListShift(b, true, t8, song, 1) == 0, "the tracked beat wraps to the song start");
+    // OFF steps by 1:64.
+    b = bankOf({0, 100}, song);
+    beatListShift(b, true, quantizeSpec(kQuantizeGridOff), song);
+    CHECK(startsOf(b) == (std::vector<uint16_t>{50, 150}), "OFF shifts by 1:64");
+
+    // Random: any bank on any grid keeps its invariants through move, insert and shift, with the fills.
+    for (int round = 0; round < 2000; round++) {
+        const uint16_t sng = randomSong();
+        const uint8_t g = static_cast<uint8_t>(rnd(kQuantizeGridCount));
+        const QuantizeSpec spec = quantizeSpec(g);
+        Bank rb;
+        randomBank(rb, sng, static_cast<uint8_t>(1 + rnd(12)));
+        const uint8_t op = static_cast<uint8_t>(rnd(3));
+        if (op == 0) {
+            beatListMove(rb, static_cast<uint8_t>(rnd(rb.lastActiveBeatNum + 1)), rnd(2), spec, sng);
+        } else if (op == 1) {
+            beatListInsertAfter(rb, static_cast<int16_t>(rnd(rb.lastActiveBeatNum + 1)), spec, sng);
+        } else {
+            beatListShift(rb, rnd(2), spec, sng);
+        }
+        checkBank(rb, sng, "random grid op");
+        if (failures > 20) return;
+    }
+}
+
 int main() {
     testRebuild();
     testMove();
     testRotate();
     testInsert();
     testPosition();
+    testTripletGrids();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

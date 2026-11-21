@@ -284,7 +284,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.18</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.19 (testing)</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -456,6 +456,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">7</span><div><b>ACCENTS</b> (V1.11) is the last field on the EUCLID page's bottom row. On the device the pattern line shows X for accented hits and + for ghost hits (e.g. <span class="mono">X.+X.++.</span>).</div></div>
           <div class="k"><span class="keycap">◎</span><div><b>Rings</b> (V1.14): while the EUCLID page is open, the ten lanes give way to all ten layers as rings around one centre, layer 1 outside. One turn is one loop, starting at the top; a yellow marker orbits with the playhead. The selected layer is cyan, with its grid as ticks. On the right, every layer's beats as a row with their count. Leaving the page brings the lanes back. A picture is in Screen ideas.</div></div>
           <div class="k"><span class="keycap">C</span><div><b>CLEAR on EUCLID</b>: the layer gets back the beats it had when you opened the page. Nothing changes until you turn a field; after that the pattern is rebuilt live, also while playing.</div></div>
+          <div class="k"><span class="keycap">Q</span><div><b>Quantize modes</b> (V1.19, RHYTHM page): the QUANTIZE field now has the straight grids 1:64 to 1:1 as before, then the <b>triplet</b> grids 1:32T, 1:16T, 1:8T and 1:4T (three notes in the time of two: three steps of 1:8T are exactly one beat), the <b>mixed</b> grids 1:16+T and 1:8+T (a hit snaps to the nearer point of the straight grid and its triplet grid, so one pattern can hold both) and <b>OFF</b> (no snap: a hit stays where it was played). The fifth field, <b>STRENGTH</b> (0 to 100 % in steps of 5), says how far a recorded hit moves to its grid point: 100 snaps, 50 goes halfway, 0 leaves it; it counts for hits recorded from then on and is saved with the song. EUCLID offers the straight and triplet grids (a mixed grid or OFF has no even steps); above, GRID and Quantize have the same lists. MOVE, SHIFT ALL and INSERT use the grid: on a triplet or mixed grid SHIFT ALL moves beats that sit on the grid to the next grid point (so nothing drifts) and the distance shown is what the selected beat moved. A grid change still re-quantizes every beat (OFF leaves them alone): unlock QUANTIZE with the lock key first. A song loads with its beats where they were saved.</div></div>
           <div class="k"><span class="keycap">+</span><div><b>Song page</b>: MOVE and SHIFT ALL are the last two fields on the bottom row (or hold ADD and press ◀ ▶ to move). A short ADD press inserts a beat. A bank holds 64 beats; when full, FULL is shown.</div></div>
         </div>
       </div>
@@ -1942,7 +1943,19 @@ function changed() {
 }
 
 /* ---------- Euclid (port of Euclid.h) and beat editing (port of BeatList.h) ---------- */
-const QNAMES = ["1:64", "1:32", "1:16", "1:8", "1:4", "1:2", "1:1"], QINT = [50, 100, 200, 400, 800, 1600, 3200];
+/* Quantize.h (V1.19): a grid is a step in thirds of an interval (p3) and, for a mixed grid, a second one (p3b); the
+   points of a grid are P(k) = floor((k*p3 + 1) / 3), so a triplet step is not a whole number of intervals but three
+   of them are exactly one beat. OFF has no points (it edits by 1:64). EUCLID offers the first eleven. */
+const QGRIDS = [["1:64", 150, 0], ["1:32", 300, 0], ["1:16", 600, 0], ["1:8", 1200, 0], ["1:4", 2400, 0], ["1:2", 4800, 0], ["1:1", 9600, 0],
+  ["1:32T", 200, 0], ["1:16T", 400, 0], ["1:8T", 800, 0], ["1:4T", 1600, 0], ["1:16+T", 600, 400], ["1:8+T", 1200, 800], ["OFF", 150, 0]];
+const QNAMES = QGRIDS.map(g => g[0]), EUNAMES = QNAMES.slice(0, 11);
+const qpt = (p3, k) => Math.floor((k * p3 + 1) / 3);
+const qBest = (x, g, f, pick) => { let b = qpt(g[1], f(x, g[1])); if (g[2]) b = pick(b, qpt(g[2], f(x, g[2]))); return b; };
+const qNext = (x, g) => qBest(x, g, (v, p) => Math.ceil((3 * v + 2) / p), Math.min);     // the smallest point after x
+const qPrev = (x, g) => qBest(x, g, (v, p) => Math.floor((3 * v - 2) / p), Math.max);    // the largest point before x (x >= 1)
+const qFloor = (x, g) => qBest(x, g, (v, p) => Math.floor((3 * v + 1) / p), Math.max);   // the largest point at or before x
+const qWhole = g => (!g[2] && g[1] % 3 === 0) ? g[1] / 3 : 0;                             // the step in whole intervals, or 0 (triplet, mixed)
+const qCount = (g, S) => Math.ceil((3 * S - 2) / g[1]) + (g[2] ? Math.ceil((3 * S - 2) / g[2]) : 0);
 const BAR = 3200, QUARTER = 800, MAXBEATS = 64;
 const eu = { steps: 8, hits: 3, rot: 0, acc: 0, grid: 2, merge: 0, bars: 2, snd: "hat", bpm: 120, q: 2, beats: [], sel: 0, shift: 0, dropped: 0, msg: "" };
 
@@ -1977,13 +1990,13 @@ function euclidAccentsJS(steps, hits, rotate, acc) {
 const song = () => eu.bars * BAR;
 const baseBeats = () => { const b = []; for (let k = 0; k < eu.bars; k++) { b.push({ start: k * BAR, base: true, fill: k === 0 ? "WAVE_A" : null }); b.push({ start: k * BAR + 1600, base: true, fill: null }); } return b; };
 function euApply() {
-  const pat = euclidPattern(eu.steps, eu.hits, eu.rot), grid = QINT[eu.grid], S = song();
+  const pat = euclidPattern(eu.steps, eu.hits, eu.rot), grid = QGRIDS[eu.grid][1], S = song();
   const acc = euclidAccentsJS(eu.steps, eu.hits, eu.rot, eu.acc);
   const beats = eu.merge ? baseBeats() : [];
   let dropped = 0;
-  for (let start = 0; start < S; start += eu.steps * grid) {
+  for (let cycle = 0; qpt(grid, cycle) < S; cycle += eu.steps) {
     for (let i = 0; i < eu.steps; i++) {
-      const at = start + i * grid;
+      const at = qpt(grid, cycle + i);
       if (at >= S) break;
       if (!pat[i] || beats.some(b => b.start === at)) continue;
       if (beats.length >= MAXBEATS) dropped++; else beats.push({ start: at, base: false, fill: null, ghost: !acc[i] });
@@ -1998,39 +2011,49 @@ const lenText = d => { const parts = [], bars = d / BAR | 0, beats = (d % BAR) /
   add(bars, "bar", "bars"); add(beats, "beat", "beats"); add(six, "16th", "16ths"); add(r, "64th", "64ths");
   return parts.join(" ") || "0"; };
 const offText = d => { const a = Math.abs(d), r = (a % 200) / 50 | 0; return `${d > 0 ? "+" : d < 0 ? "−" : ""}${a / BAR | 0}.${(a % BAR) / QUARTER | 0}.${(a % QUARTER) / 200 | 0}${r ? "+" + r : ""}`; };
-function stepOne(t, fwd, step, S) {
-  if (fwd) { const n = (Math.floor(t / step) + 1) * step; return n < S ? n : 0; }
-  if (t === 0) return Math.floor((S - 1) / step) * step;
-  return t % step ? Math.floor(t / step) * step : t - step;
+function stepOne(t, fwd, g, S) {
+  if (fwd) { const n = qNext(t, g); return n < S ? n : 0; }
+  return t === 0 ? qPrev(S, g) : qPrev(t, g);
 }
 function euMove(fwd) {
   const b = eu.beats[eu.sel]; if (!b) return;
-  const step = QINT[eu.q], S = song();
+  const g = QGRIDS[eu.q], S = song();
   let t = b.start;
-  for (let k = 0; k <= S / step + 1; k++) {
-    t = stepOne(t, fwd, step, S);
+  for (let k = 0; k <= qCount(g, S) + 1; k++) {
+    t = stepOne(t, fwd, g, S);
     if (t === b.start) break;
     if (!eu.beats.some(x => x.start === t)) { b.start = t; eu.beats.sort((x, y) => x.start - y.start); eu.sel = eu.beats.indexOf(b); eu.msg = ""; return; }
   }
   eu.msg = "No free position: every grid step is taken.";
 }
+// SHIFT ALL (BeatList.h beatListShift): a straight grid (and OFF) rotates by its whole step; a triplet or mixed grid moves
+// beats that sit on its points to the next points (three steps of 1:8T are exactly one beat), else rotates by the rounded step.
 function euShift(fwd) {
   if (!eu.beats.length) return;
-  const S = song(), d = fwd ? QINT[eu.q] : -QINT[eu.q], b = eu.beats[eu.sel];
-  eu.beats.forEach(x => { x.start = ((x.start + d) % S + S) % S; });
+  const S = song(), g = QGRIDS[eu.q], b = eu.beats[eu.sel], ref = b.start, whole = qWhole(g);
+  let moved;
+  if (!whole && eu.beats.every(x => qFloor(x.start, g) === x.start)) {
+    eu.beats.forEach(x => { x.start = stepOne(x.start, fwd, g, S); });
+    moved = b.start;
+  } else {
+    const step = whole || Math.floor((g[1] + 1) / 3), d = fwd ? step : -step;
+    eu.beats.forEach(x => { x.start = ((x.start + d) % S + S) % S; });
+    moved = b.start;
+  }
+  let d = moved - ref; if (d > S / 2) d -= S; if (d <= -S / 2) d += S;
   eu.beats.sort((x, y) => x.start - y.start);
   eu.sel = eu.beats.indexOf(b);
-  let s = ((eu.shift + d) % S + S) % S; if (s > S / 2) s -= S; eu.shift = s; eu.msg = "";
+  let sh = ((eu.shift + d) % S + S) % S; if (sh > S / 2) sh -= S; eu.shift = sh; eu.msg = "";
 }
 function euInsert() {
-  const S = song(), step = QINT[eu.q];
+  const S = song(), g = QGRIDS[eu.q];
   if (eu.beats.length >= MAXBEATS) { eu.msg = "FULL: a bank holds 64 beats."; return; }
   let target = 0;
   if (eu.beats.length) {
     const s = eu.beats[eu.sel].start;
     const e = eu.sel < eu.beats.length - 1 ? eu.beats[eu.sel + 1].start : eu.beats[0].start + S;
-    let mid = Math.floor((s + Math.floor((e - s) / 2)) / step) * step;
-    if (mid <= s) mid = (Math.floor(s / step) + 1) * step;
+    let mid = qFloor(s + Math.floor((e - s) / 2), g);
+    if (mid <= s) mid = qNext(s, g);
     if (mid >= e) { eu.msg = "No room: the gap after this beat has no free grid step."; return; }
     target = mid % S;
   }
@@ -2052,7 +2075,7 @@ function euRender() {
   const rot = document.getElementById("eu-rot"); rot.max = Math.max(0, eu.steps - 1); rot.value = eu.rot;
   syncSeg("eu-grid", eu.grid); syncSeg("eu-mode", eu.merge); syncSeg("eu-q", eu.q);
   document.getElementById("eu-cells").innerHTML = pat.map((h, i) => `<span class="${h ? (accOn && !accMask[i] ? "ghost" : "on") : ""}"></span>`).join("");
-  const cyc = eu.steps * QINT[eu.grid];
+  const cyc = qpt(QGRIDS[eu.grid][1], eu.steps);
   document.getElementById("eu-note").textContent = `E(${eu.hits},${eu.steps}) · one cycle = ${lenText(cyc)} · ${eu.beats.length} beats in ${eu.bars} bar${eu.bars > 1 ? "s" : ""}`;
 
   // Device: the EUCLID page (lcd_drawEuclidMenu / lcd_drawEuclidOverview)
@@ -2062,7 +2085,7 @@ function euRender() {
   // Device font has no lowercase: hits are X, ghost hits + (ACCENTS on).
   const ov = `${line1}\n\n${pat.map((h, i) => h ? (accOn && !accMask[i] ? "+" : "X") : ".").join("")}\n\n${line5}`;
   document.getElementById("eu-device").innerHTML = t("STEPS", eu.steps) + t("HITS", eu.hits) + `<div class="ov">${ov}</div>` +
-    t("ROTATE", eu.rot) + t("GRID", QNAMES[eu.grid]) + t("MODE", eu.merge ? "MERGE" : "REPLACE") + t("ACCENTS", accOn ? eu.acc : "OFF");
+    t("ROTATE", eu.rot) + t("GRID", EUNAMES[eu.grid]) + t("MODE", eu.merge ? "MERGE" : "REPLACE") + t("ACCENTS", accOn ? eu.acc : "OFF");
 
   // Song page bottom row: TIMING, VELOCITY, MOVE, SHIFT ALL
   const b = eu.beats[eu.sel];
@@ -2140,7 +2163,7 @@ function euSetup() {
     const g = document.getElementById(id);
     labels.forEach((lab, i) => { const b = document.createElement("button"); b.textContent = lab; b.id = id + "-" + i; b.addEventListener("click", () => onPick(i)); g.appendChild(b); });
   };
-  segBtns("eu-grid", QNAMES, i => { eu.grid = i; euChanged(true); });
+  segBtns("eu-grid", EUNAMES, i => { eu.grid = i; euChanged(true); });
   segBtns("eu-mode", ["Replace", "Merge"], i => { eu.merge = i; euChanged(true); });
   segBtns("eu-q", QNAMES, i => { eu.q = i; euChanged(false); });
   document.getElementById("eu-steps").addEventListener("input", e => { eu.steps = +e.target.value; eu.hits = Math.min(eu.hits, eu.steps); eu.acc = Math.min(eu.acc, eu.hits); if (eu.rot >= eu.steps) eu.rot = 0; euChanged(true); });
@@ -2280,6 +2303,12 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
+  { v: "V1.19", date: "2026-11-21", status: "Testing, not published", pub: false,
+    nw: ["Quantize modes (backlog 59): the RHYTHM page's QUANTIZE field adds the triplet grids 1:32T, 1:16T, 1:8T and 1:4T, the mixed grids 1:16+T and 1:8+T (a hit snaps to the nearer point of the straight and the triplet grid) and OFF (no snap), after the seven straight grids of before (same order, same behaviour). A triplet step is rounded to a whole interval, but three of them are exactly one beat (no drift)",
+         "STRENGTH, the fifth field of the RHYTHM page: how far a recorded hit moves to its grid point, 0 to 100 % in steps of 5 (100 snaps as always, 50 goes halfway, 0 keeps the playing). It is saved with the song (a QNT block after the GEN block, which older firmware never reads); a new song and a song without the block start at 100",
+         "EUCLID's GRID list has the triplet grids (a triplet pattern, E(3,8) on 1:8T, lands on 0, 800, 1600, 2133 ...) and the rings draw their ticks; MOVE and INSERT step through the grid points; SHIFT ALL on a triplet or mixed grid moves each beat to the next grid point (so three presses of 1:8T are exactly one beat), on a straight grid it rotates as before",
+         "Loading a song keeps each beat where it was saved. Before, every loaded beat was snapped to the song's grid, which would have undone a hit recorded with STRENGTH below 100. A song saved with a new grid index loads on V1.18 and older with that firmware's own QUANTIZE (it ignores the new values); the beats are then snapped to it"],
+    fix: [] },
   { v: "V1.18", date: "2026-11-21", status: "GitHub release v1.18 · tested", pub: true,
     nw: ["Safe saves: SAVE (and CLEAR) of a song or a drumkit no longer rewrites the slot in place. The new file is written next to it, every byte is checked (written in full, read back and compared), and only then does it replace the old one, so a failed or interrupted save leaves the old file. SAVE takes a moment longer because of the check. If the power fails in the middle, the next start tidies up: an unfinished temporary file (File_001.tmp) is deleted, a checked one (File_001.new) becomes the slot",
          "Loading a song sets MEASURE and BAR together (and a sample's START and END together). Before, each was checked against the other's old value, so a song of 12 x 6 loaded over a song of 8 x 8 came back as 8 x 6 and its beats lay past the end. A beat past the song end in a damaged file is dropped",

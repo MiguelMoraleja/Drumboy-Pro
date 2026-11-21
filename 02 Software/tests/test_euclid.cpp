@@ -10,6 +10,7 @@
 #include <cstring>
 #include <algorithm>
 #include <random>
+#include <vector>
 
 #include "Euclid.h"
 
@@ -309,12 +310,53 @@ static void testSettings() {
     CHECK(ghostA == 3 && ghostB == 1, "2 accents leave 3 ghosts, 4 accents leave 1: %d %d", ghostA, ghostB);
 }
 
+// A triplet grid: step k of a pattern sits at the rounded k x period / 3, so three steps of 1:8T are exactly one
+// beat (no drift), and the grid list EUCLID offers is the eleven single grids.
+static void testTripletGrid() {
+    const QuantizeSpec t8 = quantizeSpec(9);  // 1:8T
+    Bank out, base;
+    const uint16_t song = 3200;
+    // E(3,8) = x..x..x. on 1:8T: hits at steps 0, 3, 6 of each cycle of 8 steps.
+    CHECK(euclidApply(out, base, false, euclidPattern(8, 3, 0), 8, t8, song) == 0, "fits");
+    std::vector<uint16_t> want;
+    for (uint32_t cycle = 0; (cycle * 800 + 1) / 3 < song; cycle += 8) {
+        for (uint32_t i : {0u, 3u, 6u}) {
+            const uint32_t at = ((cycle + i) * 800 + 1) / 3;
+            if (at < song) want.push_back(static_cast<uint16_t>(at));
+        }
+    }
+    std::vector<uint16_t> got;
+    for (int16_t i = 0; i <= out.lastActiveBeatNum; i++) got.push_back(out.beatLibrary[i].getStartInterval());
+    CHECK(got == want, "E(3,8) on 1:8T: %zu beats, expected %zu", got.size(), want.size());
+    CHECK((got.size() >= 4) && (got[0] == 0) && (got[1] == 800) && (got[2] == 1600) && (got[3] == 2133), "first hits 0, 800, 1600, 2133");
+    // Every step on 1:16T over a 4-beat song: 24 points, the last at 3066.
+    CHECK(euclidApply(out, base, false, euclidPattern(24, 24, 0), 24, quantizeSpec(8), song) == 0 && out.lastActiveBeatNum == 23, "24 steps of 1:16T");
+    CHECK(out.beatLibrary[23].getStartInterval() == 3067 || out.beatLibrary[23].getStartInterval() == 3066, "last 1:16T point: %u", out.beatLibrary[23].getStartInterval());
+    // A straight grid through the spec gives what the plain step gave.
+    Bank a, b;
+    euclidApply(a, base, false, euclidPattern(8, 5, 2), 8, quantizeSpec(2), 3200);
+    euclidApply(b, base, false, euclidPattern(8, 5, 2), 8, static_cast<uint16_t>(200), 3200);
+    bool same = a.lastActiveBeatNum == b.lastActiveBeatNum;
+    for (int16_t i = 0; same && i <= a.lastActiveBeatNum; i++) same = a.beatLibrary[i].getStartInterval() == b.beatLibrary[i].getStartInterval();
+    CHECK(same, "1:16 by grid or by step");
+    // The grids EUCLID offers: indices 0..10; a settings block with a mixed grid or OFF reads as the default.
+    CHECK(kEuclidGridCount == 11 && quantizeIsSingleGrid(0) && quantizeIsSingleGrid(kEuclidGridCount - 1) && !quantizeIsSingleGrid(kEuclidGridCount), "EUCLID offers exactly the single grids");
+    EuclidSettings w;
+    w.grid = 10;
+    CHECK(euclidSettingsClamp(w, kEuclidGridCount, 2).grid == 10, "1:4T is offered");
+    w.grid = 11;
+    CHECK(euclidSettingsClamp(w, kEuclidGridCount, 2).grid == 2, "a mixed grid is not: default");
+    w.grid = 13;
+    CHECK(euclidSettingsClamp(w, kEuclidGridCount, 2).grid == 2, "OFF is not: default");
+}
+
 int main() {
     testSettings();
     testKnown();
     testProperties();
     testApply();
     testAccents();
+    testTripletGrid();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

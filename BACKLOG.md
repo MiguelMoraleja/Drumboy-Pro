@@ -878,9 +878,22 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Still open:** a restart (the watchdog or a power cut) during a write can leave the file system inconsistent (FatFs is not power-fail safe); the watchdog is now fed in the long loads, but a card should still be ejected properly and backed up. Not yet tested on hardware: this build.
 
-### 59. Quantization modes (planned for the week of 2026-11-16)
+### 59. Quantization modes (proposal written 2026-11-21; to build after V1.18 is released)
 
-**Asked by the owner (2026-11-15):** more quantization modes; the owner likes the concept of **patterning with 3-regular quantization** (to be confirmed next week: the idea as I read it is a regular grid and a triplet grid that can be combined or switched, so a pattern can mix straight and triplet hits). Today the quantize setting (`rhythm.quantize`, the RHYTHM page) is one grid for recording. To settle before building: which grids (straight 1/4 to 1/32, triplets, dotted, swing?), whether a pattern can mix grids per beat or per layer, how recorded hits are placed (snap, or snap with a strength), and how the NOTE page and the EUCLID grid show it.
+**Asked by the owner (2026-11-15):** more quantization modes; the owner likes the concept of **patterning with 3-regular quantization**. I looked for what the app Patterning 3 (Olympia Noise Co.) calls that and could not confirm it from public pages (its manual lists the options; the search found reviews, not the quantize page), so this is my reading, chosen so that it covers the likely meanings and can be cut down: a regular grid and a triplet ("3") grid that can be used together, so a pattern can hold straight and triplet hits.
+
+**Today.** `rhythm.quantize` (RHYTHM page) picks one straight grid for recording: 1/64, 1/32, 1/16 (default), 1/8, 1/4, 1/2, 1 (`kQuantizeInterval` = 50, 100, 200, 400, 800, 1600, 3200 in units of 1/800 of a beat). A recorded hit snaps to the nearest grid point (`layerSong_quantizeInterval`); beats are stored as whole intervals, the EUCLID page uses the same grid.
+
+**Proposal (best options).**
+- **More grids in the same list:** straight 1/4, 1/8, 1/16, 1/32, 1/64 as now, **triplets** 1/4T, 1/8T, 1/16T, 1/32T (a third of the straight grid's note: 1/8T = 800/3 intervals, rounded to a whole interval: the error is under one 800th of a beat, inaudible), and **MIXED** grids: 1/16 + 1/16T and 1/8 + 1/8T, which snap a hit to the nearest point of either grid. That is the "regular and 3" idea: you can play straight and triplet hits in one pattern and each lands on the grid it is nearest to.
+- **OFF:** no snap (the finest resolution, 1/800 of a beat), for a human feel.
+- **Strength** (0 to 100 %): how far a hit moves towards the grid point (100 snaps, 50 moves it halfway). Off by default (100).
+- **Not in this step:** swing (it moves every other grid point at playback and needs the sequencer's tick to apply it: a separate item), and per-beat or per-layer grids (the grid stays one setting; the NOTE page's NUDGE already moves single beats).
+- **Where it shows:** the RHYTHM page's QUANTIZE field names the grid (`1/16T`, `1/16+T`); the NOTE and EUCLID screens draw the grid's ticks from the same table; the EUCLID page's GRID field offers the same list (a triplet grid gives a triplet Euclid pattern, which is the clearest use).
+- **Files:** the quantize index is a byte in the kit block that older firmware clamps; new indexes above the old range are read by older firmware as out of range, so the list is appended (old songs keep their meaning) and a song saved with a new grid loads on older firmware with its default.
+- **Code:** a hardware-free `Quantize.h` (the grid table with names, `quantizeSnap(interval, grid, strength, songInterval)`, the nearest point of a mixed grid) with a host test (every grid is within half a step of the input, mixed grids pick the nearer of two, wrap at the song end, strength 0 and 100, a song length that is no multiple of the grid), then `layerSong_quantizeInterval`, the RHYTHM page and the EUCLID grid use it.
+
+**To confirm with the owner** (the pictures and the code can wait for the answer): is "3" the triplet grid as read here (otherwise: which grid does Patterning 3's "regular" mean)? And is a MIXED grid wanted, or only separate straight and triplet grids?
 
 ### 60. Load and save screen (built in V1.18 as the grid, 2026-11-21)
 

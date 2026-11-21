@@ -3002,11 +3002,11 @@ void Controller::keyboard_upLong() {
     // 1. MENU DISPATCH
     switch (menu) {
         case FILE_MENU:
-            file_menuUp();
+            file_menuUp(true);
             break;
 
         case DRUMKIT_MENU:
-            drumkit_menuUp();
+            drumkit_menuUp(true);
             break;
 
         case RHYTHM_MENU:
@@ -3079,11 +3079,11 @@ void Controller::keyboard_downLong() {
     // 1. MENU DISPATCH
     switch (menu) {
         case FILE_MENU:
-            file_menuDown();
+            file_menuDown(true);
             break;
 
         case DRUMKIT_MENU:
-            drumkit_menuDown();
+            drumkit_menuDown(true);
             break;
 
         case RHYTHM_MENU:
@@ -5638,19 +5638,27 @@ SdResult Controller::sd_getFileLibrary() {
 
         // 4. HEADER VALIDATION
         // Attempt to open the project file. If successful, verify the file header and occupancy marker.
+        // The state of the slot for the load and save screen: empty, used (a whole slot file) or not readable.
+        uint8_t slotState = FS_EMPTY;
         if (f_open(&sd.file, fileName, FA_READ) == FR_OK) {
+            slotState = FS_BAD;  // a file that is not a slot file, until it proves to be one
             // Read the unique file reference string (kFileRef) to verify compatibility.
             if (f_read(&sd.file, refRead, strlen(kFileRef), &sd.bytesread) == 0) {
+                const bool signatureOk = (sd.bytesread == strlen(kFileRef)) && (strncmp(kFileRef, refRead, strlen(kFileRef)) == 0);
                 // Read the single character status marker immediately following the header.
                 if (f_read(&sd.file, &data, 1, &sd.bytesread) == FR_OK) {
                     // 5. VALIDITY CHECK
                     // An asterisk '*' indicates that this project slot contains active user data.
                     if (data == '*') {
                         fileLibrarySize += 1;
+                        slotState = (signatureOk && slotFileComplete(&sd.file, strlen(kFileRef), kFileByteSize)) ? FS_USED : FS_BAD;
+                    } else if (signatureOk) {
+                        slotState = FS_EMPTY;  // the blank template of a cleared slot
                     }
                 }
             }
         }
+        fileSlotState[i] = slotState;
 
         // 6. RESOURCE CLEANUP
         // Ensure the file is closed before the next iteration to avoid FatFS handle overflows.
@@ -5695,19 +5703,27 @@ IWDG1->KR = 0xAAAA;  // a rescan of a big card takes longer than the watchdog
 
         // 4. HEADER VALIDATION
         // Attempt to open the drumkit file. If it exists, verify its internal marker.
+        // The state of the slot for the load and save screen: empty, used (a whole slot file) or not readable.
+        uint8_t slotState = FS_EMPTY;
         if (f_open(&sd.file, fileName, FA_READ) == FR_OK) {
+            slotState = FS_BAD;
             // Read the reference header string to ensure file type compatibility.
             if (f_read(&sd.file, refRead, strlen(kDrumkitRef), &sd.bytesread) == 0) {
+                const bool signatureOk = (sd.bytesread == strlen(kDrumkitRef)) && (strncmp(kDrumkitRef, refRead, strlen(kDrumkitRef)) == 0);
                 // Read the occupancy marker character immediately after the header.
                 if (f_read(&sd.file, &data, 1, &sd.bytesread) == FR_OK) {
                     // 5. VALIDITY CHECK
                     // An asterisk '*' confirms this slot is active and contains user data.
                     if (data == '*') {
                         drumkitLibrarySize += 1;
+                        slotState = (signatureOk && slotFileComplete(&sd.file, strlen(kDrumkitRef), kDrumkitByteSize)) ? FS_USED : FS_BAD;
+                    } else if (signatureOk) {
+                        slotState = FS_EMPTY;
                     }
                 }
             }
         }
+        kitSlotState[i] = slotState;
 
         // 6. RESOURCE CLEANUP
         // Close the file handle before the next iteration to avoid reaching the FatFS handle limit.
@@ -14208,12 +14224,12 @@ void Controller::file_menuLeft() {
     }
 }
 
-void Controller::file_menuUp() {
+void Controller::file_menuUp(bool repeat_) {
     /// @brief Increments file slot selection with wrap-around and refreshes active tab panel.
 
     // 1. FILE SLOT NAVIGATION
     // Increment slot pointer and wrap after reaching last index.
-    (fileMenuCounter < kMaxFile) ? fileMenuCounter += 1 : fileMenuCounter = kMinFile;
+    fileMenuCounter = static_cast<int8_t>((fileMenuCounter + slotStep(repeat_)) % kFileLibrarySize);  // one slot, or ten while the key is held
 
     // 2. SLOT STATUS VALIDATION
     // Recompute slot state (active/inactive/empty/corrupt) for current index.
@@ -14243,12 +14259,12 @@ void Controller::file_menuUp() {
     }
 }
 
-void Controller::file_menuDown() {
+void Controller::file_menuDown(bool repeat_) {
     /// @brief Decrements file slot selection with wrap-around and refreshes active tab panel.
 
     // 1. FILE SLOT NAVIGATION
     // Decrement slot pointer and wrap before first index.
-    (fileMenuCounter > kMinFile) ? fileMenuCounter -= 1 : fileMenuCounter = kMaxFile;
+    fileMenuCounter = static_cast<int8_t>((fileMenuCounter + kFileLibrarySize - slotStep(repeat_)) % kFileLibrarySize);
 
     // 2. SLOT STATUS VALIDATION
     // Recompute slot state (active/inactive/empty/corrupt) for current index.
@@ -14306,6 +14322,7 @@ void Controller::file_newAction() {
     reset();
     chainClear(songChain);
     dubClear(dubMix);
+    fileSlotCurrent = -1;  // a new song is in no slot
     euclid_resetSettings();
     genClear(genMix);
     chainRestart(songChain, chainPlay);
@@ -14407,7 +14424,10 @@ void Controller::file_loadAction() {
     // 4. TRANSACTION FLAG RESTORE
     // Release load-in-progress flag after SD transaction completes.
     loadAction = false;
-    if (alertType != ALERT_LOADERROR) autosave_markClean();
+    if (alertType != ALERT_LOADERROR) {
+        autosave_markClean();
+        fileSlotCurrent = fileMenuCounter;  // the slot the grid marks
+    }
     undoLog.clear();  // another song: its edits start a new history
 
     // 5. RESULT ALERT PRESENTATION
@@ -14455,7 +14475,9 @@ void Controller::file_saveAction() {
     if (alertType == ALERT_SAVESUCCESS) {
         autosave_deleteAll();
         autosave_markClean();
+        fileSlotCurrent = fileMenuCounter;  // the slot the grid marks
     }
+    fsSummarySlot = -1;  // what the slot holds changed: its card is read again
 
     // 4. TRANSACTION FLAG RESTORE
     // Release save-in-progress flag after SD transaction completes.
@@ -14506,6 +14528,8 @@ void Controller::file_clearAction() {
     // 2. SD CLEAR EXECUTION & RESULT MAPPING
     // Execute slot clear on SD and map result to alert type.
     (sd_clearFile(fileMenuCounter) == SD_OK) ? alertType = ALERT_CLEARSUCCESS : alertType = ALERT_CLEARERROR;
+    fsSummarySlot = -1;
+    if (fileSlotCurrent == fileMenuCounter) fileSlotCurrent = -1;
 
     // 3. STATUS & LIBRARY REFRESH
     // Re-evaluate slot status and refresh indexed file library cache.
@@ -14653,12 +14677,12 @@ void Controller::drumkit_menuLeft() {
     }
 }
 
-void Controller::drumkit_menuUp() {
+void Controller::drumkit_menuUp(bool repeat_) {
     /// @brief Increments drumkit slot selection with wrap-around and refreshes active tab panel.
 
     // 1. DRUMKIT SLOT NAVIGATION
     // Increment slot pointer and wrap after reaching last index.
-    (drumkitMenuCounter < kMaxDrumkit) ? drumkitMenuCounter += 1 : drumkitMenuCounter = kMinFile;
+    drumkitMenuCounter = static_cast<int8_t>((drumkitMenuCounter + slotStep(repeat_)) % kDrumkitLibrarySize);
 
     // 2. SLOT STATUS VALIDATION
     // Recompute slot state (active/inactive/empty/corrupt) for current index.
@@ -14688,12 +14712,12 @@ void Controller::drumkit_menuUp() {
     }
 }
 
-void Controller::drumkit_menuDown() {
+void Controller::drumkit_menuDown(bool repeat_) {
     /// @brief Decrements drumkit slot selection with wrap-around and refreshes active tab panel.
 
     // 1. DRUMKIT SLOT NAVIGATION
     // Decrement slot pointer and wrap before first index.
-    (drumkitMenuCounter > kMinDrumkit) ? drumkitMenuCounter -= 1 : drumkitMenuCounter = kMaxFile;
+    drumkitMenuCounter = static_cast<int8_t>((drumkitMenuCounter + kDrumkitLibrarySize - slotStep(repeat_)) % kDrumkitLibrarySize);
 
     // 2. SLOT STATUS VALIDATION
     // Recompute slot state (active/inactive/empty/corrupt) for current index.
@@ -14746,6 +14770,7 @@ void Controller::drumkit_newAction() {
     // 2. TRANSPORT RESET
     // Reset song transport and playback runtime state.
     reset();
+    kitSlotCurrent = -1;
 
     // 3. LAYER RESET
     // Reinitialize all layer instruments to default state.
@@ -14826,6 +14851,7 @@ void Controller::drumkit_loadAction() {
     // 4. TRANSACTION FLAG RESTORE
     // Release load-in-progress flag after SD transaction completes.
     loadAction = false;
+    if (alertType != ALERT_LOADERROR) kitSlotCurrent = drumkitMenuCounter;
 
     // 5. RESULT ALERT PRESENTATION
     // Display result alert and keep it visible for user acknowledgment.
@@ -14871,6 +14897,8 @@ void Controller::drumkit_saveAction() {
     // 4. TRANSACTION FLAG RESTORE
     // Release save-in-progress flag after SD transaction completes.
     saveAction = false;
+    if (alertType == ALERT_SAVESUCCESS) kitSlotCurrent = drumkitMenuCounter;
+    fsSummarySlot = -1;
 
     // 5. STATUS & LIBRARY REFRESH
     // Re-evaluate slot status and refresh indexed drumkit library cache.
@@ -14917,6 +14945,8 @@ void Controller::drumkit_clearAction() {
     // 2. SD CLEAR EXECUTION & RESULT MAPPING
     // Execute slot clear on SD and map result to alert type.
     (sd_clearDrumkit(drumkitMenuCounter) == SD_OK) ? alertType = ALERT_CLEARSUCCESS : alertType = ALERT_CLEARERROR;
+    fsSummarySlot = -1;
+    if (kitSlotCurrent == drumkitMenuCounter) kitSlotCurrent = -1;
 
     // 3. STATUS & LIBRARY REFRESH
     // Re-evaluate slot status and refresh indexed drumkit library cache.
@@ -22829,7 +22859,8 @@ bool Controller::laneViewHidden() const {
     /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG, ROUTING,
     /// FILTER, EQ and instrument page 2 pages). Everything that draws into a lane checks it, and asks for the view to be
     /// refreshed instead.
-    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU);
+    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU) ||
+           (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (menuTab > 0));  // the load, save and clear tabs show the slots
 }
 
 void Controller::lcd_drawLaneView() {
@@ -22847,6 +22878,8 @@ void Controller::lcd_drawLaneView() {
     dubReturnDrawn[0] = dubReturnDrawn[1] = 0;
     noteViewKey = 0;                                                  // and no step edit screen
     hissViewKey = 0;                                                  // and no HISS page
+    fileViewKey = 0;                                                  // and no slot grid
+    fsDrawnSlot = -1;
     lcd_drawLaneViewData();
 }
 
@@ -22880,6 +22913,10 @@ void Controller::lcd_drawLaneViewData() {
             break;
         case NOTE_MENU:
             lcd_drawNoteViewData();
+            break;
+        case FILE_MENU:
+        case DRUMKIT_MENU:
+            lcd_drawFileViewData();
             break;
         default:
             break;
@@ -22990,6 +23027,7 @@ void Controller::lcd_updateLaneView() {
     if ((menu == LAYER_INST_1_MENU) && (sampleViewState() != sampleViewStateDrawn)) viewDirty = true;
     if ((menu == DUB_MENU) && (dubViewState() != dubViewStateDrawn)) viewDirty = true;
     if ((menu == NOTE_MENU) && (noteViewState() != noteViewStateDrawn)) viewDirty = true;
+    if (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (fileViewState() != fileViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -23677,6 +23715,148 @@ void Controller::lcd_drawGenViewData() {
     genViewPeaks(in.type, in.ratio, in.octaves, in.shape, in.length, peaks, kGvNoteCols, static_cast<uint8_t>(kGvNoteHalf), rms);
     GsLcd g{lcd};
     gsDrawGen(g, in, peaks, rms);
+}
+
+/* Load and save screens (FileScreens.h, FileSummary.h) -------------------------------*/
+
+static_assert((kFileLibrarySize == kFsSlots) && (kDrumkitLibrarySize == kFsSlots), "the slot tables hold every slot");
+
+uint8_t Controller::slotStep(bool repeat_) {
+    /// @brief How far UP or DOWN moves the slot cursor: one slot per press; while the key is held, one
+    /// slot for the first 8 repeats, then ten at a time (the pad of ADD is SHIFT here, so no SHIFT).
+    if (!repeat_) {
+        slotRepeat = 0;
+        return 1;
+    }
+    if (slotRepeat < 255) slotRepeat++;
+    return (slotRepeat >= 8) ? static_cast<uint8_t>(10) : static_cast<uint8_t>(1);
+}
+
+uint32_t Controller::fileViewState() const {
+    /// @brief A fingerprint of everything the slot grid shows: the tab, the cursor, the slot states, the marked slot.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    const bool kit = (menu == DRUMKIT_MENU);
+    mix(kit ? 1u : 0u);
+    mix(static_cast<uint32_t>(menuTab + 1));
+    mix(static_cast<uint32_t>((kit ? drumkitMenuCounter : fileMenuCounter) + 2));
+    mix(static_cast<uint32_t>((kit ? kitSlotCurrent : fileSlotCurrent) + 2));
+    const uint8_t* states = kit ? kitSlotState : fileSlotState;
+    for (uint8_t i = 0; i < kFsSlots; i++) mix(states[i]);
+    return h | 1u;
+}
+
+bool Controller::sd_readSlotSummary(FsKind kind_, uint8_t slot_, FsSummary& out_) {
+    /// @brief Reads what a slot file shows (FileSummary.h): the kit block (tempo, MEASURE, BAR, the
+    /// names) and, for a song, the first bank of each layer. About 15 small reads, a few tens of
+    /// milliseconds; the watchdog is fed between them.
+    out_ = FsSummary();
+    char path[50];
+    snprintf(path, sizeof path, "%s%03u%s", (kind_ == FS_SONG) ? kFileStart : kDrumkitStart, static_cast<unsigned>(slot_ + 1), (kind_ == FS_SONG) ? kFileEnd : kDrumkitEnd);
+    bool ok = false;
+    keyboard_disable();
+    f_close(&sd.file);
+    if (f_open(&sd.file, path, FA_READ) == FR_OK) {
+        uint8_t kit[kDrumkitByteSize];
+        UINT got = 0;
+        if ((f_lseek(&sd.file, kFsHeaderBytes) == FR_OK) && (f_read(&sd.file, kit, kFsKitBytes, &got) == FR_OK) && (got == kFsKitBytes) && fsParseKit(kit, out_)) {
+            ok = true;
+            if (kind_ == FS_SONG) {
+                const uint32_t interval = fsSongInterval(out_.measure, out_.bar);
+                uint8_t bank[kFsBankBytes];
+                for (uint8_t l = 0; l < kFsLanes; l++) {
+                    IWDG1->KR = 0xAAAA;
+                    if ((f_lseek(&sd.file, fsFileLayerBankOffset(l)) != FR_OK) || (f_read(&sd.file, bank, kFsBankBytes, &got) != FR_OK) || (got != kFsBankBytes)) break;
+                    fsParseBank(bank, l, interval, out_);
+                }
+            }
+        }
+        f_close(&sd.file);
+    }
+    keyboard_enable();
+    return ok;
+}
+
+void Controller::fsSummaryFromMemory(FsSummary& out_) const {
+    /// @brief The song in memory as the card shows a slot (SAVE puts the two side by side): tempo,
+    /// MEASURE and BAR, the names, the first bank's beats, mapped by the same code as a file's.
+    out_ = FsSummary();
+    out_.valid = true;
+    out_.tempo = static_cast<uint16_t>(rhythm.tempo);
+    out_.measure = rhythm.measure;
+    out_.bar = rhythm.bar;
+    const uint32_t interval = fsSongInterval(rhythm.measure, rhythm.bar);
+    uint8_t bank[kFsBankBytes];
+    for (uint8_t l = 0; l < kFsLanes; l++) {
+        const Layer& layer = layerLibrary[l];
+        if (layer.instLoaded != -1) fsCleanName(reinterpret_cast<const uint8_t*>(layer.instLoadedData.nameLong), kFileNameSize, out_.inst[l], kFsNameSize);
+        if (layer.sampleLoaded != -1) fsCleanName(reinterpret_cast<const uint8_t*>(layer.sampleLoadedData.nameLong), kFileNameSize, out_.sample[l], kFsNameSize);
+        memset(bank, 0, sizeof bank);
+        bank[0] = 'b';
+        for (uint8_t k = 0; k < kBeatLibrarySize; k++) {
+            const Beat& beat = layer.bankLibrary[0].beatLibrary[k];
+            const uint16_t at = static_cast<uint16_t>(1 + k * 4);
+            bank[at + 0] = static_cast<uint8_t>(beat.getData() >> 8);
+            bank[at + 1] = static_cast<uint8_t>(beat.getData() & 0xFF);
+            bank[at + 2] = static_cast<uint8_t>(beat.getStartInterval() >> 8);
+            bank[at + 3] = static_cast<uint8_t>(beat.getStartInterval() & 0xFF);
+        }
+        fsParseBank(bank, l, interval, out_);
+    }
+}
+
+void Controller::lcd_drawFileViewData() {
+    /// @brief The load, save and clear tabs of the FILE and DRUMKIT pages: all 100 slots as a grid and a
+    /// card for the selected one. A move of the cursor draws two cells and the card; anything else
+    /// (the tab, a state, the marked slot) draws the whole screen.
+    fileViewStateDrawn = fileViewState();
+    const bool kit = (menu == DRUMKIT_MENU);
+    int16_t slot = kit ? drumkitMenuCounter : fileMenuCounter;
+    if ((slot < 0) || (slot >= kFsSlots)) slot = 0;
+    const FsMode mode = (menuTab == 1) ? FS_LOAD : ((menuTab == 2) ? FS_SAVE : FS_CLEAR);
+    const FsKind kind = kit ? FS_KIT : FS_SONG;
+    const uint8_t* states = kit ? kitSlotState : fileSlotState;
+    const int16_t current = kit ? kitSlotCurrent : fileSlotCurrent;
+
+    // What the screen was drawn from, without the cursor.
+    uint32_t key = 2166136261u;
+    auto mix = [&key](uint32_t v) { key = (key ^ v) * 16777619u; };
+    mix(kit ? 1u : 0u);
+    mix(mode);
+    mix(static_cast<uint32_t>(current + 2));
+    for (uint8_t i = 0; i < kFsSlots; i++) mix(states[i]);
+    key |= 1u;
+    const bool full = (key != fileViewKey);
+    if (!full && (slot == fsDrawnSlot)) return;
+    IWDG1->KR = 0xAAAA;
+
+    FsView& v = fsView;
+    v.kind = kind;
+    v.mode = mode;
+    v.selected = static_cast<uint8_t>(slot);
+    v.current = current;
+    memcpy(v.state, states, kFsSlots);
+    // The card: a used slot's file is read (the last one read is kept).
+    if (v.state[slot] == FS_USED) {
+        if ((fsSummarySlot != slot) || (fsSummaryKind != static_cast<int8_t>(kind))) {
+            sd_readSlotSummary(kind, static_cast<uint8_t>(slot), v.sel);  // a file that does not read leaves sel.valid false: the card is empty
+            fsSummarySlot = slot;
+            fsSummaryKind = static_cast<int8_t>(kind);
+        }
+    } else {
+        v.sel.valid = false;
+        fsSummarySlot = -1;
+    }
+    if ((mode == FS_SAVE) && !kit) fsSummaryFromMemory(v.now);
+
+    GsLcd g{lcd};
+    if (full) {
+        fsDrawGrid(g, v);
+        fileViewKey = key;
+    } else {
+        fsMoveSelection(g, v, static_cast<uint8_t>(fsDrawnSlot));
+    }
+    fsDrawnSlot = slot;
 }
 
 /* DUB page (DubMix.h) --------------------------------------------------------------*/

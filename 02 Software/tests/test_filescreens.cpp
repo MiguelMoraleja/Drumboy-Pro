@@ -106,21 +106,24 @@ int main() {
                 fsDrawGrid(lcd, makeView(static_cast<FsKind>(kind), static_cast<FsMode>(mode), static_cast<uint8_t>(sel), static_cast<int16_t>(sel / 2)));
                 checkScreen(lcd, "grid sweep");
             }
-    // LIST: pages 0, 3 and the last, selected row at the top, the middle and the bottom.
-    for (uint8_t first : {0, 30, 90}) {  // the first page is the busiest
-        for (uint8_t sel : {static_cast<uint8_t>(first), static_cast<uint8_t>(first + 4), static_cast<uint8_t>(first + 9)}) {
-            FakeLcd lcd;
-            lcd.dirtyArea();
-            const FsView v = makeView(FS_SONG, FS_LOAD, sel, 17);
-            FsSummary summaries[10];
-            for (uint8_t i = 0; i < 10; i++) summaries[i] = makeSong(first + i, static_cast<uint16_t>(90 + ((first + i) * 7) % 60), static_cast<uint8_t>(2 + (first + i) % 4 * 2), 4, static_cast<uint8_t>(5 + (first + i) % 6));
-            fsDrawList(lcd, v, first, summaries);
-            char name[40];
-            snprintf(name, sizeof name, "list_page%u_sel%u", first, sel);
-            checkScreen(lcd, name);
-            if ((first == 0) && (sel == 4)) lcd.dump("list_load_song");
-        }
-    }
+    // Moving the cursor draws two cells and the card: the picture is the one a fresh drawing gives, for every
+    // mode and kind, with a used, an empty and an unreadable slot as the old and the new selection.
+    for (int kind = 0; kind < 2; kind++)
+        for (int mode = 0; mode < 3; mode++)
+            for (uint8_t from : {0, 12, 57, 63, 99})
+                for (uint8_t to : {1, 12, 20, 57, 62, 90}) {
+                    FsView a = makeView(static_cast<FsKind>(kind), static_cast<FsMode>(mode), from, 5);
+                    FakeLcd moved;
+                    moved.dirtyArea();
+                    fsDrawGrid(moved, a);
+                    FsView b = makeView(static_cast<FsKind>(kind), static_cast<FsMode>(mode), to, 5);
+                    fsMoveSelection(moved, b, from);
+                    FakeLcd fresh;
+                    fresh.dirtyArea();
+                    fsDrawGrid(fresh, b);
+                    CHECK(moved.pixels == fresh.pixels, "kind %d mode %d: %u to %u differs from a fresh drawing", kind, mode, from, to);
+                    CHECK(moved.outsideArea == 0 && moved.unsupported == 0, "the move stays inside the area with legal text");
+                }
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

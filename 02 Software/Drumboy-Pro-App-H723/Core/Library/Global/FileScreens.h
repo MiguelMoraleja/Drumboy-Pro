@@ -2,12 +2,10 @@
 // header-only and templated on the LCD (as GeneratorScreens.h), so the firmware draws with its Lcd and a
 // PC test draws the same code on a pixel buffer and writes the pictures (test_filescreens).
 //
-// Two layouts are drawn here so the owner can choose; the one not chosen is deleted.
-//   GRID  all 100 slots as cells (used, empty, unreadable, the one selected, the one last loaded or
-//         saved), and a card for the selected slot: tempo, length, the ten lanes as a thumbnail and the
-//         instruments. SAVE shows the song in memory next to what the slot holds.
-//   LIST  ten slots at a time, one row per lane row of the main screen: number, state, tempo, length,
-//         a thumbnail and the first instruments; a scroll bar on the right.
+// GRID: all 100 slots as cells (used, empty, unreadable, the one selected, the one last loaded or
+// saved), and a card for the selected slot: tempo, length, the ten lanes as a thumbnail and the
+// instruments. SAVE shows the song in memory next to what the slot holds. (A list of ten rows was drawn
+// as the alternative and not chosen.)
 // A song slot shows what its file holds (no name is stored): tempo, MEASURE and BAR, the beats of the
 // first bank, the instrument names. A kit slot shows its ten instruments and samples.
 #ifndef __FILESCREENS_H
@@ -120,7 +118,7 @@ inline void fsGridCell(G& g, const FsView& v_, uint8_t slot_) {
     const uint8_t state = v_.state[slot_];
     // The cell: filled for a used slot, an outline for an empty one, red for an unreadable one.
     g.setBackColor(kGsBlack);
-    g.clearRect(x, y, kFsCellW, kFsCellH);
+    g.clearRect(static_cast<uint16_t>(x - 2), static_cast<uint16_t>(y - 2), kFsCellW + 4, kFsCellH + 4);  // the cell and the gap around it, where the cursor's frame is
     uint16_t number = kGsGray50;
     if (state == FS_USED) {
         g.setForeColor(kGsCyanDim);
@@ -203,14 +201,11 @@ inline void fsBanner(G& g, uint16_t x_, uint16_t y_, uint16_t w_, uint16_t color
     gsDraw(g, line2_, static_cast<uint16_t>(x_ + 8), static_cast<uint16_t>(y_ + 19));
 }
 
+// The right side: the selected slot's number and state, its card, and the banner. Clears its own area.
 template <class G>
-inline void fsDrawGrid(G& g, const FsView& v_) {
+inline void fsDrawCard(G& g, const FsView& v_) {
     g.setBackColor(kGsBlack);
-    g.clearRect(kGsAreaX, kGsAreaY, kGsAreaW, kGsAreaH);
-    fsTitle(g, v_);
-    for (uint8_t i = 0; i < kFsSlots; i++) fsGridCell(g, v_, i);
-
-    // The card on the right.
+    g.clearRect(kFsCardX - 4, kFsGridY - 2, 436, 432 - (kFsGridY - 2));  // x 496..931: the second thumbnail's frame reaches 926
     char line[64];
     const bool used = (v_.state[v_.selected] == FS_USED);
     g.setFont(GS_FONT_10x14);
@@ -228,7 +223,7 @@ inline void fsDrawGrid(G& g, const FsView& v_) {
 
     const uint16_t cardY = kFsGridY + 28;
     if (v_.kind == FS_KIT) {
-        if (used) fsKitCard(g, v_.sel, kFsCardX, cardY);
+        if (used && v_.sel.valid) fsKitCard(g, v_.sel, kFsCardX, cardY);
     } else if (v_.mode == FS_SAVE) {
         // Two thumbnails side by side: what is in memory, and what the slot holds now.
         g.setFont(GS_FONT_05x07);
@@ -236,128 +231,68 @@ inline void fsDrawGrid(G& g, const FsView& v_) {
         gsDraw(g, "IN MEMORY", kFsCardX, cardY);
         gsDraw(g, used ? "IN THE SLOT NOW" : "THE SLOT IS FREE", kFsCardX + 212, cardY);
         fsThumb(g, v_.now, kFsCardX + 2, cardY + 14, 2, 9, 1, kFsThumbCols, kGsGray50);
-        if (used) fsThumb(g, v_.sel, kFsCardX + 214, cardY + 14, 2, 9, 1, kFsThumbCols, kGsGray50);
+        if (used && v_.sel.valid) fsThumb(g, v_.sel, kFsCardX + 214, cardY + 14, 2, 9, 1, kFsThumbCols, kGsGray50);
         g.setFont(GS_FONT_05x07);
         g.setForeColor(kGsWhite);
         snprintf(line, sizeof line, "%u BPM  M %u  B %u", static_cast<unsigned>(v_.now.tempo), static_cast<unsigned>(v_.now.measure), static_cast<unsigned>(v_.now.bar));
         gsDraw(g, line, kFsCardX, cardY + 14 + 108);
-        if (used) {
+        if (used && v_.sel.valid) {
             snprintf(line, sizeof line, "%u BPM  M %u  B %u", static_cast<unsigned>(v_.sel.tempo), static_cast<unsigned>(v_.sel.measure), static_cast<unsigned>(v_.sel.bar));
             gsDraw(g, line, kFsCardX + 212, cardY + 14 + 108);
         }
-    } else if (used) {
+    } else if (used && v_.sel.valid) {
         fsSongCard(g, v_.sel, kFsCardX, cardY, 4, kFsThumbCols, true);
     }
 
-    // What ADD will do.
+    // What ADD will do (ADD opens the confirmation alert, ADD again confirms, CLEAR cancels).
     const uint16_t by = 396;
+    const bool song = (v_.kind == FS_SONG);
     if (v_.mode == FS_LOAD) {
         if (used) {
-            fsBanner(g, kFsCardX, by, kFsCardW, kGsCyan, "ADD LOADS THIS", v_.kind == FS_SONG ? "UNSAVED WORK IS KEPT AS AN AUTOSAVE FIRST" : "THE KIT REPLACES THE INSTRUMENTS OF THE SONG");
+            fsBanner(g, kFsCardX, by, kFsCardW, kGsCyan, song ? "ADD LOADS THIS SONG, THEN ADD AGAIN" : "ADD LOADS THIS KIT, THEN ADD AGAIN",
+                     song ? "UNSAVED WORK IS AUTOSAVED FIRST IF AUTOSAVE IS ON" : "THE KIT REPLACES THE INSTRUMENTS OF THE SONG");
         } else if (v_.state[v_.selected] == FS_BAD) {
-            fsBanner(g, kFsCardX, by, kFsCardW, 0xF800, "CAN NOT LOAD THIS FILE", "IT IS CUT SHORT OR FROM NEWER FIRMWARE");
+            fsBanner(g, kFsCardX, by, kFsCardW, 0xF800, "THIS FILE CAN NOT BE LOADED", "CUT SHORT, DAMAGED OR FROM NEWER FIRMWARE");
         } else {
             fsBanner(g, kFsCardX, by, kFsCardW, kGsGray50, "NOTHING TO LOAD", "THIS SLOT IS EMPTY");
         }
     } else if (v_.mode == FS_SAVE) {
         if (used) {
-            fsBanner(g, kFsCardX, by, kFsCardW, kGsYellow, "ADD REPLACES WHAT IS IN THIS SLOT", "THE OLD FILE IS KEPT UNTIL THE NEW ONE IS CHECKED");
+            fsBanner(g, kFsCardX, by, kFsCardW, kGsYellow, "ADD REPLACES THIS SLOT, THEN ADD AGAIN", "THE OLD FILE STAYS UNTIL THE NEW ONE IS CHECKED");
         } else {
-            fsBanner(g, kFsCardX, by, kFsCardW, kGsGreen, "ADD SAVES INTO THIS FREE SLOT", "CHECKED AFTER WRITING");
+            fsBanner(g, kFsCardX, by, kFsCardW, kGsGreen, "ADD SAVES HERE, THEN ADD AGAIN", "THE NEW FILE IS CHECKED AFTER WRITING");
         }
     } else {
-        fsBanner(g, kFsCardX, by, kFsCardW, used ? static_cast<uint16_t>(0xF800) : kGsGray50, used ? "ADD CLEARS THIS SLOT" : "THIS SLOT IS ALREADY EMPTY", "THERE IS NO UNDO");
+        if (used || (v_.state[v_.selected] == FS_BAD)) {
+            fsBanner(g, kFsCardX, by, kFsCardW, 0xF800, "ADD CLEARS THIS SLOT, THEN ADD AGAIN", "THERE IS NO UNDO");
+        } else {
+            fsBanner(g, kFsCardX, by, kFsCardW, kGsGray50, "THIS SLOT IS ALREADY EMPTY", "NOTHING TO CLEAR");
+        }
     }
+}
+
+template <class G>
+inline void fsDrawGrid(G& g, const FsView& v_) {
+    g.setBackColor(kGsBlack);
+    g.clearRect(kGsAreaX, kGsAreaY, kGsAreaW, kGsAreaH);
+    fsTitle(g, v_);
+    for (uint8_t i = 0; i < kFsSlots; i++) {
+        if (i != v_.selected) fsGridCell(g, v_, i);
+    }
+    fsGridCell(g, v_, v_.selected);  // last: a neighbour's clear would cut the cursor's frame
+    fsDrawCard(g, v_);
     g.setFont(GS_FONT_05x07);
     g.setForeColor(kGsGray50);
     g.setAlignment(GS_LEFT);
-    gsDraw(g, "TURN: NEXT SLOT   SHIFT AND TURN: TEN SLOTS", kFsGridX, 433);
+    gsDraw(g, "UP AND DOWN: NEXT SLOT   HOLD: TEN AT A TIME   LEFT AND RIGHT: NEW LOAD SAVE CLEAR", kFsGridX, 433);
 }
 
-/* LIST: ten rows, one per lane row of the main screen -------------------------------------*/
-
-const uint16_t kFsRowY = 131, kFsRowPitch = 31;
-
+// The cursor moved from oldSelected_ to v_.selected and nothing else changed: two cells and the card.
 template <class G>
-inline void fsListRow(G& g, const FsView& v_, uint8_t slot_, const FsSummary& s_, uint8_t row_) {
-    const uint16_t y = static_cast<uint16_t>(kFsRowY + row_ * kFsRowPitch);
-    const uint8_t state = v_.state[slot_];
-    const bool selected = (slot_ == v_.selected);
-    g.setBackColor(kGsBlack);
-    g.clearRect(kGsAreaX, y, kGsAreaW - 14, kFsRowPitch - 1);  // 10 rows of 31 are 310 px: the last one is one short of the area's 309
-    g.setForeColor(kGsGray25);
-    g.drawHLine(kGsAreaX, y, kGsAreaW - 14);
-    if (selected) {
-        g.setForeColor(kGsYellow);
-        g.drawRect(kGsAreaX + 2, static_cast<uint16_t>(y + 1), kGsAreaW - 18, kFsRowPitch - 3);
-    }
-    char line[48];
-    g.setFont(GS_FONT_10x14);
-    g.setAlignment(GS_LEFT);
-    g.setForeColor(state == FS_USED ? kGsWhite : ((state == FS_BAD) ? static_cast<uint16_t>(0xF800) : kGsGray50));
-    snprintf(line, sizeof line, "%03u", static_cast<unsigned>(slot_ + 1));
-    gsDraw(g, line, 38, static_cast<uint16_t>(y + 9));
-    // The state mark.
-    if (state == FS_USED) {
-        g.setForeColor(kGsCyan);
-        g.fillCircle(94, static_cast<uint16_t>(y + 15), 5);
-    } else if (state == FS_BAD) {
-        g.setForeColor(0xF800);
-        g.drawLine(89, static_cast<uint16_t>(y + 10), 99, static_cast<uint16_t>(y + 20));
-        g.drawLine(99, static_cast<uint16_t>(y + 10), 89, static_cast<uint16_t>(y + 20));
-    } else {
-        g.setForeColor(kGsGray25);
-        g.drawRect(89, static_cast<uint16_t>(y + 10), 10, 10);
-    }
-    if (static_cast<int16_t>(slot_) == v_.current) {
-        g.setForeColor(kGsMagenta);
-        g.fillRect(108, static_cast<uint16_t>(y + 12), 6, 6);
-    }
-    if (state != FS_USED) {
-        g.setFont(GS_FONT_07x09);
-        g.setForeColor(kGsGray50);
-        gsDraw(g, state == FS_BAD ? "NOT READABLE" : "EMPTY", 130, static_cast<uint16_t>(y + 11));
-        return;
-    }
-    g.setFont(GS_FONT_07x09);
-    g.setForeColor(kGsWhite);
-    snprintf(line, sizeof line, "%u BPM", static_cast<unsigned>(s_.tempo));
-    gsDraw(g, line, 130, static_cast<uint16_t>(y + 5));
-    g.setFont(GS_FONT_05x07);
-    g.setForeColor(kGsGray75);
-    snprintf(line, sizeof line, "M %u  B %u", static_cast<unsigned>(s_.measure), static_cast<unsigned>(s_.bar));
-    gsDraw(g, line, 130, static_cast<uint16_t>(y + 18));
-    // The thumbnail: ten lanes of 2 px, the first bank across 420 px.
-    for (uint8_t l = 0; l < kFsLanes; l++) {
-        const uint16_t top = static_cast<uint16_t>(y + 4 + l * 2 + (l >= 5 ? 1 : 0));
-        g.setForeColor((l % 2 == 0) ? kGsWhite : kGsGray75);
-        for (uint8_t c = 0; c < kFsThumbCols; c++) {
-            if (s_.lane[l][c] > 0) g.fillRect(static_cast<uint16_t>(260 + c * 4), top, 3, 2);
-        }
-    }
-    // The first instruments.
-    g.setFont(GS_FONT_05x07);
-    g.setForeColor(kGsGray75);
-    snprintf(line, sizeof line, "%.8s %.8s %.8s", s_.inst[0], s_.inst[1], s_.inst[2]);
-    gsDraw(g, line, 700, static_cast<uint16_t>(y + 6));
-    snprintf(line, sizeof line, "%.8s %.8s %.8s", s_.inst[3], s_.inst[4], s_.inst[5]);
-    gsDraw(g, line, 700, static_cast<uint16_t>(y + 17));
-}
-
-// first_ = the slot at the top of the page (a multiple of 10 here); summaries_[i] belongs to slot first_ + i.
-template <class G>
-inline void fsDrawList(G& g, const FsView& v_, uint8_t first_, const FsSummary* summaries_) {
-    g.setBackColor(kGsBlack);
-    g.clearRect(kGsAreaX, kGsAreaY, kGsAreaW, kGsAreaH);
-    for (uint8_t i = 0; i < 10; i++) {
-        const uint8_t slot = static_cast<uint8_t>(first_ + i);
-        if (slot < kFsSlots) fsListRow(g, v_, slot, summaries_[i], i);
-    }
-    // The scroll bar: the ten slots shown out of 100.
-    g.setForeColor(kGsGray25);
-    g.drawRect(kGsAreaX + kGsAreaW - 10, kGsAreaY, 8, kGsAreaH - 1);
-    g.setForeColor(kGsCyan);
-    g.fillRect(kGsAreaX + kGsAreaW - 9, static_cast<uint16_t>(kGsAreaY + 1 + (first_ * (kGsAreaH - 5)) / kFsSlots), 6, static_cast<uint32_t>(10 * (kGsAreaH - 5) / kFsSlots));
+inline void fsMoveSelection(G& g, const FsView& v_, uint8_t oldSelected_) {
+    if (oldSelected_ < kFsSlots) fsGridCell(g, v_, oldSelected_);
+    fsGridCell(g, v_, v_.selected);
+    fsDrawCard(g, v_);
 }
 
 #endif

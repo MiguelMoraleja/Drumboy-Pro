@@ -7,6 +7,7 @@
 #include "BeatList.h"
 #include "Euclid.h"
 #include "Global.h"
+#include "FileSummary.h"
 #include "Lcd.h"
 #include "SlotFile.h"
 #include "fatfs.h"
@@ -282,6 +283,23 @@ class Controller {
 
     int8_t fileMenuCounter;           
     int8_t drumkitMenuCounter;
+    // Load and save screens (FileScreens.h, FileSummary.h): the grid of the 100 slots and the card of the selected one.
+    uint8_t fileSlotState[kFsSlots] = {0};      // FsState of each song slot, from the library scan
+    uint8_t kitSlotState[kFsSlots] = {0};       // and of each drumkit slot
+    int16_t fileSlotCurrent = -1;               // the song slot last loaded or saved (-1 = none)
+    int16_t kitSlotCurrent = -1;                // the same for drumkits
+    FsView fsView;                              // what the screen shows (the summaries too): about 3 KB
+    int16_t fsSummarySlot = -1;                 // which slot fsView.sel holds (-1 = none), and of which kind
+    int8_t fsSummaryKind = -1;
+    int16_t fsDrawnSlot = -1;                   // the cursor as drawn (-1 = the screen is not drawn)
+    uint32_t fileViewKey = 0;                   // what the grid was drawn from, without the cursor (0 = nothing)
+    uint32_t fileViewStateDrawn = 0;
+    uint8_t slotRepeat = 0;                     // consecutive repeats of a held UP or DOWN: after 8 the step is ten slots
+    uint8_t slotStep(bool repeat_);
+    uint32_t fileViewState() const;
+    void lcd_drawFileViewData();
+    bool sd_readSlotSummary(FsKind kind_, uint8_t slot_, FsSummary& out_);
+    void fsSummaryFromMemory(FsSummary& out_) const;
 
     /* Transition & Animation Flags ------------------------------ */
 
@@ -977,8 +995,8 @@ class Controller {
 
     void file_menuRight();
     void file_menuLeft();
-    void file_menuUp();
-    void file_menuDown();
+    void file_menuUp(bool repeat_ = false);
+    void file_menuDown(bool repeat_ = false);
 
     void file_newSelect();
     void file_newAction();
@@ -995,8 +1013,8 @@ class Controller {
 
     void drumkit_menuRight();
     void drumkit_menuLeft();
-    void drumkit_menuUp();
-    void drumkit_menuDown();
+    void drumkit_menuUp(bool repeat_ = false);
+    void drumkit_menuDown(bool repeat_ = false);
 
     void drumkit_newSelect();
     void drumkit_newAction();

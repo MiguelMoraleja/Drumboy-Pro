@@ -983,3 +983,36 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Status: built in V1.18 (test build, not released).** **Done when** (on the unit): SAVE and LOAD of songs and kits work as before (SAVE a little slower: it writes, reads back and replaces); a song saved with a different MEASURE and BAR than the one in memory loads with the right length; recording over the pre-count still plays the first hits in time, and the beats appear in the lanes right after; no `CRASH` and no stray files except at most a `.tmp` or `.new` after a power cut (they are tidied at the next start).
 
+### 66. Generators: noise and tones on a layer, a hiss bed on the mixer
+
+**Asked by the owner (2026-11-21):** a noise generator for hiss, sirens and effects. Design agreed in chat: a layer plays a generator instead of a sample, and the mixer gets a continuous hiss bed. The DSP is hardware-free in `Generator.h`, host-tested in `test_generator`.
+
+**GEN on a layer** (page 3, tab 7: OFF, WHITE, PINK, BROWN, TAPE, DUST, SIREN, RISER, LASER). The sequencer, fills, notes, MIDI, LFOs, routing, pan, sends and the 50-sample fades work as for a sample, and no sample needs to be loaded. The layer's fields keep their meaning where they can:
+
+| Field | With GEN on |
+|---|---|
+| SAMPLE (page 1) | shows the generator's name, in yellow |
+| LEVEL | level |
+| PITCH | the generator's frequency: the tone of a noise (low-pass from 12 kHz at 0), the band of TAPE (4 kHz) and RISER (1.5 kHz), the clicks per second of DUST (6), the pitch of SIREN (600 Hz) and LASER (800 Hz) |
+| DIRECTION | the shape of the sweep: up, down, up-down, down-up |
+| RESOLUTION | bitcrush, as for a sample |
+| START → LENGTH (page 2) | the note's length in 16ths (1-64), following the tempo; the LFO on START moves it |
+| END → SWEEP (page 2) | 0 to 4 octaves over the note, on what PITCH sets (on SIREN: its warble rate); the LFO on END moves it |
+| TIMING, PROB | as for a sample |
+| STYLE OFF | the generator plays plain: its own pitch, no sweep, no bitcrush, for its LENGTH |
+
+The sample's own START and END are kept and come back when GEN is OFF. The generators: white, pink (Paul Kellet's filter) and brown noise through a low-pass; TAPE (pink noise through a band-pass with a slow random wobble of the level); DUST (sparse crackle over a quiet hiss); SIREN (a band-limited square, PolyBLEP, whose pitch warbles half an octave each way, softened by a low-pass); RISER (white noise through a resonant band-pass, Q 5); LASER (a sine). Filters are state-variable filters (stable under fast sweeps). A note starts with a 2 ms fade-in.
+
+**HISS on DUB page 2** (bottom row: HISS = OFF, TAPE, VINYL, PINK, WHITE; HISS LEVEL; HISS TONE; top right: HISS DUCK). A stereo bed (left and right are independent noises) added to the master before master volume, in CHAIN and in DUB. LEVEL 100 is about -21 dBFS RMS, 50 is 12 dB lower; TONE is a low-pass from 1 kHz to 19.7 kHz; DUCK pulls the bed down while the layers play (envelope of the loudest layer, release about 0.25 s). Level and ducking glide across each block (no zipper noise), and setting HISS to OFF fades it out over one block, after which it costs nothing.
+
+**Files.** A `GEN` block after the `DUB` block of a song (38 bytes: version 1, type, length and sweep per layer, the four hiss settings). Older firmware stops reading before it; a song without it loads with GEN OFF everywhere and no hiss. Autosave sees GEN edits. Not in kit files and not in layer copy/paste yet.
+
+**Sound rule.** All at 44.1 kHz in 32-bit float. Swept filter coefficients are recomputed every 4 samples (an 11 kHz control rate), which is inaudible on a sweep and saves most of the cost. Estimated cost: under 1 % of the audio block per playing generator and under 1 % for the hiss bed; to measure with `make PROFILE=1`. Voices and the hiss bed sit in the DTCM RAM (`GenDsp`).
+
+**Status: first version built (branch `claude/noise-generator`), waiting for the hardware test.** Host tests cover the file block, lengths, sweep shapes, every generator (finite, bounded, audible, fades in, reproducible, extremes), the noise colours, PITCH and sweeps, the siren's pitch and warble, the laser's direction, the crackle density, and the hiss bed's level, stereo, ducking, release, glide and fade-out.
+
+**To judge on the device:** the levels of the generators next to the samples (they sit around -12 to -17 dBFS RMS at LEVEL 100, DUST much lower with loud clicks); whether the 50-sample fade at the end of a long noise is too abrupt (a RELEASE could come later); the hiss levels.
+
+**Next:** GEN in kit files and in layer copy/paste; a stereo generator (the noises could fill the right channel like a stereo sample); a release time; a graph on page 1 instead of the sample's waveform; LFOs that run during a note (with [3](#3-lfos-cant-modulate-filters-or-effects) and the per-block LFO idea), which would let an LFO move a siren continuously.
+
+**Done when.** A PINK layer with LENGTH 16 and a long reverb plays a hiss swell every bar; a SIREN thrown into the echo warbles; a TAPE bed with DUCK 60 breathes with the kick; a V1.16 song loads with no generators and sounds the same.

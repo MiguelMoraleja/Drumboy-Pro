@@ -612,11 +612,10 @@ void Controller::update() {
         while (io.midi.rxNoteQueue.pop(noteEvent)) {
             uint8_t layerNum = noteEvent.data1 % 12;  // Map MIDI key to layer (0-11)
             if (layerNum < kLayerLibrarySize) {
-                Layer& layer = layerLibrary[layerNum];
                 const uint8_t level = midiVelocityToLevel(noteEvent.data2);
 
                 // Trigger audio if layer is active, unmuted and not silenced by a SOLO
-                if (layerAudible(layerNum) && (layer.samplePlay))
+                if (layerAudible(layerNum) && layer_canPlay(layerNum))
                     layer_playBeat(layerNum, kNumberDataLibrary[level].powMultiplier);
 
                 // Write note to the current sequencer step if Recording is enabled, with the
@@ -1743,12 +1742,11 @@ void Controller::keyboard_action() {
                         } else if (preview_padReplay(layerNum)) {
                             // Browsing samples: the pad replays the preview, not the loaded sample.
                         } else {
-                            Layer& layer = layerLibrary[layerNum];
                             if ((menu == DUB_MENU) && (dubStripSel != layerNum)) {
                                 dubStripSel = layerNum;  // the DUB page edits the strip of the pad just pressed
                                 lcd_drawDub_Data();
                             }
-                            if (layerAudible(layerNum) && (layer.samplePlay)) layer_playBeat(layerNum, 1.0f);
+                            if (layerAudible(layerNum) && layer_canPlay(layerNum)) layer_playBeat(layerNum, 1.0f);
                             if (recordActive) {
                                 undo_captureRecord(layerNum, activeSongBank);
                                 if (!metronome.precountState) {
@@ -4139,6 +4137,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             break;
 
         case ENC_INST_1_START:
+            if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {  // GEN on: the generator's own field
+                layerInst_stepGenLength(selectedLayerNum, true);
+                break;
+            }
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoStart < kMaxLfo) ? layerInst_setLfoStart(selectedLayerNum, layerLibrary[selectedLayerNum].lfoStart + 1) : layerInst_setLfoStart(selectedLayerNum, kMinLfo);
             } else if (layerLibrary[selectedLayerNum].start < kMaxLayerPosition)
@@ -4146,6 +4148,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             break;
 
         case ENC_INST_1_END:
+            if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {  // GEN on: the generator's own field
+                layerInst_stepGenSweep(selectedLayerNum, true);
+                break;
+            }
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoEnd < kMaxLfo) ? layerInst_setLfoEnd(selectedLayerNum, layerLibrary[selectedLayerNum].lfoEnd + 1) : layerInst_setLfoEnd(selectedLayerNum, kMinLfo);
             } else if (layerLibrary[selectedLayerNum].end < kMaxLayerPosition)
@@ -4182,6 +4188,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
 
         case ENC_INST_2_PAN:
             layerPan_step(1);  // ADD + turn: every layer moves by the same step
+            break;
+
+        case ENC_INST_2_GEN:
+            (genMix.type[selectedLayerNum] < kGenTypeCount - 1) ? layerInst_setGen(selectedLayerNum, genMix.type[selectedLayerNum] + 1) : layerInst_setGen(selectedLayerNum, GEN_OFF);
             break;
 
         case ENC_ROUTE_EQ_OUT:
@@ -4254,6 +4264,10 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_DUB_PAN:
         case ENC_DUB_FX:
         case ENC_DUB_WIDTH:
+        case ENC_DUB_HISS:
+        case ENC_DUB_HISSLEVEL:
+        case ENC_DUB_HISSTONE:
+        case ENC_DUB_HISSDUCK:
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, true);
             break;
 
@@ -4761,6 +4775,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
             break;
 
         case ENC_INST_1_START:
+            if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {  // GEN on: the generator's own field
+                layerInst_stepGenLength(selectedLayerNum, false);
+                break;
+            }
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoStart > kMinLfo) ? layerInst_setLfoStart(selectedLayerNum, layerLibrary[selectedLayerNum].lfoStart - 1) : layerInst_setLfoStart(selectedLayerNum, kMaxLfo);
             } else if (layerLibrary[selectedLayerNum].start > kMinLayerPosition)
@@ -4768,6 +4786,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
             break;
 
         case ENC_INST_1_END:
+            if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {  // GEN on: the generator's own field
+                layerInst_stepGenSweep(selectedLayerNum, false);
+                break;
+            }
             if (keyboard.shiftKeyPress) {
                 (layerLibrary[selectedLayerNum].lfoEnd > kMinLfo) ? layerInst_setLfoEnd(selectedLayerNum, layerLibrary[selectedLayerNum].lfoEnd - 1) : layerInst_setLfoEnd(selectedLayerNum, kMaxLfo);
             } else if (layerLibrary[selectedLayerNum].end > kMinLayerPosition)
@@ -4804,6 +4826,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
 
         case ENC_INST_2_PAN:
             layerPan_step(-1);
+            break;
+
+        case ENC_INST_2_GEN:
+            (genMix.type[selectedLayerNum] > GEN_OFF) ? layerInst_setGen(selectedLayerNum, genMix.type[selectedLayerNum] - 1) : layerInst_setGen(selectedLayerNum, kGenTypeCount - 1);
             break;
 
         case ENC_ROUTE_EQ_OUT:
@@ -4876,6 +4902,10 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_DUB_PAN:
         case ENC_DUB_FX:
         case ENC_DUB_WIDTH:
+        case ENC_DUB_HISS:
+        case ENC_DUB_HISSLEVEL:
+        case ENC_DUB_HISSTONE:
+        case ENC_DUB_HISSDUCK:
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, false);
             break;
 
@@ -6593,7 +6623,7 @@ uint32_t Controller::file_stateCrc() {
     }
     uint8_t chainData[kChainFileSize];
     chainWrite(songChain, chainData);
-    return file_dubCrc(file_noteCrc(autosaveCrc32(crc, chainData, kChainFileSize)));
+    return file_genCrc(file_dubCrc(file_noteCrc(autosaveCrc32(crc, chainData, kChainFileSize))));
 }
 
 /* Autosave (Autosave.h) -----------------------------------------------------*/
@@ -6912,6 +6942,7 @@ void Controller::file_readNotes(const char* fileName_) {
     f_close(&sd.file);
     dubClear(dubMix);  // a song without a DUB block plays as CHAIN
     euclid_resetSettings();  // and without an EUC block every layer has the default EUCLID settings
+    genClear(genMix);  // and without a GEN block it has no generators and no hiss
     if (f_open(&sd.file, fileName_, FA_READ) != FR_OK) return;
     uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
     UINT got = 0;
@@ -6944,6 +6975,12 @@ void Controller::file_readNotes(const char* fileName_) {
                 UINT eucGot = 0;
                 if (f_read(&sd.file, eucData, kEuclidFileSize, &eucGot) == FR_OK) {
                     euclidReadBlock(euclidSet, eucData, static_cast<uint16_t>(eucGot), static_cast<uint8_t>(sizeof(kQuantizeInterval) / sizeof(kQuantizeInterval[0])), kInitialQuantize);
+                    // The GEN block follows the EUC block (Generator.h): each layer's generator and the hiss bed.
+                    if (eucGot == kEuclidFileSize) {
+                        uint8_t genData[kGenFileSize] = {0};
+                        UINT genGot = 0;
+                        if (f_read(&sd.file, genData, kGenFileSize, &genGot) == FR_OK) genRead(genMix, genData, static_cast<uint16_t>(genGot));
+                    }
                 }
             }
         }
@@ -7023,6 +7060,10 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
             uint8_t eucData[kEuclidFileSize];
             euclidWriteBlock(euclidSet, eucData);
             out.write(eucData, kEuclidFileSize);
+            // and the GEN block after the EUC block (Generator.h): each layer's generator and the hiss bed
+            uint8_t genData[kGenFileSize];
+            genWrite(genMix, genData);
+            out.write(genData, kGenFileSize);
         });
         if (saved) result = SD_OK;
     }
@@ -12308,9 +12349,8 @@ void Controller::lcd_drawLayerInst1Menu(uint8_t layerNum_) {
 
     // 1. HEADER DRAW
     // Draw headers for start/end/timing/probability fields.
+    lcd_drawLayerInst1Headers(layerNum_);  // START and END, or a generator's LENGTH and SWEEP
     lcd_setMenuHeaderState(CYAN);
-    lcd.drawText(kHeaderStart, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
-    lcd.drawText(kHeaderEnd, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
     lcd.drawText(kHeaderTiming, kMenuHeaderTextSize, kMenuHeaderX[6], kMenuHeaderY[6]);
     lcd.drawText(kHeaderProbability, kMenuHeaderTextSize, kMenuHeaderX[7], kMenuHeaderY[7]);
 
@@ -12351,6 +12391,13 @@ void Controller::lcd_drawLayerInst2Menu(uint8_t layerNum_) {
     lcd_setMenuSignState(GRAY_75);
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[6], kMenuSignBoxY[6]);
     lcd_drawLayerInst_PanData(layerNum_);
+
+    // GEN (tab 7): a generator instead of the sample (Generator.h).
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(kHeaderGen, kMenuHeaderTextSize, kMenuHeaderX[7], kMenuHeaderY[7]);
+    lcd_setMenuSignState(GRAY_75);
+    lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[7], kMenuSignBoxY[7]);
+    lcd_drawLayerInst_GenData(layerNum_);
 }
 
 void Controller::lcd_drawLayerInst_StyleData(uint8_t layerNum_) {
@@ -12387,6 +12434,18 @@ void Controller::lcd_drawLayerInst_SampleData(uint8_t layerNum_) {
     // Resolve layer reference for selected and loaded sample data.
     Layer& layer = layerLibrary[layerNum_];
 
+    // GEN on: the generator plays instead of the sample, so its name stands there (in yellow).
+    if (layerGenOn(layerNum_)) {
+        char text[kMenuDataTextSize + 1];
+        snprintf(text, sizeof text, "%10s", kGenTypeName[genMix.type[layerNum_]]);
+        lcd_setMenuDataState(YELLOW);
+        lcd.drawText(text, kMenuDataTextSize, kMenuDataX[1], kMenuDataY[1]);
+        lcd_setMenuSignState(GRAY_75);
+        lcd.clearRect(kMenuSignBoxX[1] - 80, kMenuSignBoxY[1], 80, 8);
+        lcd.drawText("  GENERATOR", 11, kMenuSignBoxX[1], kMenuSignBoxY[1]);
+        return;
+    }
+
     // 2. SAMPLE NAME DRAW
     // Draw sample name using loaded/selected match color.
     lcd_setMenuDataState(WHITE);
@@ -12401,6 +12460,7 @@ void Controller::lcd_drawLayerInst_SampleData(uint8_t layerNum_) {
     // Draw read/type errors or sample metadata based on selection state.
     uint16_t xPos = kMenuSignBoxX[1];
     uint16_t yPos = kMenuSignBoxY[1];
+    lcd.clearRect(xPos - 80, yPos, 80, 8);  // what GEN or an error left there
     if (layer.sampleSelected != -1) {
         // Show error if sample read failed
         if (layer.sampleSelectedReadError) {
@@ -12719,6 +12779,17 @@ void Controller::lcd_drawLayerInst_StartData(uint8_t layerNum_) {
     // 2. START VALUE DRAW
     // Draw start-position value text.
     // While playing with an LFO on it, show what the last hit used, in yellow.
+    // GEN on: the generator's LENGTH in 16ths (the LFO on START moves it).
+    if (layerGenOn(layerNum_)) {
+        int16_t length = genMix.length[layerNum_];
+        lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_START, length) ? YELLOW : WHITE);
+        char text[kMenuDataTextSize + 1];
+        snprintf(text, sizeof text, "%7d/16", static_cast<int>(length));
+        lcd.drawText(text, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText(kLfoNameDataLibrary[layer.lfoStart].nameShortR, kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
+        return;
+    }
     int16_t value = layer.start;
     lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_START, value) ? YELLOW : WHITE);
     lcd.drawText(kNumberDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
@@ -12739,6 +12810,18 @@ void Controller::lcd_drawLayerInst_EndData(uint8_t layerNum_) {
     // 2. END VALUE DRAW
     // Draw end-position value text.
     // While playing with an LFO on it, show what the last hit used, in yellow.
+    // GEN on: the generator's SWEEP in octaves (the LFO on END moves it).
+    if (layerGenOn(layerNum_)) {
+        int16_t sweep = genMix.sweep[layerNum_];
+        lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_END, sweep) ? YELLOW : WHITE);
+        char text[kMenuDataTextSize + 1];
+        const int hundredths = static_cast<int>(sweep) * 4;  // 100 = 4.00 octaves
+        snprintf(text, sizeof text, "%3u.%02u OCT", static_cast<unsigned>(hundredths / 100) % 10u, static_cast<unsigned>(hundredths % 100));
+        lcd.drawText(text, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText(kLfoNameDataLibrary[layer.lfoEnd].nameShortR, kMenuSignTextSize, kMenuSignBoxX[5], kMenuSignBoxY[5]);
+        return;
+    }
     int16_t value = layer.end;
     lcd_setMenuDataState(layerInst_lfoShown(layerNum_, SHOWN_END, value) ? YELLOW : WHITE);
     lcd.drawText(kNumberDataLibrary[value].nameLongR, kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
@@ -14207,6 +14290,7 @@ void Controller::file_newAction() {
     chainClear(songChain);
     dubClear(dubMix);
     euclid_resetSettings();
+    genClear(genMix);
     chainRestart(songChain, chainPlay);
     songStepSel = 0;
 
@@ -19869,6 +19953,12 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
     BeatPlayData& tBD = built;
     BeatPlayData& aBD = lD.activeBeatPlayData;
 
+    // A layer with GEN on plays its generator instead of the sample (Generator.h).
+    if (layerGenOn(layerNum_)) {
+        layer_playGen(layerNum_, fillVolMultiplier_);
+        return;
+    }
+
     // 2. PLAYBACK GATE
     // Continue only when a playable sample sector is selected and active.
     if ((layer.samplePlay) && (!layer.sampleLoading) && (layer.playSampleSector != -1)) {
@@ -19904,6 +19994,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                 tBD.active = true;
                 tBD.ramAddress = sampleSectorLibrary[targetSector].address;
                 tBD.stereoOffset = sampleSectorLibrary[targetSector].planeBytes;
+                tBD.genType = GEN_OFF;  // a sample note (a pending generator note may have been here)
                 tBD.counterMax = sampleSectorLibrary[targetSector].size;
                 tBD.mixerInMode = layer.mixerInMode;
                 lD.beatStartFlag = true;
@@ -20097,6 +20188,215 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
     }
 }
 
+/* Generators (Generator.h) -------------------------------------------------*/
+
+bool Controller::layerGenOn(uint8_t layerNum_) const { return (layerNum_ < kGenLayers) && (genMix.type[layerNum_] != GEN_OFF); }
+
+bool Controller::layer_canPlay(uint8_t layerNum_) const {
+    /// @brief A layer can play when its sample is loaded, or when GEN is on (no sample needed).
+    return (layerNum_ < kLayerLibrarySize) && (layerLibrary[layerNum_].samplePlay || layerGenOn(layerNum_));
+}
+
+void Controller::layer_playGen(uint8_t layerNum_, float fillVolMultiplier_) {
+    /// @brief The generator version of layer_playBeat: the same probability, LFOs, timing and
+    /// publication, with PITCH as the generator's frequency, DIRECTION as the sweep shape, and the
+    /// generator's LENGTH and SWEEP where a sample has START and END (their LFOs apply to them).
+    Layer& layer = layerLibrary[layerNum_];
+    LayerPlayData& lD = layerPlayData[layerNum_];
+    BeatPlayData& tBD = lD.tempBeatPlayData;
+    BeatPlayData& aBD = lD.activeBeatPlayData;
+
+    // The value of the LFO in a slot (0 = none, or switched off), as the sample path reads it.
+    auto lfoAt = [this](uint8_t slot_, float& data_, float& depth_) -> bool {
+        if ((slot_ == 0) || !lfoLibrary[slot_ - 1].active) return false;
+        Lfo& lfo = lfoLibrary[slot_ - 1];
+        data_ = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
+        depth_ = kNumberDataLibrary[lfo.depth].stdMultiplier;
+        return true;
+    };
+    float d = 0.0f, dep = 0.0f;
+    int16_t nLevel = layer.level, nPitch = layer.pitch, nDirection = layer.direction, nResolution = layer.resolution;
+    int16_t nLength = genMix.length[layerNum_], nSweep = genMix.sweep[layerNum_], nTiming = layer.timing, nProbability = layer.probability;
+
+    if (layer.style) {
+        // 1. PROBABILITY
+        if (lfoAt(layer.lfoProbability, d, dep)) nProbability = clamp(static_cast<int16_t>(layer.probability + round(100 * (d - 0.5) * dep)), (int16_t)kMinLayerProbability, (int16_t)kMaxLayerProbability);
+        const int random = rand() % 10000;
+        if (random > kNumberDataLibrary[nProbability].stdMultiplier * 10000.0f) return;
+
+        // 2. THE LAYER'S FIELDS, WITH THEIR LFOS
+        if (lfoAt(layer.lfoLevel, d, dep)) nLevel = clamp(static_cast<int16_t>(layer.level + round(50 * (d - 0.5) * dep)), (int16_t)kMinLayerLevel, (int16_t)kMaxLayerLevel);
+        if (lfoAt(layer.lfoPitch, d, dep)) nPitch = pitchWithLfo(layer.pitch, d, dep);
+        if (lfoAt(layer.lfoResolution, d, dep)) nResolution = clamp(static_cast<int16_t>(layer.resolution + round(24 * (d - 0.5) * dep)), (int16_t)kMinLayerResolution, (int16_t)kMaxLayerResolution);
+        if (lfoAt(layer.lfoDirection, d, dep)) nDirection = kLayerDirectionProbability[layer.direction][static_cast<uint8_t>(round(4 * (d - 0.5) * dep) + 2)];
+        if (lfoAt(layer.lfoStart, d, dep)) nLength = clamp(static_cast<int16_t>(genMix.length[layerNum_] + round(kGenLengthMax * (d - 0.5) * dep)), (int16_t)kGenLengthMin, (int16_t)kGenLengthMax);
+        if (lfoAt(layer.lfoEnd, d, dep)) nSweep = clamp(static_cast<int16_t>(genMix.sweep[layerNum_] + round(kGenSweepMax * (d - 0.5) * dep)), (int16_t)0, (int16_t)kGenSweepMax);
+        if (lfoAt(layer.lfoTiming, d, dep)) nTiming = clamp(static_cast<int16_t>(layer.timing + round(100 * (d - 0.5) * dep)), (int16_t)kMinLayerTiming, (int16_t)kMaxLayerTiming);
+
+        // What this hit used, for the instrument page (START and END show LENGTH and SWEEP).
+        const int16_t shown[8] = {nLevel, nPitch, nDirection, nResolution, nLength, nSweep, nTiming, nProbability};
+        for (uint8_t v = 0; v < 8; v++) {
+            if ((lD.shownValue[v] != shown[v]) || !(lD.shownValid & (1u << v))) {
+                lD.shownValue[v] = shown[v];
+                lD.shownChanged = true;
+            }
+        }
+        lD.shownValid = 0xFF;
+    } else {
+        // STYLE OFF: the generator plays plain (its own pitch, no sweep, no bitcrush) for its LENGTH.
+        nPitch = kPitchDefaultCode;
+        nDirection = 0;
+        nResolution = kMaxLayerResolution;
+        nSweep = 0;
+        nTiming = 0;
+    }
+    lD.tempBeatTimingFlag = (nTiming != 0);
+    lD.tempBeatTimingCounter = 0;
+    lD.tempBeatTimingCounterMax = (nTiming != 0) ? static_cast<uint16_t>(kNumberDataLibrary[nTiming].stdMultiplier * 800) : 0;
+
+    // 3. THE NOTE
+    io.midi.txVelocity[layerNum_] = midiMultiplierToVelocity(fillVolMultiplier_);
+    const uint32_t length = genLengthSamples(static_cast<uint8_t>(nLength), static_cast<float>(rhythm.tempo));
+    memset(&tBD, 0, sizeof(BeatPlayData));
+    tBD.active = true;
+    tBD.counterMax = length;
+    tBD.counterStart = 0;
+    tBD.counterEnd = length;
+    tBD.counter = 0.0f;
+    tBD.increment = 1.0f;
+    tBD.mixerInMode = layer.mixerInMode;
+    tBD.volumeMultiplier = kLayerVolumeCoef * kNumberDataLibrary[nLevel].powMultiplier * fillVolMultiplier_ * mixer.masterVolumeFloat;
+    tBD.resolutionCoef = kLayerResolutionDataLibrary[nResolution].data;
+    tBD.fadeFlag = true;  // the 50-sample fade at the end, as for a sample
+    tBD.counterFadeStart = (length > 50) ? length - 50 : 0;
+    tBD.genType = genMix.type[layerNum_];
+    tBD.genShape = static_cast<uint8_t>(nDirection);
+    tBD.genStart = true;
+    tBD.genRatio = pitchFactor(static_cast<uint8_t>(nPitch));
+    tBD.genOctaves = genSweepOctaves(static_cast<uint8_t>(nSweep));
+    tBD.genSeed = (++genSeedCount * 0x9E3779B9u) ^ ((layerNum_ + 1u) * 0x85EBCA6Bu);
+    lD.beatStartFlag = true;
+    lD.beatEndFlag = false;
+
+    // 4. PUBLISH (as layer_playBeat: under a critical section, the audio interrupt reads aBD)
+    if (!lD.tempBeatTimingFlag) {
+        uint32_t primaskBeat = __get_PRIMASK();
+        __disable_irq();
+        if (aBD.active) {
+            aBD.fadeAction = true;
+            aBD.counterFade = 0;
+            aBD.newBeatFlag = true;
+        } else {
+            memcpy(&aBD, &tBD, sizeof(BeatPlayData));
+            memset(&tBD, 0, sizeof(BeatPlayData));
+        }
+        __set_PRIMASK(primaskBeat);
+    }
+}
+
+void Controller::processAudioGenLayer(uint8_t layerNum_) {
+    /// @brief One block of a generator note (audio interrupt): the voice, then bitcrush, the fades
+    /// and the level, exactly as a sample gets them.
+    LayerPlayData& lD = layerPlayData[layerNum_];
+    BeatPlayData& aBD = lD.activeBeatPlayData;
+    GenVoice& voice = genDsp.voice[layerNum_];
+    if (aBD.genStart) {
+        genVoiceStart(voice, aBD.genType, aBD.genSeed, aBD.genRatio, aBD.genOctaves, aBD.genShape, aBD.counterEnd);
+        aBD.genStart = false;
+        io.midi.txTriggerNoteOn[layerNum_] = true;
+    }
+    float* out = audioLayer[layerNum_];
+    genVoiceRender(voice, out, I2S_BLOCK_SIZE);
+
+    const float kScale24 = 16777215.0f;
+    const float kInvScale24 = 1.0f / 16777215.0f;
+    const bool crush = (aBD.resolutionCoef != 0x00FFFFFF);
+    bool end = false;
+    for (uint16_t k = 0; k < I2S_BLOCK_SIZE; k++) {
+        float sample = out[k];
+        if (crush) {
+            uint32_t v = static_cast<uint32_t>(((sample + 1.0f) * 0.5f) * kScale24);
+            v &= aBD.resolutionCoef;
+            sample = (static_cast<float>(v) * kInvScale24) * 2.0f - 1.0f;
+        }
+        if (aBD.newBeatFlag && !aBD.fadeAction) aBD.fadeAction = true;
+        if (!aBD.fadeAction && aBD.fadeFlag && (aBD.counter >= static_cast<float>(aBD.counterFadeStart))) aBD.fadeAction = true;
+        if (aBD.fadeAction) {
+            sample *= kFadeVolumeMultiplier[aBD.counterFade];
+            if (aBD.counterFade < 49)
+                aBD.counterFade++;
+            else if (!aBD.newBeatFlag)
+                end = true;
+        }
+        out[k] = sample * aBD.volumeMultiplier;
+        aBD.counter += 1.0f;
+        if (end) {
+            for (uint16_t r = k + 1; r < I2S_BLOCK_SIZE; r++) out[r] = 0.0f;
+            break;
+        }
+    }
+    if (end) {
+        lD.beatStartFlag = false;
+        lD.beatEndFlag = true;
+        aBD.active = false;
+        aBD.counter = 0.0f;
+        io.midi.txTriggerNoteOff[layerNum_] = true;
+    }
+}
+
+void Controller::layerInst_setGen(uint8_t layerNum_, uint8_t type_) {
+    /// @brief GEN on a layer: OFF plays the sample; any other value plays that generator.
+    if ((layerNum_ >= kGenLayers) || (type_ >= kGenTypeCount)) return;
+    genMix.type[layerNum_] = type_;
+    if (selectedLayerNum != layerNum_) return;
+    if (menu == LAYER_INST_2_MENU) lcd_drawLayerInst_GenData(layerNum_);
+    if ((menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU)) lcd_drawLayerInst_SampleData(layerNum_);
+    if (menu == LAYER_INST_1_MENU) {
+        lcd_drawLayerInst1Headers(layerNum_);
+        lcd_drawLayerInst_StartData(layerNum_);
+        lcd_drawLayerInst_EndData(layerNum_);
+    }
+}
+
+void Controller::layerInst_stepGenLength(uint8_t layerNum_, bool up_) {
+    /// @brief LENGTH (in 16ths) of the layer's generator notes: page 2's first field while GEN is on.
+    uint8_t& v = genMix.length[layerNum_];
+    if (up_ && (v < kGenLengthMax)) v++;
+    if (!up_ && (v > kGenLengthMin)) v--;
+    if ((menu == LAYER_INST_1_MENU) && (selectedLayerNum == layerNum_)) lcd_drawLayerInst_StartData(layerNum_);
+}
+
+void Controller::layerInst_stepGenSweep(uint8_t layerNum_, bool up_) {
+    /// @brief SWEEP (0..100 = 0..4 octaves over the note): page 2's second field while GEN is on.
+    uint8_t& v = genMix.sweep[layerNum_];
+    if (up_ && (v < kGenSweepMax)) v++;
+    if (!up_ && (v > 0)) v--;
+    if ((menu == LAYER_INST_1_MENU) && (selectedLayerNum == layerNum_)) lcd_drawLayerInst_EndData(layerNum_);
+}
+
+void Controller::lcd_drawLayerInst_GenData(uint8_t layerNum_) {
+    /// @brief The GEN field (page 3, tab 7): the generator's name, or OFF.
+    char text[kMenuDataTextSize + 1];
+    snprintf(text, sizeof text, "%10s", kGenTypeName[(genMix.type[layerNum_] < kGenTypeCount) ? genMix.type[layerNum_] : 0]);
+    lcd_setMenuDataState(layerGenOn(layerNum_) ? YELLOW : WHITE);
+    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[7], kMenuDataY[7]);
+}
+
+void Controller::lcd_drawLayerInst1Headers(uint8_t layerNum_) {
+    /// @brief Page 2's first two headers: START and END, or the generator's LENGTH and SWEEP.
+    lcd_setMenuHeaderState(CYAN);
+    const bool gen = layerGenOn(layerNum_);
+    lcd.drawText(gen ? kHeaderGenLength : kHeaderStart, kMenuHeaderTextSize, kMenuHeaderX[4], kMenuHeaderY[4]);
+    lcd.drawText(gen ? kHeaderGenSweep : kHeaderEnd, kMenuHeaderTextSize, kMenuHeaderX[5], kMenuHeaderY[5]);
+}
+
+uint32_t Controller::file_genCrc(uint32_t crc_) {
+    /// @brief Feeds the GEN block (as written) into a CRC, so autosave sees generator edits.
+    uint8_t genData[kGenFileSize];
+    genWrite(genMix, genData);
+    return autosaveCrc32(crc_, genData, kGenFileSize);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 /* Layer Inst Functions ------------------------------------------------------*/
 ////////////////////////////////////////////////////////////////////////////////
@@ -20285,7 +20585,9 @@ void Controller::layerInst_menuUp() {
                     break;
 
                 case LAYER_INST_1_MENU:
-                    if (keyboard.shiftKeyPress) {
+                    if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {
+                        layerInst_stepGenLength(selectedLayerNum, true);
+                    } else if (keyboard.shiftKeyPress) {
                         (layer.lfoStart < kMaxLfo) ? layerInst_setLfoStart(selectedLayerNum, layer.lfoStart + 1) : layerInst_setLfoStart(selectedLayerNum, kMinLfo);
                     } else if (layer.start < kMaxLayerPosition)
                         layerInst_setStart(selectedLayerNum, layer.start + 1);
@@ -20310,7 +20612,9 @@ void Controller::layerInst_menuUp() {
                     break;
 
                 case LAYER_INST_1_MENU:
-                    if (keyboard.shiftKeyPress) {
+                    if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {
+                        layerInst_stepGenSweep(selectedLayerNum, true);
+                    } else if (keyboard.shiftKeyPress) {
                         (layer.lfoEnd < kMaxLfo) ? layerInst_setLfoEnd(selectedLayerNum, layer.lfoEnd + 1) : layerInst_setLfoEnd(selectedLayerNum, kMinLfo);
                     } else if (layer.end < kMaxLayerPosition) {
                         layerInst_setEnd(selectedLayerNum, layer.end + 1);
@@ -20405,7 +20709,9 @@ void Controller::layerInst_menuDown() {
                     break;
 
                 case LAYER_INST_1_MENU:
-                    if (keyboard.shiftKeyPress) {
+                    if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {
+                        layerInst_stepGenLength(selectedLayerNum, false);
+                    } else if (keyboard.shiftKeyPress) {
                         (layer.lfoStart > kMinLfo) ? layerInst_setLfoStart(selectedLayerNum, layer.lfoStart - 1) : layerInst_setLfoStart(selectedLayerNum, kMaxLfo);
                     } else if (layer.start > kMinLayerPosition)
                         layerInst_setStart(selectedLayerNum, layer.start - 1);
@@ -20430,7 +20736,9 @@ void Controller::layerInst_menuDown() {
                     break;
 
                 case LAYER_INST_1_MENU:
-                    if (keyboard.shiftKeyPress) {
+                    if (!keyboard.shiftKeyPress && layerGenOn(selectedLayerNum)) {
+                        layerInst_stepGenSweep(selectedLayerNum, false);
+                    } else if (keyboard.shiftKeyPress) {
                         (layer.lfoEnd > kMinLfo) ? layerInst_setLfoEnd(selectedLayerNum, layer.lfoEnd - 1) : layerInst_setLfoEnd(selectedLayerNum, kMaxLfo);
                     } else if (layer.end > kMinLayerPosition)
                         layerInst_setEnd(selectedLayerNum, layer.end - 1);
@@ -23793,6 +24101,11 @@ void Controller::lcd_drawDub_Data() {
         snprintf(text[0], sizeof text[0], "%10s", label);
         snprintf(text[1], sizeof text[1], "%10u", static_cast<unsigned>(strip.fx));
         snprintf(text[4], sizeof text[4], "%10u", static_cast<unsigned>(dubMix.echoWidth));
+        // The hiss bed (Generator.h).
+        snprintf(text[3], sizeof text[3], "%10u", static_cast<unsigned>(genMix.hissDuck));
+        snprintf(text[5], sizeof text[5], "%10s", kHissTypeName[(genMix.hissType < kHissTypeCount) ? genMix.hissType : 0]);
+        snprintf(text[6], sizeof text[6], "%10u", static_cast<unsigned>(genMix.hissLevel));
+        snprintf(text[7], sizeof text[7], "%10u", static_cast<unsigned>(genMix.hissTone));
         lcd_setMenuDataState(WHITE);
         for (uint8_t f = 0; f < 8; f++) lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[f], kMenuDataY[f]);
         lcd_setMenuHeaderState(CYAN);
@@ -23876,6 +24189,19 @@ void Controller::dub_step(EncoderFunc function_, bool up_) {
             // Steps of 5 %, to 100 %.
             if (up_) dubMix.echoWidth = static_cast<uint8_t>((dubMix.echoWidth + 5 > kDubMaxWidth) ? kDubMaxWidth : dubMix.echoWidth + 5);
             if (!up_) dubMix.echoWidth = (dubMix.echoWidth >= 5) ? static_cast<uint8_t>(dubMix.echoWidth - 5) : 0;
+            break;
+        case ENC_DUB_HISS:
+            if (up_) genMix.hissType = static_cast<uint8_t>((genMix.hissType + 1) % kHissTypeCount);
+            if (!up_) genMix.hissType = static_cast<uint8_t>((genMix.hissType + kHissTypeCount - 1) % kHissTypeCount);
+            break;
+        case ENC_DUB_HISSLEVEL:
+            stepSend(genMix.hissLevel);
+            break;
+        case ENC_DUB_HISSTONE:
+            stepSend(genMix.hissTone);
+            break;
+        case ENC_DUB_HISSDUCK:
+            stepSend(genMix.hissDuck);
             break;
         case ENC_DUB_VERBRTN:
             reverb_setWet(up_ ? (reverb.wet < kMaxReverbWet ? reverb.wet + 1 : reverb.wet) : (reverb.wet > kMinReverbWet ? reverb.wet - 1 : reverb.wet));
@@ -26360,6 +26686,12 @@ void Controller::processAudioLayer() {
         // Skip processing if the layer is inactive
         if (!aBD.active) continue;
 
+        // A generator note (Generator.h) instead of a sample.
+        if (aBD.genType != GEN_OFF) {
+            processAudioGenLayer(i);
+            continue;
+        }
+
         float* targetBuffer = audioLayer[i];
         // A stereo sample also fills the right buffer (its right plane is stereoOffset bytes further on).
         const bool stereo = (aBD.stereoOffset != 0);
@@ -26550,6 +26882,8 @@ void Controller::processAudioLayer() {
 
 // Stereo work memory (right channels, route gains): DTCM RAM, zeroed in main().
 StereoDsp stereoDsp __attribute__((section(".dtcm")));
+// Generator voices and the hiss bed: DTCM RAM, zeroed in main().
+GenDsp genDsp __attribute__((section(".dtcm")));
 
 void Controller::processAudioRouting() {
     /// @brief Routes every source to its destination node and runs the modules in order,
@@ -26861,10 +27195,22 @@ void Controller::processAudioSend(uint32_t* outputBuffer) {
     float previewBlock[I2S_BLOCK_SIZE];
     previewRender(previewRing, previewVoice, previewBlock, I2S_BLOCK_SIZE, kLayerVolumeCoef * kNumberDataLibrary[(previewLevel <= 100) ? previewLevel : 100].powMultiplier);
 
+    // Hiss bed (Generator.h): stereo, before master volume, ducked by the loudest layer of the block.
+    const bool hissOn = (genMix.hissType != HISS_OFF) || (genDsp.hiss.amp > 0.0f);
+    if (hissOn) {
+        float key = 0.0f;
+        if (genMix.hissDuck > 0) {
+            for (uint8_t l = 0; l < kLayerLibrarySize; l++) {
+                for (uint16_t j = 0; j < I2S_BLOCK_SIZE; j++) key = fmaxf(key, fabsf(audioLayer[l][j]));
+            }
+        }
+        hissRender(genDsp.hiss, genMix.hissType, genMix.hissLevel, genMix.hissTone, genMix.hissDuck, key, genDsp.hissL, genDsp.hissR, I2S_BLOCK_SIZE);
+    }
+
     for (uint16_t i = 0; i < I2S_BLOCK_SIZE; i++) {
         // One NaN or infinity here would sit in the master low-pass for good and silence the output.
-        float outL = finiteOrZero(audioSend_L[i] + previewBlock[i]);
-        float outR = finiteOrZero(audioSend_R[i] + previewBlock[i]);
+        float outL = finiteOrZero(audioSend_L[i] + previewBlock[i] + (hissOn ? genDsp.hissL[i] : 0.0f));
+        float outR = finiteOrZero(audioSend_R[i] + previewBlock[i] + (hissOn ? genDsp.hissR[i] : 0.0f));
 
         // Apply master volume gains
         outL *= mixer.volumeLeftFloat;
@@ -27802,7 +28148,7 @@ void Controller::interruptPlay() {
                         if (noteDueInterval(beat.getStartInterval(), beat.getNote(), songInterval) == playInterval) {
                             // Condition and chance first (they also feed PRE), then the level:
                             // FLAT 100 / GHOST 50 unless the beat has its own velocity; MUTED stays silent.
-                            if (note_plays(i, beat.getNote()) && layerAudible(i) && (layer.samplePlay) && (beat.getFillPattern() != 2)) {
+                            if (note_plays(i, beat.getNote()) && layerAudible(i) && layer_canPlay(i) && (beat.getFillPattern() != 2)) {
                                 const uint8_t level = noteLevel(beat.getVelocity(), (beat.getFillPattern() == 0) ? 100 : 50);
                                 fillVolMultiplier = kNumberDataLibrary[level].powMultiplier;
                             }
@@ -27823,7 +28169,7 @@ void Controller::interruptPlay() {
                             // The whole fill plays or not (condition and chance at its first hit);
                             // its own velocity scales every hit.
                             if (playBeatMicroNum == 0) noteFillSkip[i] = !note_plays(i, beat.getNote());
-                            if (!noteFillSkip[i] && layerAudible(i) && (layer.samplePlay) && ((playBeatMicroNum == 0) || ((playBeatMicroNum != 0) && (layer.fill)))) {
+                            if (!noteFillSkip[i] && layerAudible(i) && layer_canPlay(i) && ((playBeatMicroNum == 0) || ((playBeatMicroNum != 0) && (layer.fill)))) {
                                 fillVolMultiplier = kNumberDataLibrary[beatMicro.getLevel()].powMultiplier;
                                 if (beat.getVelocity() != 0) fillVolMultiplier *= kNumberDataLibrary[noteLevel(beat.getVelocity(), 100)].powMultiplier;
                                 if (fillVolMultiplier > 0.0f) layer_playBeat(layer.number, fillVolMultiplier);

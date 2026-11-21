@@ -253,6 +253,17 @@ void HAL_SD_RxCpltCallback(SD_HandleTypeDef *hsd)
   BSP_SD_ReadCpltCallback();
 }
 
+/**
+  * @brief SD error callback: a CRC error, a timeout or an overrun on the bus ends a DMA transfer here and
+  *        never reaches the completion callbacks; the driver's wait for it would run into its time-out
+  * @param hsd: SD handle
+  * @retval None
+  */
+void HAL_SD_ErrorCallback(SD_HandleTypeDef *hsd)
+{
+  BSP_SD_ErrorCallback();
+}
+
 /* USER CODE BEGIN CallBacksSection_C */
 /**
   * @brief BSP SD Abort callback

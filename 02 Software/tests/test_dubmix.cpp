@@ -244,6 +244,70 @@ int main() {
     wb[kDubFileSizeV2] = 101;
     CHECK(!dubRead(wr, wb, kDubFileSize), "a width over 100 rejects the block");
 
+    // --- Line-in in DUB mode: its MIXER IN entry point picks the path (the strips are layers only) ---
+    {
+        struct Case { uint8_t entry; float expect; const char* what; };
+        // The path gain is the product of the modules' kGain on the way to the master.
+        const Case cases[] = {
+            {NODE_EQ, kGain[NODE_EQ] * kGain[NODE_F1], "EQ > filter 1 (the dub filter) > master"},
+            {NODE_F1, kGain[NODE_F1], "filter 1 > master"},
+            {NODE_F2, kGain[NODE_F2] * kGain[NODE_FX1], "filter 2 > echo > master"},
+            {NODE_FX1, kGain[NODE_FX1], "echo > master"},
+            {NODE_FX2, kGain[NODE_FX2], "effect 2 > master"},
+            {NODE_REV, kGain[NODE_REV], "reverb > master"},
+            {NODE_MASTER, 1.0f, "straight to the master"},
+        };
+        for (const Case& cs : cases) {
+            Rig r;
+            RouteState st;
+            RouteFade fade;
+            float line[N];
+            for (uint16_t i = 0; i < N; i++) line[i] = 0.5f;
+            RouteSource src[1];
+            src[0] = {line, routeMaskFromEntry(cs.entry), &fade};
+            for (int blocks = 0; blocks < 40; blocks++) run(r, src, 1, kDubRoutePatch, st);  // until the fade has settled
+            CHECK(std::fabs(r.outL[N - 1] - 0.5f * cs.expect) < 1e-5f && std::fabs(r.outR[N - 1] - 0.5f * cs.expect) < 1e-5f, "line-in %s: %f, want %f", cs.what, r.outL[N - 1], 0.5f * cs.expect);
+        }
+        // Muted (an entry past the nodes): nothing.
+        Rig r;
+        RouteState st;
+        RouteFade fade;
+        float line[N];
+        for (uint16_t i = 0; i < N; i++) line[i] = 0.5f;
+        RouteSource src[1];
+        src[0] = {line, routeMaskFromEntry(200), &fade};
+        for (int blocks = 0; blocks < 40; blocks++) run(r, src, 1, kDubRoutePatch, st);
+        CHECK(r.outL[N - 1] == 0.0f && r.outR[N - 1] == 0.0f, "line-in with no entry point is silent");
+    }
+
+    // --- The reverb send in DUB mode: a DIR strip is heard dry plus the verb send through the reverb ---
+    {
+        Rig r;
+        RouteState st;
+        float layer[N];
+        for (uint16_t i = 0; i < N; i++) layer[i] = 0.5f;
+        float state[kRouteGainStateSize] = {0};
+        DubStrip s;
+        s.bus = DUB_BUS_DIR;
+        s.verb = 40;
+        float gains[kRouteNodeCount];
+        dubNodeGains(s, 0, gains);
+        RouteSource src[1];
+        src[0] = {layer, 0, nullptr, gains, state, 1.0f, 1.0f};
+        for (int blocks = 0; blocks < 3; blocks++) run(r, src, 1, kDubRoutePatch, st);
+        const float want = 0.5f * (1.0f + 0.4f * kGain[NODE_REV]);
+        CHECK(std::fabs(r.outL[N - 1] - want) < 1e-5f && std::fabs(r.revL[N - 1] - 0.5f * 0.4f * kGain[NODE_REV]) < 1e-5f, "DIR strip: dry %f plus the reverb send", r.outL[N - 1]);
+        // Send 0: the reverb gets nothing.
+        s.verb = 0;
+        dubNodeGains(s, 0, gains);
+        for (int blocks = 0; blocks < 3; blocks++) run(r, src, 1, kDubRoutePatch, st);
+        CHECK(r.revL[N - 1] == 0.0f && std::fabs(r.outL[N - 1] - 0.5f) < 1e-5f, "no send, no reverb");
+        // A throw opens the reverb send fully, whatever the knob says.
+        dubNodeGains(s, THROW_VERB, gains);
+        for (int blocks = 0; blocks < 3; blocks++) run(r, src, 1, kDubRoutePatch, st);
+        CHECK(std::fabs(r.revL[N - 1] - 0.5f * kGain[NODE_REV]) < 1e-5f, "a reverb throw opens the send fully: %f", r.revL[N - 1]);
+    }
+
     // --- A stereo source (a layer playing a stereo sample) ---
     {
         Rig r;

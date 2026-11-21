@@ -18,6 +18,7 @@ extern "C" void SystemClock_Config();
 extern "C" void PeriphCommonClock_Config();
 extern "C" void Sdram_Initialize();
 extern "C" void System_Initialize();
+void audioRestartIfFaulted();
 
 /* Memory Allocation In D1 Ram ----------------------------------- */
 
@@ -78,8 +79,11 @@ int main() {
     // Enable FPU (Floating Point Unit)
     SCB->CPACR |= ((3UL << 10 * 2) | (3UL << 11 * 2));
 
-    // Enable Hardware FTZ (Flush-to-Zero)
+    // Enable Hardware FTZ (Flush-to-Zero) and default NaN. An exception handler (the audio interrupt
+    // above all) starts from FPDSCR, not from the FPSCR set here, so it is set as well: without it the
+    // audio code ran with denormals at full cost.
     __set_FPSCR(__get_FPSCR() | (1 << 24) | (1 << 25));
+    FPU->FPDSCR |= (1u << 24) | (1u << 25);
     __enable_irq();
 
     // Configure Clocks
@@ -96,6 +100,7 @@ int main() {
     // Main Loop
     while (true) {
         controller.update();
+        audioRestartIfFaulted();
     }
 }
 
@@ -350,9 +355,25 @@ void HAL_I2SEx_TxRxCpltCallback(I2S_HandleTypeDef* hi2s) {
     }
 }
 
-void HAL_I2SEx_TxRxErrorCallback(I2S_HandleTypeDef* hi2s) {
+// A DMA error stops the audio stream for good (the HAL leaves the I2S ready but no longer running). The
+// error callback of this HAL is HAL_I2S_ErrorCallback; the old HAL_I2SEx_TxRxErrorCallback is never called.
+// It only marks the fault; the main loop starts the stream again.
+static volatile bool audioFault = false;
+volatile uint32_t audioFaultCount = 0;
+
+void HAL_I2S_ErrorCallback(I2S_HandleTypeDef* hi2s) {
     if (hi2s->Instance == SPI3) {
+        audioFaultCount = audioFaultCount + 1;
+        audioFault = true;
     }
+}
+
+void audioRestartIfFaulted() {
+    if (!audioFault) return;
+    audioFault = false;
+    HAL_I2S_DMAStop(&hi2s3);
+    __HAL_UNLOCK(&hi2s3);
+    HAL_I2SEx_TransmitReceive_DMA(&hi2s3, reinterpret_cast<uint16_t*>(i2s_txBuffer), reinterpret_cast<uint16_t*>(i2s_rxBuffer), I2S_TOTAL_BUFFER_SIZE);
 }
 
 /* I2c Interrupts ------------------------------------------------ */
@@ -395,6 +416,8 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart) {
     if (huart == &huart1) {
         controller.midi_countRxError();  // overrun/framing: diagnostics
         HAL_UART_Receive_DMA(&huart1, &midiRxData, 1);
+    } else if (huart == &huart6) {
+        controller.midi_txError();  // MIDI OUT: a failed transfer must not leave the queue waiting for ever
     }
 }
 

@@ -502,7 +502,7 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 
 **Workarounds until then.** Turn the Drumboy's MIDI OUT clock off while it is slaved (or turn MIDI thru off in Loopy Pro) to avoid the loop. Set Loopy Pro to a whole-number tempo, preferably one that divides evenly into the timer (120, 125, 100, 150…); this reduces the drift but does not remove it. STOP/START from Loopy realigns it.
 
-**Update V1.16, built, waiting for the hardware test:** MIDI thru of the real-time bytes (`midiThruForwards` in `MidiParser.h`, `midi_thru`, host test in `test_midi`). With SYNC on MIDI IN and on MIDI OUT, an accepted incoming clock tick and the transport bytes (start, continue, stop, reset) are passed on to MIDI OUT from the receive interrupt; the Drumboy sends no clock or transport of its own while it follows (already so since V1.13). A tick the clock lock rejects as too fast is not passed, so a loop through an interface dies out. Notes and controllers are not passed on: the Drumboy plays incoming notes and sends its own, so forwarding them could double.
+**Update V1.16, built and released (hardware test of the thru pending):** MIDI thru of the real-time bytes (`midiThruForwards` in `MidiParser.h`, `midi_thru`, host test in `test_midi`). With SYNC on MIDI IN and on MIDI OUT, an accepted incoming clock tick and the transport bytes (start, continue, stop, reset) are passed on to MIDI OUT from the receive interrupt; the Drumboy sends no clock or transport of its own while it follows (already so since V1.13). A tick the clock lock rejects as too fast is not passed, so a loop through an interface dies out. Notes and controllers are not passed on: the Drumboy plays incoming notes and sends its own, so forwarding them could double.
 
 ### 35. LFO destinations for the per-note settings
 
@@ -807,7 +807,7 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Done when (1).** A hat panned left and a shaker panned right, both on DIR, are heard on their sides; a centred layer and a song from V1.14 sound identical. **(2)** The same through the EQ and filters.
 
-**Step 3a, ping-pong echo, built in V1.16, waiting for the hardware test** (`PingPong.h`, `test_pingpong`; the delay in `processAudioEffectHelper`). ECHO WIDTH (0-100 %, steps of 5) is on the second DUB page (press MIXER again while on DUB; MIXER, DUB 1, DUB 2, ROUTING): the delay reads its buffer at two points, one echo time back for the left channel and two for the right, and feeds back from the right one, scaled by FEEDBACK so every repeat is FEEDBACK times the one before it (left at 1, right at 2, left at 3 echo times and so on). No second delay line, so no memory and no change to the sound at width 0, where the output is bit-identical to V1.15 (tested against a plain delay). It needs two echo times inside the 2.18 s buffer; past that the echo stays centred. Stored in the song's DUB block as a 56th byte (older firmware reads 55 bytes and ignores it; older songs read as 0). The same page has the selected strip's PAN and FX SEND. Sound rule: nothing was thinned; the cost is one more buffer read per sample for Effect 1 while the width is above 0.
+**Step 3a, ping-pong echo, built in V1.16, tested on hardware, released in V1.16** (`PingPong.h`, `test_pingpong`; the delay in `processAudioEffectHelper`). ECHO WIDTH (0-100 %, steps of 5) is on the second DUB page (press MIXER again while on DUB; MIXER, DUB 1, DUB 2, ROUTING): the delay reads its buffer at two points, one echo time back for the left channel and two for the right, and feeds back from the right one, scaled by FEEDBACK so every repeat is FEEDBACK times the one before it (left at 1, right at 2, left at 3 echo times and so on). No second delay line, so no memory and no change to the sound at width 0, where the output is bit-identical to V1.15 (tested against a plain delay). It needs two echo times inside the 2.18 s buffer; past that the echo stays centred. Stored in the song's DUB block as a 56th byte (older firmware reads 55 bytes and ignores it; older songs read as 0). The same page has the selected strip's PAN and FX SEND. Sound rule: nothing was thinned; the cost is one more buffer read per sample for Effect 1 while the width is above 0.
 
 ### 54. Stereo samples
 
@@ -827,7 +827,7 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Asked by the owner (2026-11-15).** After an SD card recovery, presets reported MISSING SAMPLE with no hint which sample, so the cause (a card copy that dropped files) was guesswork. The alert now has a second line under its box with the first missing layer, instrument and sample (`L3 Kick/Name`, cut to 35 characters), and stays on screen 3 s instead of 1 s. It covers song and kit loads and the in-use check (`missing_note`, `missingDetail`). The count (MISSING SAMPLES) still tells how many; only the first is named.
 
-**Status: built in V1.16, waiting for the hardware test.** Done when a preset that names a sample that is not on the card shows its layer, instrument and sample.
+**Status: built in V1.16, released in V1.16 (not yet seen on a real missing sample).** Done when a preset that names a sample that is not on the card shows its layer, instrument and sample.
 
 ### 56. SD card corruption with the data cache (V1.15), fixed in V1.16
 
@@ -837,4 +837,123 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Who is affected:** V1.15 (released, tag `v1.15`) with the data cache on. Anything that writes the card can damage it: saving files, the autosave, the system preset, the crash log. Test builds from V1.15 on until this fix have the same bug. Reads are safe.
 
-**Status: fixed in V1.16, waiting for the hardware test.** Done when a card survives a long session of saving songs and presets and a check of its file system afterwards shows no errors. Until the release, use V1.14, or V1.15 with the card backed up.
+**Status: fixed in V1.16, tested on hardware and released in V1.16 (the owner's card recovered and works).** Done when a card survives a long session of saving songs and presets and a check of its file system afterwards shows no errors. Until the release, use V1.14, or V1.15 with the card backed up.
+
+### 57. Sample pool: samples up to 20 s
+
+**Asked by the owner (2026-11-15):** the sample length (5.44 s) is too low; a maximum of 20 s, with the loader ignoring longer samples.
+
+**Why it was not just a setting.** `kSampleSize` was the size of each of fifteen fixed 960 KB slots that fill the 14.4 MB sample area of the 16 MB SDRAM (it is also reused by the LFO rate code, so it keeps its value). Ten layers of 20 s would need 35 MB.
+
+**Decision (owner, "lets continue as you say"):** one shared pool (`SamplePool.h`, `test_samplepool`). A sample takes `frames x 4` bytes (a stereo sample two planes, each rounded up to 64 bytes) wherever it first fits between the others; the fifteen sectors stay as descriptors (address, bytes, plane size, owner). 32-bit float storage, no thinning.
+
+**Status: built in V1.17, waiting for the hardware test.**
+- **Limit:** `kSampleMaxFrames` = 882,000 frames (20 s at 44.1 kHz), mono and stereo alike. A longer file is **ignored** (marked unsupported, like an unsupported format), not cut. Room: four 20 s mono samples fit at once (14.4 MB), or about 80 s mono in total, 40 s stereo.
+- **Loading:** the new sample gets its block while the old one keeps playing when there is room (seamless swap); if there is room only without the layer's own sample, that is released and replaced (the old note stops, as before when the slots ran out); if not even then, the layer is left empty and the alert **SAMPLE MEMORY FULL** shows for 2 s.
+- **Playing, the sample view and the MEM bar** read the sector's address; the MEM bar now shows the share of the pool in use.
+- **Old samples:** nothing changes for samples under 5.44 s; a factory sample that used to be cut at 5.44 s now plays in full.
+
+**First hardware test (owner, 2026-11-15):** SAMPLE MEMORY FULL works. Swapping a long sample on a playing layer left it NOT loaded (the sample view said LOADING, MEM 66 %): the new sample needed one gap, and the free space was scattered between the other samples (first-fit with no packing). Fixed in the second V1.17 build: **packing** (`samplePoolPlanCompact`, `Controller::samplePool_compact`): when the layer's own sample is released and the gap is still too small, the other samples are moved down (a moved sample's notes in flight stop, no new note starts on it while it moves) so the free space is one gap; only if the total free space is too small is it SAMPLE MEMORY FULL, now with a second line `NEEDS 4.2 MB  FREE 3.1 MB`. A layer with no sample in memory says NOT LOADED, not LOADING.
+
+**Second report (owner, same day):** when the layer had a sample and the new one did not fit, the old one was dropped and the new one stayed selected but not loaded. Now, when the new sample does not fit even without the layer's own, **nothing is released**: the old sample stays loaded and playing, the alert says what is needed, and the selection goes back to the old sample (`prevLoadedData`). Only when the failure comes after the old sample was released (not expected: the free space is checked first) is the layer left empty.
+
+**Done when.** A 15 s mono sample plays in full and shows its waveform; a 25 s sample is refused; a 12 s stereo sample plays in full on both sides; loading several long samples fills the MEM bar and the next one that does not fit gives SAMPLE MEMORY FULL; a short sample swapped on a layer that plays does not cut. Test files: `Long_Test_15s.wav`, `Long_Test_25s.wav`, `Stereo_Test_12s.wav`.
+
+### 58. Review of V1.15 to V1.17 (2026-11-15)
+
+**Asked by the owner:** a deep review of everything since the V1.14 release, especially the SD card. A reviewer pass over the whole diff found ten things; each was checked against the code. Fixed in the third V1.17 test build:
+
+1. **Reverb off collapsed every pan to mono.** The bypass copied the left channel into the right (`memcpy(audioReverb_R, audioReverb_L)`), which was right for the old mono chain and wrong since the router fills both channels. With the reverb off (its default) and the reverb last before the master, a layer panned hard right vanished and every pan became mono. The bypass now leaves the pair unchanged.
+2. **Watchdog during long loads.** Loading up to ten samples of up to 20 s, plus the alerts (up to 3 s each), can exceed the 6 s watchdog within one pass of the main loop and restart the device in the middle of a load. The loader feeds the watchdog on every chunk, and the alerts wait in 100 ms steps that feed it (`alertDelay`).
+3. **A kit or song load counted the old kit's samples as taken.** Layers load one by one while the others still hold the previous kit's samples, so a kit that fits could report SAMPLE MEMORY FULL. A kit or song load now releases the whole pool first (`samplePool_releaseAll`).
+4. **Notes under a block that gets overwritten.** Packing only stopped notes reading the block it moved, not notes reading a freed block it copies over. It now stops notes in both ranges.
+5. **SD read, aligned path:** the destination's cache lines are now cleaned and invalidated before the DMA (a dirty line could be written back during the transfer); the invalidate after it stays.
+6. **The sample loader's 24 KB buffer was not 32-byte aligned,** so every read went sector by sector through the scratch buffer (slow, which made 20 s loads and the watchdog problem worse). It is aligned now: reads go straight into it.
+7. **The pack checker** (`tools/check_drumkit.py`) still used the V1.16 limits and compared file frames, not playback frames. It now uses the 20 s limit on playback frames with the loader's per-rate factor.
+8. **Audio cost:** the pan gains (`cosf`, `sinf` for ten layers every block) are recomputed only when a pan changes.
+9. **PAN encoder:** the two copies (turn up, turn down) with dead branches are one helper; with ADD held, every layer that can still move does.
+10. **EQ reset:** the right-channel reset sat inside the peak loop; moved after it.
+
+**Checked and found fine for the SD card:** the write path (aligned: clean before the DMA; unaligned: copy into the scratch buffer, then clean, which was the bug of item 56); the read path for unaligned buffers (DMA into the scratch buffer, invalidate, copy); every other DMA in the firmware (I2S halves cleaned and invalidated by address, the MIDI receive byte alone in its own cache line, the MIDI transmit buffer aligned and cleaned, the I2C buffers in the uncached RAM_D3, the SDRAM only touched by the CPU).
+
+**Still open:** a restart (the watchdog or a power cut) during a write can leave the file system inconsistent (FatFs is not power-fail safe); the watchdog is now fed in the long loads, but a card should still be ejected properly and backed up. Not yet tested on hardware: this build.
+
+### 59. Quantization modes (planned for the week of 2026-11-16)
+
+**Asked by the owner (2026-11-15):** more quantization modes; the owner likes the concept of **patterning with 3-regular quantization** (to be confirmed next week: the idea as I read it is a regular grid and a triplet grid that can be combined or switched, so a pattern can mix straight and triplet hits). Today the quantize setting (`rhythm.quantize`, the RHYTHM page) is one grid for recording. To settle before building: which grids (straight 1/4 to 1/32, triplets, dotted, swing?), whether a pattern can mix grids per beat or per layer, how recorded hits are placed (snap, or snap with a strength), and how the NOTE page and the EUCLID grid show it.
+
+### 60. Load and save screen (planned for the week of 2026-11-16)
+
+**Asked by the owner (2026-11-15):** a screen for loading and saving songs and kits, in the manner of the other full-area views (item 45): a list or grid of the 100 song slots and the 100 kit slots with their state (empty or used, name or number), the current slot marked, and a clear confirm for overwrite. Today a slot is picked by number and confirmed with an alert. To settle: what a slot shows (name? date? the first bars as a thumbnail?), naming of slots, and copy, rename and delete.
+
+### 61. More drumkits (planned for the week of 2026-11-16)
+
+**Asked by the owner (2026-11-15):** more drumkits. Today there are 100 kit slots (`kDrumkitLibrarySize`, files `Drumkit_001.rwd` to `_100`), each 1500 bytes, picked by number. The limit is the slot count and the picker, not memory. Options: more slots (the file names have three digits, so up to 999), banks or folders of kits, and names for kits (needs a field in the kit file; the layout is in `docs/drumkit-specs.md`). The kits themselves are prepared in another thread from sample packs: the specifications for them are in `docs/drumkit-specs.md` and the checker is `02 Software/tools/check_drumkit.py`. Goes together with item 60 (the load and save screen).
+
+### 62. Whole-code review after the owner's CRASH 7 (2026-11-20)
+
+**Reported by the owner:** the unit works but sometimes crashes: the alert `CRASH 7 S02 P0F L13` (watchdog; stage 2, the screen; page 0x0F, the instrument page; audio load 13 %, so the audio did not starve the loop). Three review passes (storage and crash handling; audio engine and DSP; input, MIDI, sequencer, file formats and the display) read the whole firmware; each finding was checked against the code. Fixed in the fifth V1.17 test build:
+
+**What the crash most probably was (two routes to the same signature).**
+1. **The SD driver waited up to 30 s for a transfer that could not finish.** The HAL's error callback was not connected (the template had it commented out), so a CRC error or a timeout on the bus never ended the driver's wait, which was 30 s; the main loop stalled, and the 6 s watchdog restarted the unit. The instrument page streams the sample preview from the card in stage 2. Fixed in `sd_diskio.c`: the error and abort callbacks end the wait at once, one transfer or readiness wait is 0.8 s, a failed transfer is aborted by hand (not with `HAL_SD_Abort`, whose wait has no useful bound), the disk is marked failed (`SdBad`) so later calls fail at once, and `update()` mounts the card again. The HAL's command timeouts (`SDMMC_CMDTIMEOUT` 5000 ms, `SDMMC_STOPTRANSFERTIMEOUT` that wrapped to about 20 s) are 200 ms (the vendored `stm32h7xx_ll_sdmmc.h`: re-apply it if CubeMX regenerates the driver) and the software data timeout is 1 s (`-DSDMMC_SWDATATIMEOUT` in the Makefile). The status check no longer says "not initialised" while the card is programming, and `CTRL_SYNC` waits for the card, so a save is on the card when it reports success.
+2. **A glitch of the card-detect line triggered a full rescan.** `interruptSd` (every 0.5 s) treated one reading of "no card" as a removal; `sd_reinitialize` then rescanned 2,500 samples without feeding the watchdog (the screen update inside it relabels the stage as 2), and the rescan overwrites the start of the sample pool with names. Now two readings in a row are needed, the interrupt only sets flags (`update()` closes, unmounts and draws), a loss shorter than 4 s skips the rescan, a real removal releases the pool and reloads the samples after the rescan, and the waits and scan loops feed the watchdog.
+
+**Other crash and hang causes fixed**
+- **Lane drawing:** two beats in one pixel column, or a short fill, gave a negative width that the LCD treated as billions of pixels (about a minute, then the watchdog). `lcd_drawBeat` clamps it and `Lcd::fillRect`, `clearRect` and `drawRect` refuse an empty size and cut an oversized one to the screen.
+- **Bitcrusher wavefolder:** an unbounded loop in the audio interrupt (a very loud float sample took milliseconds; an infinity never ended). Now constant time (`foldSignal`, host-tested).
+- **WAV header search:** a streamed file (RIFF size 0 or 0xFFFFFFFF) or a big metadata chunk made the loader step byte by byte for billions of reads. It walks the chunk list (`wavFindChunk`); an empty data chunk is unsupported (it ran away as size 0 - 1).
+- **NaN and infinity** in a float WAV poisoned filters for good: the float compare is folded away by `-ffast-math`, so the test is in the bits (`finiteOrZero`), at the loader, the preview and the master. 32-bit integer PCM files are decoded as integers (they were read as floats).
+- **Codec I2C** used `HAL_MAX_DELAY` (a stuck bus froze the loop) and wrote uninitialised data back after a failed read; now finite timeouts and no write after a failed read.
+- **I2S DMA error** stopped the audio for good (the callback it used does not exist in this HAL): `HAL_I2S_ErrorCallback` marks it and the main loop restarts the stream. **MIDI OUT** had the same for UART6 (`txBusy` stuck).
+- **Long press of the beat key** ran the beat generation (undo copy, LCD drawing) inside a timer interrupt at the audio's priority: now only a flag, the main loop does it.
+- **layer_playBeat** built the beat in place while the sequencer timer interrupt could call it for the same layer: built apart, published at once.
+- **Songs and kits:** a file cut short (no "EOF" marker, e.g. a save interrupted) is an empty slot, not zeros loaded over the current song; the arrays of the loaders are initialised; LFO, filter and effect values from a file are range-checked before they index tables.
+
+**Sequencer and sound fixes**
+- **NUDGE:** a beat with a negative nudge could be selected after its due time and stop the layer for the rest of the loop (V1.14).
+- **PONG:** it faded out 50 samples into its forward half and restarted at the first frame instead of START; fixed. PROBABILITY 0 % played once in 10,000 hits; an LFO on END could index the number table at -1; an LFO phase change wrapping below zero ended 180 degrees off; quantizing could place a beat at or past the song end; `(menu = LAYER_SONG_MENU)` (an assignment) in `layerSong_resetAllBeats`.
+- **Sound (the master soft clip and effects):** the soft knee went over full scale (peak 1.056) and stepped down above 1.25: it now ends at exactly 1.0 with zero slope (1.1667). The overdrive curve jumped by 0.125 at its threshold at the default -6 dB (continuous now, identical at 0 dB). The bit depth reduction truncated, so silence became a DC offset (-0.125 at 4 bits); it rounds now (silence stays silence). The flanger's read head ran past its buffer at TIME 5 ms and WIDTH 100. The audio interrupt now runs with flush-to-zero like the main loop (`FPDSCR`). All in `DspMath.h` with `test_dspmath` where pure.
+- **Reverb off** no longer collapses every pan to mono (backlog 58).
+
+**Found and not done yet (candidates for the next steps)**
+- **Coefficient changes are not atomic with the audio interrupt** (filters, EQ, effects: a dozen separate stores while the interrupt can run; a block can run with new `b` and old `a`). Build the coefficients apart and publish them in one step.
+- **The sequencer timer interrupt draws on the LCD** (`stop()`, `reset()`, precount hits) while the main loop may be mid-draw: set flags in the interrupt, draw in `update()`.
+- **A module that is switched off keeps its state** (reverb tail, filter history, compressor): it comes back when it is switched on again.
+- **`setBeatFill(n, 0, 0, 0, 0)`** (set beat, reset, quantize) resets every beat's fill, pattern and ghost notes; `beatListRebuild` keeps them.
+- **Measure and bar, START and END are validated against each other's old value when a song or kit loads**, so a song can load with the wrong length; and beats past a shorter song end stay as invisible beats.
+- **Saving is not atomic**: a slot is truncated and rewritten in place (write a temporary file, check every length, sync, rename); `f_write` results are not compared with the length.
+- **Refactoring:** `sd_loadFile` and `sd_loadDrumkit` decode the same kit twice; `sd_saveDrumkit` repeats `file_encodeKit`; `encoder_incValue` and `encoder_decValue` are two mirrored 650-line switches; `interruptTransition` is about 700 lines of ramps; `rhythm_setQuantize` repeats the beat rearrangement about ten times.
+- **Performance:** the pitched layer path reads each sample three times through a volatile lambda; the distortion's `2.0f / M_PI` is a double.
+
+**If it crashes again:** the alert text and `System/Crash.log` tell the stage and page; `SdErrorCount` (driver) and `audioFaultCount` (I2S) are new counters for a later diagnostics line.
+
+### 63. EUCLID settings per layer (owner's report, 2026-11-20)
+
+**Reported by the owner:** there is one set of EUCLID settings (and so one ACCENTS count) for all layers; changing it on one layer changes it for all, so there is no accent logic per channel.
+
+**Cause.** The page's STEPS, HITS, ROTATE, GRID, MODE and ACCENTS were single variables of the machine. Applying them rebuilt only the selected layer's beats, but opening the page on another layer showed the settings of the layer edited last, and the next turn of any field applied that whole set (including its accents) to the new layer.
+
+**Built in V1.17, waiting for the hardware test** (`EuclidSettings` in `Euclid.h`, `test_euclid`): each layer has its own set. Opening the page on a layer loads that layer's set; every turn stores the set back for that layer. The sets are saved in the song file as an "EUC" block (64 bytes: marker, version 1, six bytes per layer) after the DUB block; older firmware never reads that far, and a song without the block (older songs, a new song) starts every layer at the defaults (16 steps, 4 hits, no rotation, the default grid, REPLACE, accents off). Values from a file are clamped. The autosave notices a change of the settings. Note: what is stored is the layer's settings, not the beats: the beats are in the song as before; the settings are what the page shows and edits for that layer.
+
+**Not changed:** the settings are per layer, not per bank (the same set applies to whichever song bank is active when the layer is edited). Per bank would be 10 sets per bank; say if you want it.
+
+**Done when.** Layer 1 with ACC 2 and layer 2 with ACC 4 keep their own values when moving between the pages; saving and loading the song keeps them; an older song loads with the defaults.
+
+### 64. Check of the DUB reverb and the line-in (2026-11-20)
+
+**Asked by the owner:** does the reverb of the dub machine work; does the audio input work (not tested on the device yet). Checked by reading the code and with host tests (`test_dubmix`: the reverb send and every line-in entry point through the DUB patch); not heard on the device.
+
+**DUB reverb: the path is right, one leak fixed.**
+- A strip's VERB send feeds the REV node at its own gain (a throw opens it fully); the node's stereo output goes to the master (`kDubRoutePatch`); VERB RTN is the reverb's WET; MODE to DUB switches the reverb on; the reverb's DRY is off in DUB (`fxDryScale`) and a switched-off reverb returns silence. A DIR strip is heard dry plus its send through the reverb (host-tested: dry 0.5, send 40 % gives 0.5 x (1 + 0.4 x the reverb's gain) at the master).
+- **Fixed:** the dry part of a *transition* (switching the reverb or an effect on or off, changing its type, its damping, its surround) ignored `fxDryScale`, so for the length of the fade the raw send leaked to the master in DUB mode. All ten places multiply it now (the CHAIN sound is unchanged: the factor is 1).
+- Known and left: VERB RTN turns are ignored while a previous mix change is still ramping (`reverb_setWet` refuses during `mixTransition`), so a fast turn can feel sticky; the reverb's DRY is lowered when WET goes above 25 (the DRY+WET limit of 125), so a reverb used in DUB comes back with less DRY in CHAIN; ECHO > VERB (the echo return into the reverb) is not built (design D2).
+
+**Line-in: the chain looks right, with three things to know before the test.**
+- It is **muted at start-up** (`kInitialMixerLiMute`): on the MIXER page, LI-VOL tab, hold ADD to unmute (it powers the codec's ADC, about half a second), hold CLEAR to mute. The codec setup was checked against the SGTL5000's registers: ADC and I2S output powered, line-in selected, stereo, unity gain (the source comment says the earlier measurement at +4.5 dB hit full scale).
+- The signal is the **mono sum** of left and right, high-passed at 5 Hz, then goes through the line-in's own **low-pass (one pole, about 7 kHz)** and a **downward expander** (closes below -62 dBFS to -18 dB, opens at -56 dBFS, 50 ms hold) before the LI-VOL level (`processAudioReceive`).
+- **In DUB mode line-in has no strip** (design D4): its MIXER IN entry point picks a single path: EQ (through the dub filter, dry), FILTER 2 or EFFECT 1 (into the echo, with no dry), REVERB (only the reverb), SEND (straight to the master). So line-in cannot be heard dry and with an echo send at the same time yet (host-tested for every entry point).
+- **Sound-quality note (the owner's rule):** the 7 kHz low-pass and the expander are there for the codec's noise, but they darken the input and eat quiet passages (reverb tails and fades of the source). They are fixed in the source (`LINE_IN_LPF_ENABLE`, `LINE_IN_GATE_ENABLE`). If the test shows they hurt, make them settings (or off by default) and judge the noise by ear.
+
+**To test on the device.**
+1. Reverb: MIXER to DUB, MODE DUB; raise VERB on a strip and VERB RTN; hits should ring into a tail; MUTE the strip: the tail keeps ringing (a drop); a reverb throw (REVERB + pad) opens the send; with VERB 0 nothing reaches the reverb; turn the reverb off on its own page: silence, with no burst of the dry send.
+2. Line-in: unmute on the LI-VOL tab, play a source into the input: the meter/level should move, check the tone and the quiet passages; try MIXER IN = EQ, FILTER 2 (echo) and REVERB while in DUB.

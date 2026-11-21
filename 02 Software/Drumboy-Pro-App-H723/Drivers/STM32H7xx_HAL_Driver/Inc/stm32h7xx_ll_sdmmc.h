@@ -359,9 +359,9 @@ typedef struct
   */
 #define SDMMC_CCCC_ERASE                   ((uint32_t)0x00000020U)
 
-#define SDMMC_CMDTIMEOUT                   ((uint32_t)5000U)        /* Command send and response timeout     */
+#define SDMMC_CMDTIMEOUT                   ((uint32_t)200U)         /* Command send and response timeout (ms; was 5000: a card that does not answer blocked the main loop for seconds, see FATFS/Target/sd_diskio.c) */
 #define SDMMC_MAXERASETIMEOUT              ((uint32_t)63000U)       /* Max erase Timeout 63 s                */
-#define SDMMC_STOPTRANSFERTIMEOUT          ((uint32_t)100000000U)   /* Timeout for STOP TRANSMISSION command */
+#define SDMMC_STOPTRANSFERTIMEOUT          ((uint32_t)200U)         /* Timeout for STOP TRANSMISSION command (ms; was 100000000, which wrapped to about 20 s) */
 
 /** @defgroup SDMMC_LL_Clock_Edge Clock Edge
   * @{

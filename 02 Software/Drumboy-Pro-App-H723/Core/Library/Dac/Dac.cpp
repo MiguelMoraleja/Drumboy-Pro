@@ -8,6 +8,17 @@
 // Needed because consumer sources pin this input at full scale even at unity gain.
 #define LINE_IN_ADC_M6DB 0
 
+// One register read: address out, two bytes back, every step with a finite timeout (HAL_MAX_DELAY blocked
+// the main loop for good on a stuck bus). False when any step failed; the bytes are then zero.
+bool Dac::codecRead(const uint8_t* addr_, uint8_t* out_) {
+    out_[0] = 0;
+    out_[1] = 0;
+    if (i2cWaitReady(100) != HAL_OK) return false;
+    if (HAL_I2C_Master_Transmit(&hi2c3, SGTL5000_I2C_ADDRESS, const_cast<uint8_t*>(addr_), 2, 100) != HAL_OK) return false;
+    if (i2cWaitReady(100) != HAL_OK) return false;
+    return HAL_I2C_Master_Receive(&hi2c3, SGTL5000_I2C_ADDRESS, out_, 2, 100) == HAL_OK;
+}
+
 Dac::Dac() {}
 Dac::~Dac() {}
 
@@ -27,12 +38,7 @@ uint16_t Dac::readRegisterFull(uint16_t reg) {
 
     // 2. I2C TRANSFER
     // Send register address, then read back two data bytes.
-    if (i2cWaitReady(100) == HAL_OK) {
-        HAL_I2C_Master_Transmit(&hi2c3, SGTL5000_I2C_ADDRESS, txData, 2, HAL_MAX_DELAY);
-    }
-    if (i2cWaitReady(100) == HAL_OK) {
-        HAL_I2C_Master_Receive(&hi2c3, SGTL5000_I2C_ADDRESS, rxData, 2, HAL_MAX_DELAY);
-    }
+    codecRead(txData, rxData);
 
     // 3. DATA ASSEMBLY
     // Merge MSB/LSB to a single 16-bit value.
@@ -53,7 +59,7 @@ void Dac::writeRegisterFull(uint16_t reg, uint16_t data) {
     // 2. I2C WRITE
     // Transmit full write frame when bus is ready.
     if (i2cWaitReady(100) == HAL_OK) {
-        HAL_I2C_Master_Transmit(&hi2c3, SGTL5000_I2C_ADDRESS, txData, 4, HAL_MAX_DELAY);
+        HAL_I2C_Master_Transmit(&hi2c3, SGTL5000_I2C_ADDRESS, txData, 4, 100);
     }
 }
 
@@ -69,12 +75,7 @@ uint16_t Dac::readRegisterMask(uint16_t reg, uint16_t mask, uint16_t shift) {
 
     // 2. I2C READ SEQUENCE
     // Request register, then receive 16-bit data.
-    if (i2cWaitReady(100) == HAL_OK) {
-        HAL_I2C_Master_Transmit(&hi2c3, SGTL5000_I2C_ADDRESS, txData, 2, HAL_MAX_DELAY);
-    }
-    if (i2cWaitReady(100) == HAL_OK) {
-        HAL_I2C_Master_Receive(&hi2c3, SGTL5000_I2C_ADDRESS, rxData, 2, HAL_MAX_DELAY);
-    }
+    codecRead(txData, rxData);
 
     // 3. MASK EXTRACTION
     // Apply mask and right shift to return field value.
@@ -91,12 +92,8 @@ void Dac::writeRegisterMask(uint16_t reg, uint16_t mask, uint16_t shift, uint16_
     uint8_t rxData[2];
     txData[0] = (reg >> 8) & 0xFF;
     txData[1] = reg & 0xFF;
-    if (i2cWaitReady(100) == HAL_OK) {
-        HAL_I2C_Master_Transmit(&hi2c3, SGTL5000_I2C_ADDRESS, txData, 2, HAL_MAX_DELAY);
-    }
-    if (i2cWaitReady(100) == HAL_OK) {
-        HAL_I2C_Master_Receive(&hi2c3, SGTL5000_I2C_ADDRESS, rxData, 2, HAL_MAX_DELAY);
-    }
+    // A failed read must not be written back: the register would get garbage.
+    if (!codecRead(txData, rxData)) return;
 
     // 2. FIELD PATCH
     // Clear target mask and write updated input bits.
@@ -108,7 +105,7 @@ void Dac::writeRegisterMask(uint16_t reg, uint16_t mask, uint16_t shift, uint16_
     // 3. MODIFIED VALUE WRITE
     // Send patched register value back to codec.
     if (i2cWaitReady(100) == HAL_OK) {
-        HAL_I2C_Master_Transmit(&hi2c3, SGTL5000_I2C_ADDRESS, txData, 4, HAL_MAX_DELAY);
+        HAL_I2C_Master_Transmit(&hi2c3, SGTL5000_I2C_ADDRESS, txData, 4, 100);
     }
 }
 

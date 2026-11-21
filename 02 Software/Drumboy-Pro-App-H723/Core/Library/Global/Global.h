@@ -91,24 +91,7 @@ ALWAYSINLINE float softClip(float x) {
     return x * (1.5f - 0.5f * x * x);
 }
 
-ALWAYSINLINE float softKneeClip(float x) {
-    // Threshold where saturation begins (66% of scale)
-    const float kThreshold = 0.6666666667f;
-    float absX = fabsf(x);
-    if (absX <= kThreshold) {
-        return x;
-    }
-
-    // Non-linear saturation curve for the "knee"
-    if (absX > 1.25f) {
-        return (x > 0) ? 1.0f : -1.0f;
-    }
-
-    // Polynomial approximation to smoothly compress 0.66 -> 1.0
-    float saturated = (absX - kThreshold) / (1.25f - kThreshold);
-    float val = kThreshold + (1.25f - kThreshold) * (saturated - 0.3333333333f * saturated * saturated * saturated);
-    return (x > 0) ? val : -val;
-}
+// softKneeClip, finiteOrZero, quantize24, foldSignal and overdriveShape are in DspMath.h.
 
 template <typename T, int N>
 int size(T (&a)[N]) {
@@ -123,7 +106,9 @@ void swap(T& a, T& b) {
 }
 
 #include "Util.h"     // clamp()
+#include "DspMath.h"  // soft clip, bit depth reduction, wavefolder, overdrive curve
 #include "PingPong.h"  // ping-pong echo
+#include "SamplePool.h"  // the sample memory pool (up to 20 s per sample)
 #include "Routing.h"  // RouteNode, routing helpers
 
 template <typename T>
@@ -355,13 +340,14 @@ const uint32_t kSampleByteSize                      = kSampleSize * 4;
 
 const uint8_t kSampleSectorLibrarySize              = 15;
 
-// A stereo sample keeps its two channels in one slot as two planes: the left channel at the start of
-// the slot, the right one half a slot later. Half the length (2.7 s), the same memory, 32-bit float.
-const uint32_t kStereoSampleSize                    = kSampleSize / 2;
-const uint32_t kStereoPlaneBytes                    = kStereoSampleSize * 4;
-
+// One loaded sample. The sectors are the fifteen descriptors; the memory comes from the pool
+// (SamplePool.h): address and bytes say where it is. A stereo sample has two planes of planeBytes
+// each (the right one planeBytes after the left); a mono sample has planeBytes 0.
 struct SampleSector {
-    bool stereo = false;                            // two planes (kStereoPlaneBytes apart)
+    uint32_t address = 0;                           // first byte in the SDRAM
+    uint32_t bytes = 0;                             // the whole block (both planes)
+    uint32_t planeBytes = 0;                        // 0 = mono
+    bool stereo = false;
     bool active = false;
     uint8_t layer = 0;
     uint32_t size = 0;
@@ -540,6 +526,9 @@ struct Sd {
     volatile bool detect                            = false;
     volatile bool ready                             = false;
     volatile bool getLibrary                        = false;
+    volatile bool removedFlag                       = false;  // the detect line stayed high: the main loop closes the file, unmounts and re-initialises
+    volatile uint8_t lostCount                      = 0;      // consecutive checks of the detect line that found no card (debounce)
+    volatile uint32_t lostMs                        = 0;      // HAL_GetTick() when the card was lost, or the driver gave up on it
     char label[32]                                  = "";
     DWORD serial                                    = 0;
     DWORD serialTemp                                = 0;
@@ -1707,6 +1696,7 @@ typedef enum {
     ALERT_OVERWRITEDRUMKIT                          = 0x0F,
     ALERT_MISSINGSAMPLE                             = 0x10,
     ALERT_MISSINGSAMPLES                            = 0x11,
+    ALERT_SAMPLEMEMORY                              = 0x7F,  // the sample pool has no room for the sample
     ALERT_LOADSUCCESS                               = 0x12,
     ALERT_LOADERROR                                 = 0x13,
     ALERT_SAVESUCCESS                               = 0x14,
@@ -1735,6 +1725,7 @@ const char kAlertTextClearDrumkit[]                 = "CLEAR DRUMKIT?";
 const char kAlertTextOverwriteDrumkit[]             = "OVERWRITE DRUMKIT?";
 const char kAlertTextMissingSample[]                = "MISSING SAMPLE";
 const char kAlertTextMissingSamples[]               = "MISSING SAMPLES";
+const char kAlertTextSampleMemory[]                 = "SAMPLE MEMORY FULL";
 
 const char kAlertTextLoadSuccess[]                  = "LOAD -> SUCCESS";
 const char kAlertTextLoadError[]                    = "LOAD -> ERROR";
@@ -3290,8 +3281,8 @@ struct Eq {
             filterPeak[i].x2 = 0;
             filterPeak[i].y1 = 0;
             filterPeak[i].y2 = 0;
-            for (uint8_t k = 0; k < 6; k++) right[k] = EqState();
-    }
+        }
+        for (uint8_t k = 0; k < 6; k++) right[k] = EqState();  // the right channel's history
     }
 };
 
@@ -3832,9 +3823,12 @@ struct Flanger {
 
         // The LFO range is limited by the width parameter and buffer size constraints.
         shiftMax = (width * (float)lag);
-        
-        // Ensure shiftMax doesn't exceed buffer limits
-        if (shiftMax > (float)(kFlangerBufferSize - 2)) shiftMax = (float)(kFlangerBufferSize - 2);
+
+        // The delay is lag + shift, so the shift has only what the buffer holds beyond the lag (it was
+        // limited to the whole buffer: at TIME 5 ms and WIDTH 100 the read head ran past it and wrapped).
+        float room = (float)(kFlangerBufferSize - 2) - (float)lag;
+        if (room < 0.0f) room = 0.0f;
+        if (shiftMax > room) shiftMax = room;
         
         shiftInc = (shiftMax * shiftFreq) / (float)AUDIO_SAMPLE_RATE;
     }

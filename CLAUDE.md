@@ -1,6 +1,7 @@
 # Notes for AI assistants working on this repo
 
 Fork: MiguelMoraleja/Drumboy-Pro. Firmware: `02 Software/Drumboy-Pro-App-H723`. Planned work: `BACKLOG.md`.
+Preparing samples or drumkits: `docs/drumkit-specs.md` (formats, limits, names, kit file layout) and the checker `02 Software/tools/check_drumkit.py`.
 
 ## Before pushing firmware changes
 
@@ -14,6 +15,8 @@ Fork: MiguelMoraleja/Drumboy-Pro. Firmware: `02 Software/Drumboy-Pro-App-H723`. 
 The owner's standing rule (2026-11-13): never trade sound quality for speed, memory or simplicity. If the audio engine runs out of processor time, find the room elsewhere (data cache, faster code, the unused DTCM RAM, a leaner screen, a specialized firmware build for heavy use) and do not thin out filters, effects, bit depth or sample rate. A cheaper algorithm is only acceptable if it sounds the same. Say so in the backlog when a choice touches this.
 
 SD writes with the data cache on need a cache clean before every DMA (`FATFS/Target/sd_diskio.c`): a missing clean in the scratch-buffer path corrupted two cards (backlog 56). Any new DMA from a cacheable buffer needs the same.
+
+The SD driver must never wait long: the HAL's error callbacks are connected in `FATFS/Target`, a transfer is bounded to 0.8 s, and the vendored HAL has shorter command timeouts (`SDMMC_CMDTIMEOUT` and `SDMMC_STOPTRANSFERTIMEOUT` 200 ms in `stm32h7xx_ll_sdmmc.h`; re-apply after a CubeMX regeneration; backlog 62). Anything that can take longer than a second in the main loop must feed the watchdog (`IWDG1->KR = 0xAAAA`). The build uses `-Ofast -ffast-math`: a float compare does not catch NaN or infinity, use `finiteOrZero` (`DspMath.h`).
 
 The Makefile does not see a change of `DCACHE` or `PROFILE` (the data cache is on by default since V1.15; `DCACHE=0` turns it off): use a clean or another `BUILD` directory after changing them, and build the update package with a clean `build/`. Update file names stay within 28 characters (the bootloader ignored a 31-character name).
 

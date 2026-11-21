@@ -10,6 +10,8 @@ This repository holds the complete hardware design (KiCad) and firmware (STM32Cu
 
 ---
 
+
+Samples and drumkits: [`docs/drumkit-specs.md`](docs/drumkit-specs.md) has the sample format, length and name limits and the kit file layout; `02 Software/tools/check_drumkit.py` checks a pack against them.
 ## Overview
 
 The MCU sits at the center of six subsystems: an NT35510 display driven over a 16-bit parallel GPIO bus, 16 MB of external SDRAM for sample streaming, an SGTL5000 audio codec over I2S/I2C, a microSD card for storage, a control surface fanned out over six MCP23017 I/O expanders, and external connectivity (MIDI, Sync, USB-C power).
@@ -34,6 +36,7 @@ The MCU sits at the center of six subsystems: an NT35510 display driven over a 1
 - **Sequencer** with 5 song banks per layer, 64 beats per bank, and algorithmic complex-fill generation (timing alignment × level curve templates)
 - **Layer pages** (V1.10): hold I or S (right side, L I S row) and press a layer pad to open that layer's instrument or song page; tap I or S on its own to step through the current layer's pages (instrument 1 → 2 → 3, song ↔ EUCLID) or to switch between its instrument and song pages
 - **Beat editing** on the Layer Song page (V1.10): MOVE a beat past its neighbours while keeping its fill (position shown as bar.beat.16th), SHIFT ALL to rotate a whole layer, and a short ADD press to insert a beat
+- **EUCLID settings per layer** (V1.17): each layer keeps its own STEPS, HITS, ROTATE, GRID, MODE and ACCENTS (saved in the song file), so accents can differ by channel.
 - **EUCLID page** (V1.10, the song page's second page): Euclidean rhythms with steps, hits, rotation and grid, applied live, REPLACE or MERGE with the layer's beats, CLEAR to undo; ACCENTS (V1.11) keeps some hits loud and makes the rest ghost notes
 - **Pitch in semitones** (V1.11): −24 to +24, a fast turn jumps by octaves; kits from older firmware keep their exact pitch until you change it
 - **Song mode** (V1.12): chain the 5 banks, each for 1–16 loops, up to 16 steps, looping or stopping at the end; tap the SONG key on its own for the SONG page; there, a long COPY / PASTE copies a whole bank (all 10 layers) to another
@@ -51,6 +54,7 @@ The MCU sits at the center of six subsystems: an NT35510 display driven over a 1
 - **Step edit screen** (V1.15): while the NOTE page is open, the lane area shows the layer's beats across the full width with a velocity lane and a chance lane under them, a dot under beats with a condition and a bar ruler; the selected beat is magenta, with its details at the top right.
 - **MISSING SAMPLE names the sample** (V1.16): a second line under the alert gives the first missing layer, instrument and sample (`L3 Kick/Name`), for 3 seconds.
 - **Stereo samples** (V1.16): a stereo WAV keeps both channels (it used to keep only the left one). A stereo sample holds half the length (2.7 s, mono stays 5.44 s) in the same memory, in 32-bit float; its PAN is a balance. Longer stereo files are cut at 2.7 s.
+- **Samples up to 20 s** (V1.17): the sample memory is one shared pool instead of fifteen fixed slots. A sample may be up to 20 s long, mono or stereo (a longer file is ignored); about 80 s of mono fit in total. MEM shows the share of the pool in use; SAMPLE MEMORY FULL when a sample does not fit.
 - **MIDI thru of clock and transport** (V1.16): with MIDI IN and MIDI OUT both on SYNC or NOTE+SYNC, the incoming clock and start, continue, stop and reset pass on to MIDI OUT, and the Drumboy sends none of its own while it follows, so a synth behind it sees exactly one clock. Notes are not passed on.
 - **Ping-pong echo and DUB page 2** (V1.16): press MIXER again while on DUB for a second page with the selected strip's PAN and FX SEND and the echo's ECHO WIDTH (0 = the centred echo, 100 % = the repeats alternate left and right, from the same delay memory).
 - **Dub mixer, first step** (V1.15): MIXER, then DUB (then ROUTING). MODE switches the song between CHAIN (the ROUTING patch) and DUB, where every layer is a strip with a BUS (FILT through the EQ and Filter 1, or DIR to the master) and ECHO and VERB sends into Effect 1 and the reverb; ECHO RTN and VERB RTN set the returns. Saved in the song file. While the DUB page is open, the lane area is a console-style desk: twelve wide columns (ten layers, ECHO, VERB) with scribble plates, the FILT | DIR switch, two knobs per column for the sends, a pan bar, a fader with an LED ladder meter and a mute lamp.

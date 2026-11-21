@@ -49,6 +49,18 @@ static void testDecode() {
     b[0] = 0x00; b[1] = 0x00; b[2] = 0x80; CHECK(std::fabs(previewDecode(b, 24) + 8388608.0f / 8388607.0f) < 1e-6f, "24-bit min (sign extended)");
     b[0] = 0xFF; b[1] = 0xFF; b[2] = 0x7F; CHECK(previewDecode(b, 24) == 1.0f, "24-bit max");
     const float x = 0.375f; memcpy(b, &x, 4); CHECK(previewDecode(b, 32) == 0.375f, "float");
+    {  // 32-bit integer PCM (bits 33) and a NaN in a float file
+        const int32_t half = 0x40000000, neg = -0x80000000LL;
+        memcpy(b, &half, 4); CHECK(previewDecode(b, 33) == 0.5f, "int32 half scale");
+        memcpy(b, &neg, 4); CHECK(previewDecode(b, 33) == -1.0f, "int32 min");
+        const uint32_t nanBits = 0x7FC00000u, infBits = 0x7F800000u;
+        memcpy(b, &nanBits, 4); CHECK(previewDecode(b, 32) == 0.0f, "NaN is silence");
+        memcpy(b, &infBits, 4); CHECK(previewDecode(b, 32) == 0.0f, "infinity is silence");
+        float buf[64]; PreviewRing ring{buf, 63, 0, 0};
+        const uint8_t pcm[8] = {0, 0, 0, 0x40, 0, 0, 0, 0xC0};
+        const PreviewFormat f33{33, 1, 44100};
+        CHECK(previewConvert(ring, pcm, 8, f33) == 8 && previewRingCount(ring) == 2 && buf[0] == 0.5f && buf[1] == -0.5f, "bits 33 reaches the ring");
+    }
     CHECK(previewFrameBytes({16, 2, 44100}) == 4 && previewFrameBytes({24, 2, 96000}) == 12 && previewFrameBytes({16, 1, 192000}) == 8, "frame steps");
     CHECK(previewRepeat({16, 1, 8000}) == 6 && previewRepeat({16, 1, 22050}) == 2 && previewRepeat({16, 1, 48000}) == 1, "repeats");
 }

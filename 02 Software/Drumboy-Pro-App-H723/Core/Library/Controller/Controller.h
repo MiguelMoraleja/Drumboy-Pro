@@ -285,13 +285,21 @@ class Controller {
     bool transitionShowMenu, transitionClearMenu;
     bool transitionShowEncoder[kEncoderSize], transitionClearEncoder[kEncoderSize];
 
-    uint8_t layerBeatKeyStage;                                        
+    uint8_t layerBeatKeyStage;
+    volatile bool layerBeatActionFlag = false;   // the long press of the beat key (a timer interrupt) asks for a beat ...
+    volatile uint8_t layerBeatActionStage = 0;   // ... of this stage; update() generates it                                        
     bool layerSongAddArmed;  // ADD pressed on Layer Song: a short press inserts a beat
     bool layerSongAddUsed;   // another key or encoder was used while ADD was held
     int32_t layerSongShift;  // net SHIFT ALL since the page was opened, in intervals
     bool layerModKeyUsed;    // a layer pad was pressed while L, I or S was held (so its release is not a tap)
 
     // EUCLID page (settings kept while powered; the layer's beats from before are in euclidSnapshot)
+    // The page works on this copy; every layer keeps its own set in euclidSet (loaded when the page opens, stored
+    // on every turn, saved in the song file).
+    EuclidSettings euclidSet[kLayerLibrarySize];
+    void euclid_loadSettings();
+    void euclid_storeSettings();
+    void euclid_resetSettings();
     uint8_t euclidSteps = 16;
     uint8_t euclidHits = 4;
     uint8_t euclidRotate = 0;
@@ -383,6 +391,13 @@ class Controller {
     DubMix dubMix;                                          // the strips; on = DUB mode (a song setting)
     char missingDetail[40] = "";                           // MISSING SAMPLE alert: the first missing layer, instrument and sample ("L3 Kick/Name")
     void missing_note(uint8_t layer_, const char* inst_, const char* sample_);
+    uint32_t samplePool_freeBytes(uint8_t exceptLayer_) const;
+    void samplePool_releaseAll();
+    void alertDelay(uint32_t ms_);
+    void layerPan_step(int8_t dir_);
+    uint8_t panCachePos[kDubStrips] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};  // the pan gains are recomputed only when a pan changes
+    float panCacheGain[kDubStrips][2] = {{1.0f, 1.0f}};
+    void samplePool_compact();
     float pingWidth = 0.0f;                                 // ping-pong width of the echo in this block (0 = centred; audio interrupt)
     float effectDelta = 0.0f;                               // right minus left of the effect's last sample (audio interrupt)
     float fxDryScale = 1.0f;                                // 0 in DUB mode: effects and reverb run without their DRY
@@ -535,6 +550,7 @@ class Controller {
 
     Io     getIo()    { return io; }                                    // Get MIDI/Sync state
     void   midi_countRxError() { io.midi.rxErrors = io.midi.rxErrors + 1; }  // MIDI IN UART error (diagnostics)
+    void   midi_txError() { io.midi.txBusy = false; startMidiTx(); }          // MIDI OUT UART error: release the transmitter and go on with the queue
     Mixer  getMixer() { return mixer; }                                 // Get Master audio levels
     Menu   getMenu()  { return menu; }                                  // Get currently active UI screen
 

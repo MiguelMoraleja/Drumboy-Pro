@@ -246,6 +246,18 @@ figure.shotf figcaption { font-size: .85rem; color: var(--muted); }
 img.shot { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 8px; background: #000; image-rendering: pixelated; }
 .msg { font-family: var(--font-mono); font-size: .78rem; color: var(--clip); min-height: 1.2em; }
 
+/* Quantize picture */
+.qz svg { display: block; width: 100%; height: auto; }
+.qz text { font-family: var(--font-mono); font-size: 10px; fill: var(--muted); }
+.qz .qa { stroke: var(--hit); stroke-width: 2; }
+.qz .qb { stroke: var(--signal); stroke-width: 2; }
+.qz .qboth { stroke: var(--ink); stroke-width: 2; }
+.qz .qbeat { stroke: var(--line); stroke-width: 1.5; }
+.qz .qplayed { fill: var(--ink); }
+.qz .qnear { fill: none; stroke: var(--signal); stroke-width: 2.5; }
+.qz .qland { fill: var(--hit); }
+.qz .qlink { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.qz .qread { font-family: var(--font-mono); font-size: .82rem; line-height: 1.6; }
 /* Song */
 .chainlist { display: grid; gap: 6px; }
 .crow { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) 34px; gap: 6px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 8px; }
@@ -449,6 +461,25 @@ table.rel td.new { min-width: 280px; }
           <div class="lcd" id="eu-lcd"></div>
         </div>
 
+        <div class="panel qz" id="qz-panel" style="display:grid; gap:14px">
+          <h3>How quantization works (V1.19)</h3>
+          <p class="muted" style="font-size:.9rem">Every hit you record is a position in <b>intervals</b>: 800 to a beat, 3200 to a bar. QUANTIZE (RHYTHM page) is a list of grid <b>points</b>. Try it: pick a grid, move the hit and the strength, and see where the hit lands. The song here is two beats long.</p>
+          <div class="field"><span class="label" id="qz-grid-label">QUANTIZE</span><div class="seg" id="qz-grid" role="group" aria-labelledby="qz-grid-label"></div></div>
+          <div class="two">
+            <div class="field"><div class="field-row"><label class="label" for="qz-hit">Where the hit was played</label><span class="mono" id="qz-hit-v"></span></div><input type="range" id="qz-hit" min="0" max="1599" step="1" value="270"></div>
+            <div class="field"><div class="field-row"><label class="label" for="qz-str">STRENGTH</label><span class="mono" id="qz-str-v"></span></div><input type="range" id="qz-str" min="0" max="100" step="5" value="100"></div>
+          </div>
+          <svg id="qz-svg" viewBox="0 0 760 190" role="img" aria-label="Grid points of the chosen grid on a two-beat song, the hit as played and where it lands"></svg>
+          <div class="qread" id="qz-read" aria-live="polite"></div>
+          <div class="notes">
+            <p><b>The nearest point.</b> A hit goes to the nearest point of the grid; exactly halfway goes to the later one. The straight grids (1:64 to 1:1) have a point every 50, 100, 200, 400, 800, 1600 or 3200 intervals. A <b>triplet</b> grid puts three notes in the time of two, so 1:8T has points at 0, 267, 533, 800 ...: a step is not a whole number of intervals, so each point is rounded to the nearest one, but three steps are exactly one beat and nothing drifts.</p>
+            <p><b>Mixed grids</b> (1:16+T, 1:8+T) have the points of the straight grid <i>and</i> of its triplet grid (orange and blue above; where both have a point it is black). A hit goes to whichever point is nearer, so one pattern can hold straight and triplet hits. <b>OFF</b> has no grid: every interval is a point, so a hit stays exactly where it was played.</p>
+            <p><b>STRENGTH</b> moves the hit only that share of the way to its point: 100 snaps, 50 goes halfway, 0 leaves it where it was played. The distance is rounded to a whole interval, a half away from where you played (3 intervals at 50 % is 2). It counts for hits you record (pads, MIDI IN, the pre-count) from the moment you set it, and is saved with the song.</p>
+            <p><b>The end of the song is its start.</b> A hit that would land on the end of the song (or past it) lands on the start instead.</p>
+            <p><b>Where it is used.</b> Recording uses the nearest point and STRENGTH. GENERATE BEAT snaps fully. MOVE, SHIFT ALL, INSERT and EUCLID step through the points of the grid (EUCLID only the straight and triplet grids). Changing QUANTIZE moves every existing beat to its nearest point at full strength (OFF leaves them alone); that is why the field is locked until you unlock it. Loading a song leaves each beat where it was saved.</p>
+          </div>
+        </div>
+
         <div class="panel keys">
           <h3>Getting there on the device</h3>
           <div class="k"><span class="keycap">S</span><div><b>Hold S</b> (right side, the L I S row) <b>and press a layer pad</b>: that layer's song page. <b>Tap S</b> on its own: EUCLID. Tap again: back to the song page. Holding S and pressing the same pad again also opens EUCLID.</div></div>
@@ -456,7 +487,7 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">7</span><div><b>ACCENTS</b> (V1.11) is the last field on the EUCLID page's bottom row. On the device the pattern line shows X for accented hits and + for ghost hits (e.g. <span class="mono">X.+X.++.</span>).</div></div>
           <div class="k"><span class="keycap">◎</span><div><b>Rings</b> (V1.14): while the EUCLID page is open, the ten lanes give way to all ten layers as rings around one centre, layer 1 outside. One turn is one loop, starting at the top; a yellow marker orbits with the playhead. The selected layer is cyan, with its grid as ticks. On the right, every layer's beats as a row with their count. Leaving the page brings the lanes back. A picture is in Screen ideas.</div></div>
           <div class="k"><span class="keycap">C</span><div><b>CLEAR on EUCLID</b>: the layer gets back the beats it had when you opened the page. Nothing changes until you turn a field; after that the pattern is rebuilt live, also while playing.</div></div>
-          <div class="k"><span class="keycap">Q</span><div><b>Quantize modes</b> (V1.19, RHYTHM page): the QUANTIZE field now has the straight grids 1:64 to 1:1 as before, then the <b>triplet</b> grids 1:32T, 1:16T, 1:8T and 1:4T (three notes in the time of two: three steps of 1:8T are exactly one beat), the <b>mixed</b> grids 1:16+T and 1:8+T (a hit snaps to the nearer point of the straight grid and its triplet grid, so one pattern can hold both) and <b>OFF</b> (no snap: a hit stays where it was played). The fifth field, <b>STRENGTH</b> (0 to 100 % in steps of 5), says how far a recorded hit moves to its grid point: 100 snaps, 50 goes halfway, 0 leaves it; it counts for hits recorded from then on and is saved with the song. EUCLID offers the straight and triplet grids (a mixed grid or OFF has no even steps); above, GRID and Quantize have the same lists. MOVE, SHIFT ALL and INSERT use the grid: on a triplet or mixed grid SHIFT ALL moves beats that sit on the grid to the next grid point (so nothing drifts) and the distance shown is what the selected beat moved. A grid change still re-quantizes every beat (OFF leaves them alone): unlock QUANTIZE with the lock key first. A song loads with its beats where they were saved.</div></div>
+          <div class="k"><span class="keycap">Q</span><div><b>Quantize modes</b> (V1.19, RHYTHM page; the panel above shows how a hit is snapped): the QUANTIZE field now has the straight grids 1:64 to 1:1 as before, then the <b>triplet</b> grids 1:32T, 1:16T, 1:8T and 1:4T (three notes in the time of two: three steps of 1:8T are exactly one beat), the <b>mixed</b> grids 1:16+T and 1:8+T (a hit snaps to the nearer point of the straight grid and its triplet grid, so one pattern can hold both) and <b>OFF</b> (no snap: a hit stays where it was played). The fifth field, <b>STRENGTH</b> (0 to 100 % in steps of 5), says how far a recorded hit moves to its grid point: 100 snaps, 50 goes halfway, 0 leaves it; it counts for hits recorded from then on and is saved with the song. EUCLID offers the straight and triplet grids (a mixed grid or OFF has no even steps); above, GRID and Quantize have the same lists. MOVE, SHIFT ALL and INSERT use the grid: on a triplet or mixed grid SHIFT ALL moves beats that sit on the grid to the next grid point (so nothing drifts) and the distance shown is what the selected beat moved. A grid change still re-quantizes every beat (OFF leaves them alone): unlock QUANTIZE with the lock key first. A song loads with its beats where they were saved.</div></div>
           <div class="k"><span class="keycap">+</span><div><b>Song page</b>: MOVE and SHIFT ALL are the last two fields on the bottom row (or hold ADD and press ◀ ▶ to move). A short ADD press inserts a beat. A bank holds 64 beats; when full, FULL is shown.</div></div>
         </div>
       </div>
@@ -2158,6 +2189,66 @@ function euChanged(regen) {
   euRender();
   if (euPlaying) { euSched = []; euNext = ctx.currentTime + 0.05; }
 }
+/* ---------- Quantize picture (port of Quantize.h quantizeSnap) ---------- */
+const qz = { grid: 9, hit: 270, str: 100 }, QZSONG = 1600;
+function qzPoints(g) {            // the points of a grid up to the song end, with which grid owns each: 1 = first, 2 = second, 3 = both
+  if (g[0] === "OFF") return [];
+  const m = new Map();
+  [[g[1], 1], [g[2], 2]].forEach(([p3, bit]) => { if (!p3) return; for (let k = 0; qpt(p3, k) < QZSONG; k++) m.set(qpt(p3, k), (m.get(qpt(p3, k)) || 0) | bit); });
+  return [...m.entries()].sort((a, b) => a[0] - b[0]);
+}
+function qzSnap(x, g, strength) {
+  let nearest = x;
+  if (g[0] !== "OFF") {
+    const x3 = 3 * x, near = p3 => Math.floor((x3 + Math.floor(p3 / 2)) / p3) * p3;
+    let best = near(g[1]);
+    if (g[2]) { const o = near(g[2]); if (Math.abs(o - x3) < Math.abs(best - x3)) best = o; }   // a tie keeps the straight grid
+    nearest = Math.floor((best + 1) / 3);
+  }
+  let landed = nearest;
+  if (strength < 100) { const d = nearest - x; landed = x + Math.trunc((d * strength + (d >= 0 ? 50 : -50)) / 100); }
+  const wrapped = landed >= QZSONG;
+  return { nearest, landed: wrapped ? 0 : landed, wrapped };
+}
+function qzRender() {
+  const g = QGRIDS[qz.grid], r = qzSnap(qz.hit, g, qz.str);
+  syncSeg("qz-grid", qz.grid);
+  document.getElementById("qz-hit-v").textContent = qz.hit + " · " + posText(qz.hit);
+  document.getElementById("qz-str-v").textContent = qz.str + " %";
+  const svg = document.getElementById("qz-svg"); svg.textContent = "";
+  const W = 760, L = 20, R = 20, pw = W - L - R, x = v => L + v / QZSONG * pw, yP = 44, yG0 = 78, yG1 = 128, yL = 164;
+  // beats and the song end
+  [0, 800, 1600].forEach(v => {
+    el("line", { x1: x(v), x2: x(v), y1: yP + 8, y2: yL - 8, class: "qbeat" }, svg);
+    el("text", { x: x(v) + (v === 1600 ? -4 : 3), y: yG1 + 24, "text-anchor": v === 1600 ? "end" : "start" }, svg, v === 1600 ? "song end = start" : "beat " + (v / 800 + 1));
+  });
+  // the grid points
+  qzPoints(g).forEach(([v, who]) => el("line", { x1: x(v), x2: x(v), y1: yG0, y2: yG1, class: who === 3 ? "qboth" : who === 2 ? "qb" : "qa" }, svg));
+  if (g[0] === "OFF") el("text", { x: L, y: (yG0 + yG1) / 2 + 3 }, svg, "OFF: no grid, every interval is a point");
+  // played, nearest, landed
+  el("text", { x: L, y: 14 }, svg, "played");
+  el("path", { d: `M${x(qz.hit) - 6},${yP - 8} L${x(qz.hit) + 6},${yP - 8} L${x(qz.hit)},${yP + 4} Z`, class: "qplayed" }, svg);
+  el("line", { x1: x(qz.hit), x2: x(qz.hit), y1: yP + 4, y2: yG0 - 6, class: "qlink" }, svg);
+  el("circle", { cx: x(r.nearest), cy: (yG0 + yG1) / 2, r: 9, class: "qnear" }, svg);
+  el("text", { x: L, y: yL + 18 }, svg, "lands");
+  el("line", { x1: x(qz.hit), x2: x(r.landed), y1: yL - 4, y2: yL - 4, class: "qlink" }, svg);
+  el("rect", { x: x(r.landed) - 4, y: yL - 14, width: 8, height: 20, rx: 2, class: "qland" }, svg);
+  const mixed = !!g[2], tr = g[1] % 3 !== 0;
+  el("text", { x: W - R, y: 14, "text-anchor": "end" }, svg, mixed ? "orange = straight points · blue = triplet points · black = both" : g[0] === "OFF" ? "" : (tr ? "blue ring = nearest point · triplet grid" : "blue ring = nearest point"));
+  const moved = r.landed - qz.hit;
+  let line = `played at ${qz.hit} (${posText(qz.hit)}) · nearest point ${r.nearest}`;
+  if (g[0] === "OFF") line = `played at ${qz.hit} (${posText(qz.hit)}) · OFF: every interval is a point, so the hit stays`;
+  line += qz.str < 100 && g[0] !== "OFF" ? ` · STRENGTH ${qz.str} % moves it ${Math.abs(r.nearest - qz.hit)} x ${qz.str / 100} = ${(Math.abs(r.nearest - qz.hit) * qz.str / 100).toFixed(2)} intervals, rounded` : "";
+  line += ` → lands at ${r.landed} (${posText(r.landed)})${r.wrapped ? " · the song end is the start" : ""}${moved ? ` · moved ${moved > 0 ? "+" : "−"}${Math.abs(moved)}` : " · not moved"}`;
+  document.getElementById("qz-read").textContent = line;
+}
+function qzSetup() {
+  const g = document.getElementById("qz-grid");
+  QNAMES.forEach((lab, i) => { const b = document.createElement("button"); b.textContent = lab; b.addEventListener("click", () => { qz.grid = i; qzRender(); }); g.appendChild(b); });
+  document.getElementById("qz-hit").addEventListener("input", e => { qz.hit = +e.target.value; qzRender(); });
+  document.getElementById("qz-str").addEventListener("input", e => { qz.str = +e.target.value; qzRender(); });
+  qzRender();
+}
 function euSetup() {
   const segBtns = (id, labels, onPick) => {
     const g = document.getElementById(id);
@@ -2180,6 +2271,7 @@ function euSetup() {
   document.getElementById("eu-sh-r").addEventListener("click", () => { euShift(true); euChanged(false); });
   document.getElementById("eu-ins").addEventListener("click", () => { euInsert(); euChanged(false); });
   euApply(); euRender();
+  qzSetup();
 }
 
 /* ---------- Pitch (port of Pitch.h) ---------- */

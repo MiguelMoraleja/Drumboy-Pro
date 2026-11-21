@@ -8318,8 +8318,14 @@ void Controller::lcd_update() {
     lcd_drawSongBankShift();
 
     // 6. PRECOUNT UPDATE
-    // Refresh count-down indicator during precount.
+    // Refresh count-down indicator during precount, and what the sequencer interrupt left to draw
+    // when the pre-count ended or was stopped (it must not draw itself).
     lcd_drawCountDown();
+    if (countDownClearFlag) {
+        countDownClearFlag = false;
+        lcd_clearCountDown();
+    }
+    lcd_drawPrecountBeats();
 
     // 7. TRANSITION EFFECT UPDATE
     // Refresh UI transition animations/flags.
@@ -8903,6 +8909,10 @@ void Controller::lcd_drawSongBankShift() {
 
     // 1. BANK SHIFT GATE
     // Apply redraw flow only when bank action flag is armed.
+    if (bankTabRedrawFlag) {
+        bankTabRedrawFlag = false;  // a pending bank shift was cancelled by stop/reset (maybe in the interrupt)
+        lcd_drawSongBankTab(activeSongBank, false);
+    }
     if (bankActionFlag) {
         bankActionFlag = false;
 
@@ -13563,6 +13573,29 @@ void Controller::lcd_drawCountDown() {
         // 5. FLAG RESET
         // Consume one-shot draw trigger for this update tick.
         metronome.countDownFlag = false;
+    }
+}
+
+void Controller::lcd_drawPrecountBeats() {
+    /// @brief Draws the beats the sequencer interrupt stored when the pre-count ended (the hits
+    /// played during it): the lanes of those layers and, on the song page, the selected beat's data.
+    if (precountDrawMask == 0) return;
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    const uint16_t mask = precountDrawMask;
+    precountDrawMask = 0;
+    __set_PRIMASK(primask);
+
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        if (!(mask & (1u << i))) continue;
+        lcd_drawSong(i, activeSongBank);
+        if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == i)) {
+            lcd_drawLayerSong_BeatFillTypeData(selectedLayerNum);
+            lcd_drawLayerSong_PositionData(selectedLayerNum);
+            lcd_drawLayerSong_BeatFillGraphData(selectedLayerNum);
+            lcd_drawLayerSong_BeatFillTimeData(selectedLayerNum);
+            lcd_drawLayerSong_BeatFillLevelData(selectedLayerNum);
+        }
     }
 }
 
@@ -24699,8 +24732,10 @@ uint16_t Controller::layerSong_quantizeInterval(uint16_t interval_) const {
     return startInterval;
 }
 
-void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_) {
+void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_, bool draw_) {
     /// @brief Inserts a beat into target bank with quantization, ordering, and UI sync.
+    /// draw_ false (the sequencer interrupt, which must not draw): the beat is stored and the selection
+    /// bookkeeping done, the lanes are redrawn later by update() (precountDrawMask).
 
     Layer& layer = layerLibrary[layerNum_];
     Bank& bank = layer.bankLibrary[bankTab_];
@@ -24761,7 +24796,7 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
 
                     // Keep previous beat highlight only if it was selected in active menu.
                     ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_) && (beatNum - 1 == selectedBeatNum)) ? sel = true : sel = false;
-                    lcd_drawBeat(layerNum_, bankTab_, beatNum - 1, sel);
+                    if (draw_) lcd_drawBeat(layerNum_, bankTab_, beatNum - 1, sel);
                 }
 
                 // Resolve end interval for inserted beat.
@@ -24781,7 +24816,15 @@ void Controller::layerSong_setBeat(uint8_t layerNum_, uint8_t bankTab_, uint16_t
             bank.beatLibrary[beatNum].setVelocity(velocity_);  // 0 = from the pattern (BeatNote.h)
             layerSong_calculateLastActiveBeatNum(layerNum_, bankTab_);
             layerSong_calculatePlayBeatNum(layerNum_, bankTab_, playInterval);
-            if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_) && (selected_)) {
+            if (!draw_) {
+                // Called from the sequencer interrupt: no drawing here. The selection follows the
+                // insertion as below; update() redraws the layer's lanes and its song page.
+                if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_) && (selected_)) {
+                    if (selectedBeatNum >= beatNum) selectedBeatNum += 1;
+                    selectedBeatNum = beatNum;
+                }
+                precountDrawMask = static_cast<uint16_t>(precountDrawMask | (1u << layerNum_));
+            } else if ((menu == LAYER_SONG_MENU) && (selectedLayerNum == layerNum_) && (selected_)) {
                 // Shift current selection right if insertion occurred before it.
                 if (selectedBeatNum >= beatNum) selectedBeatNum += 1;
                 if (selectedBeatNum != -1) lcd_drawBeat(layerNum_, bankTab_, selectedBeatNum, false);
@@ -25647,7 +25690,7 @@ void Controller::stop() {
         metronome.precounter = 0;
         metronome.countDownFlag = false;
         metronome.countDown = 0;
-        lcd_clearCountDown();
+        countDownClearFlag = true;  // drawn by update(): stop() also runs in the sequencer interrupt
     }
 
     // 3. BANK SHIFT CANCEL
@@ -25655,7 +25698,7 @@ void Controller::stop() {
     if (bankShiftFlag) {
         bankShiftFlag = false;
         targetSongBank = activeSongBank;
-        lcd_drawSongBankTab(activeSongBank, false);
+        bankTabRedrawFlag = true;  // drawn by update(): stop() also runs in the sequencer interrupt
     }
 
     // 4. TRANSPORT FLAG RESET
@@ -25728,7 +25771,7 @@ void Controller::reset() {
             metronome.precounter = 0;
             metronome.countDownFlag = false;
             metronome.countDown = 0;
-            lcd_clearCountDown();
+            countDownClearFlag = true;  // drawn by update(): reset() also runs in the sequencer interrupt
         }
 
         // 4. BANK SHIFT CANCEL
@@ -25736,7 +25779,7 @@ void Controller::reset() {
         if (bankShiftFlag) {
             bankShiftFlag = false;
             targetSongBank = activeSongBank;
-            lcd_drawSongBankTab(activeSongBank, false);
+            bankTabRedrawFlag = true;  // drawn by update(): reset() also runs in the sequencer interrupt
         }
 
         // 5. TRANSPORT FLAG RESET
@@ -27664,7 +27707,7 @@ void Controller::interruptPlay() {
                     if (precountPendingBeat[i]) {
                         const uint8_t velocity = static_cast<uint8_t>(precountPendingBeat[i] - 1);
                         precountPendingBeat[i] = 0;
-                        layerSong_setBeat(i, activeSongBank, playInterval, 0, 0, 0, 0, true, velocity);
+                        layerSong_setBeat(i, activeSongBank, playInterval, 0, 0, 0, 0, true, velocity, false);  // no drawing in the interrupt
                     }
                 }
             }

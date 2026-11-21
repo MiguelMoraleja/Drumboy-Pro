@@ -212,6 +212,10 @@ class Controller {
     Icon stopIcon;
     Icon recordIcon;
     bool resetPlayFlag;
+    // The sequencer timer interrupt (interruptPlay) must not draw on the LCD: it sets these, update() draws.
+    volatile bool countDownClearFlag = false;                           // Clear the pre-count number
+    volatile bool bankTabRedrawFlag = false;                            // Redraw the SONG bank tab (a pending bank shift was cancelled)
+    volatile uint16_t precountDrawMask = 0;                             // Layers that got beats from the pre-count: redraw their lanes (bit = layer)
 
     FileStatus fileStatus;                                              // Current operation status of project files
     FileStatus drumkitStatus;                                           // Current operation status of drum kits
@@ -920,6 +924,7 @@ class Controller {
     void lcd_drawIcon();
     void lcd_drawCopyPaste();
     void lcd_drawCountDown();
+    void lcd_drawPrecountBeats();
     void lcd_clearCountDown();
     void lcd_restartPlay();
     void lcd_resetPlay();
@@ -1283,7 +1288,7 @@ class Controller {
     void layerSong_beatRight();
     void layerSong_beatLeft();
 
-    void layerSong_setBeat(uint8_t layerNum_, uint8_t bankNum_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_ = 0);
+    void layerSong_setBeat(uint8_t layerNum_, uint8_t bankNum_, uint16_t interval_, uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_, bool selected_, uint8_t velocity_ = 0, bool draw_ = true);
     void layerSong_setSelectedBeatFill(uint8_t fillType_, uint8_t fillPattern_, uint8_t fillTime_, uint8_t fillLevel_);
     void layerSong_setSelectedBeatFillTime(uint8_t fillTime_);
     void layerSong_setSelectedBeatFillLevel(uint8_t fillLevel_);

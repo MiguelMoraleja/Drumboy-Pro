@@ -284,7 +284,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.18 (testing)</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.18</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -596,7 +596,7 @@ table.rel td.new { min-width: 280px; }
   <section id="view-generators" role="tabpanel" aria-labelledby="tab-generators" class="stagecol" hidden>
     <div class="panel intro">
       <h2>Generators: noise and tones, and a hiss bed</h2>
-      <p>A layer can play a <b>generator</b> instead of a sample (white, pink and brown noise, tape hiss, vinyl dust, a siren, a riser, a laser), and the mixer has a stereo <b>hiss bed</b> under the whole song. Everything runs at 44.1 kHz in 32-bit float, goes through the same router, pan, EQ, filters, sends and fades as a sample, and is saved in the song file. V1.18, a test build: not heard on the device yet.</p>
+      <p>A layer can play a <b>generator</b> instead of a sample (white, pink and brown noise, tape hiss, vinyl dust, a siren, a riser, a laser), and the mixer has a stereo <b>hiss bed</b> under the whole song. Everything runs at 44.1 kHz in 32-bit float, goes through the same router, pan, EQ, filters, sends and fades as a sample, and is saved in the song file.</p>
       <p class="muted">The pictures below are what the firmware draws, made by the same code on a PC with the device's own fonts (the NOTE waveform and the spectra are computed from the real generators and filters).</p>
     </div>
     <div class="panel"><div class="tablewrap"><table class="rel">
@@ -2280,11 +2280,12 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
-  { v: "V1.18", date: "2026-11-21", status: "Testing, not published", pub: false,
+  { v: "V1.18", date: "2026-11-21", status: "GitHub release v1.18 · tested", pub: true,
     nw: ["Safe saves: SAVE (and CLEAR) of a song or a drumkit no longer rewrites the slot in place. The new file is written next to it, every byte is checked (written in full, read back and compared), and only then does it replace the old one, so a failed or interrupted save leaves the old file. SAVE takes a moment longer because of the check. If the power fails in the middle, the next start tidies up: an unfinished temporary file (File_001.tmp) is deleted, a checked one (File_001.new) becomes the slot",
          "Loading a song sets MEASURE and BAR together (and a sample's START and END together). Before, each was checked against the other's old value, so a song of 12 x 6 loaded over a song of 8 x 8 came back as 8 x 6 and its beats lay past the end. A beat past the song end in a damaged file is dropped",
          "Load and save screens: the LOAD, SAVE and CLEAR tabs of the FILE and DRUMKIT pages show all 100 slots as a grid (used, empty, not readable, the cursor, the slot last loaded or saved) and a card for the selected slot: its tempo, MEASURE and BAR, its ten lanes as a thumbnail and its instruments (a kit: instruments and samples). SAVE shows the song in memory next to the slot's, with a banner that says whether ADD replaces something. UP and DOWN move one slot; held, ten at a time (see the MIDI & autosave tab)",
          "Generators (backlog 66): a layer can play noise or a tone instead of a sample (GEN, the last field of instrument page 3: WHITE, PINK, BROWN, TAPE, DUST, SIREN, RISER, LASER; page 2 shows LENGTH and SWEEP in place of START and END), and DUB page 3 (HISS, the next press of MIXER after DUB page 2) has a stereo hiss bed (TAPE, VINYL, PINK, WHITE) with LEVEL, TONE and DUCK. Both are saved in the song file. New screens: while GEN is on, page 2 shows the note's waveform, the sweep path and the spectrum; the HISS page shows the bed's texture, spectrum and a live duck meter (see the Generators tab). A layer that plays a generator reads GEN TAPE and so on in the lanes",
+         "Layer RESET (instrument page) and NEW DRUMKIT also switch a layer's generator off (GEN OFF, LENGTH and SWEEP back to their defaults), so the layer plays its sample again; loading a drumkit does not touch GEN, because the kit files do not hold it yet",
          "Stability inside: the filter, EQ and effect-tone coefficients are published in one step, so no audio block runs with half old and half new numbers (a possible click when a knob moved); the sequencer's timer interrupt no longer draws on the display (stop, reset and the pre-count hits set a flag and the main loop draws), so it cannot stall the next tick or interleave with a draw. The sound is unchanged"],
     fix: [] },
   { v: "V1.17", date: "2026-11-21", status: "GitHub release v1.17 · tested", pub: true,

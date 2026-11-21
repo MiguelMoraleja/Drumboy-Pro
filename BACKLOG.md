@@ -923,7 +923,7 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Settled:** grid (not list); a slot shows only what its file holds; UP and DOWN, held for ten; ADD opens the confirmation, ADD again confirms. **Still open (later steps):** a short name for a slot (a format change and a way to type it), COPY from slot to slot, RENAME, and a bank of kits beyond 100 (item 61).
 
-**Status: built in V1.18 (test build, not released).** **Done when** (on the unit): the LOAD, SAVE and CLEAR tabs show the grid with the factory slots filled; the cursor moves with UP and DOWN and ten at a time when held; the card shows the right tempo, length, lanes and instruments for each used slot; SAVE into a used slot shows the yellow banner and the song in memory beside the slot's; after a SAVE the new slot is filled and marked; a cut-off file shows red; the FILE page still loads, saves and clears as before.
+**Status: released in V1.18 (2026-11-21); the owner tested the file on the unit: everything seemed fine.** **Done when** (on the unit): the LOAD, SAVE and CLEAR tabs show the grid with the factory slots filled; the cursor moves with UP and DOWN and ten at a time when held; the card shows the right tempo, length, lanes and instruments for each used slot; SAVE into a used slot shows the yellow banner and the song in memory beside the slot's; after a SAVE the new slot is filled and marked; a cut-off file shows red; the FILE page still loads, saves and clears as before.
 
 ### 61. More drumkits (planned for the week of 2026-11-16)
 
@@ -1022,7 +1022,7 @@ How it works: the SDRAM is cacheable through the MPU (write-back, write-allocate
 
 **Still open from item 62:** a switched-off module keeps its state (reverb tail, filter history, compressor) and comes back when switched on; `setBeatFill(n, 0, 0, 0, 0)` resets a beat's fill and ghosts when a beat is inserted after it; the refactoring and the performance notes.
 
-**Status: built in V1.18 (test build, not released).** **Done when** (on the unit): SAVE and LOAD of songs and kits work as before (SAVE a little slower: it writes, reads back and replaces); a song saved with a different MEASURE and BAR than the one in memory loads with the right length; recording over the pre-count still plays the first hits in time, and the beats appear in the lanes right after; no `CRASH` and no stray files except at most a `.tmp` or `.new` after a power cut (they are tidied at the next start).
+**Status: released in V1.18 (2026-11-21); the owner tested the file on the unit: everything seemed fine.** **Done when** (on the unit): SAVE and LOAD of songs and kits work as before (SAVE a little slower: it writes, reads back and replaces); a song saved with a different MEASURE and BAR than the one in memory loads with the right length; recording over the pre-count still plays the first hits in time, and the beats appear in the lanes right after; no `CRASH` and no stray files except at most a `.tmp` or `.new` after a power cut (they are tidied at the next start).
 
 ### 66. Generators: noise and tones on a layer, a hiss bed on the mixer
 
@@ -1058,7 +1058,7 @@ The sample's own START and END are kept and come back when GEN is OFF. The gener
 
 **Memory note.** `RAM_D1` (the 320 KB of AXI RAM) had 1.4 KB left with the generators; item 67 moves the reverb out of it.
 
-**Status: merged into V1.18 (test build, not released); waiting for the hardware test.** Host tests cover the file block, lengths, sweep shapes, every generator (finite, bounded, audible, fades in, reproducible, extremes), the noise colours, PITCH and sweeps, the siren's pitch and warble, the laser's direction, the crackle density, and the hiss bed's level, stereo, ducking, release, glide and fade-out.
+**Status: released in V1.18 (2026-11-21); the owner tested the file on the unit: everything seemed fine.** Host tests cover the file block, lengths, sweep shapes, every generator (finite, bounded, audible, fades in, reproducible, extremes), the noise colours, PITCH and sweeps, the siren's pitch and warble, the laser's direction, the crackle density, and the hiss bed's level, stereo, ducking, release, glide and fade-out.
 
 **To judge on the device:** the levels of the generators next to the samples (they sit around -12 to -17 dBFS RMS at LEVEL 100, DUST much lower with loud clicks); whether the 50-sample fade at the end of a long noise is too abrupt (a RELEASE could come later); the hiss levels.
 
@@ -1066,14 +1066,14 @@ The sample's own START and END are kept and come back when GEN is OFF. The gener
 
 **Review (code-review, high) before the merge into V1.18:** two bugs found and fixed: `layer_playGen` built the note in `tempBeatPlayData` while the sequencer interrupt could call it for the same layer (now built apart and published at once, as `layer_playBeat`), and its probability test used `>` where the sample path uses `>=` (a 0 % note played once in 10,000). The hiss page's texture first kept 20 KB of arrays on the 16 KB stack (found while building the screen) and now streams column by column.
 
-**Second review (code-review, xhigh, of the whole V1.18 diff, then high on the fixes), all fixed in the V1.18 test build before the hardware test:**
+**Second review (code-review, xhigh, of the whole V1.18 diff, then high on the fixes), all fixed before the hardware test and the release of V1.18:**
 - **A GEN layer with RESOLUTION below the maximum had a DC offset** (`processAudioGenLayer` truncated by hand: silence became -0.125 at 4 bits, a click at every note onset, and a sample over 1.0 wrapped to the wrong polarity or cast a negative float to unsigned). It uses `quantize24()` now, like a sample (rounds, clamps; `test_dspmath` checks out-of-range input).
 - **The CLEAR tab offered to clear an unreadable (cut-short) slot but ADD did nothing**, and an unreadable slot on the SAVE tab said "ADD SAVES HERE" with "THE SLOT IS FREE". ADD now acts on the same slot table the banner comes from (a used or unreadable slot can be cleared, an empty one cannot), and the SAVE tab says "ADD REPLACES THIS FILE" with "THE SLOT: NOT READABLE" (`test_filescreens` checks the banner and the gate rule for every case). A slot whose file was deleted on a computer reads as empty, so CLEAR does nothing for it (SAVE creates the file).
 - **The HISS screen printed the LEVEL setting as dBFS** (-18 for every type); it prints what the bed measures (`hissViewTexture` returns the RMS of the second it draws): at LEVEL 100 and TONE 70, TAPE -21.8, PINK -20.8, WHITE -21.1 and VINYL -28.8 (`test_generatorview` compares it with an independent measurement of every type, level and tone). A silent or off bed keeps its LEVEL on the line.
 - **NaN tests that `-ffast-math` may fold away** (`hissViewGainPx`, `gsSpectrumCurve`) use `isFiniteBits` / `finiteOrZero` now (`DspMath.h`).
 - **Layer RESET and NEW DRUMKIT left GEN on**: `layerInst_reset` now sets GEN to OFF and LENGTH and SWEEP to their defaults (the layer plays its sample again). **NEW DRUMKIT therefore also switches off the generator layers of the song** (it already reset every other setting of the layers); a kit load does not touch GEN (GEN is not in kit files yet, see Next). Say if NEW DRUMKIT should keep them.
 - **Loading a song with generators** redraws the lane names after the GEN block is read (an autosave restore at power-on showed the file's instrument name on a GEN lane); swapping the SD card forgets the grid's cached card and the "last loaded or saved" marks; `slotSave` with `atomic` refuses a path whose side files do not fit instead of writing the slot in place (`test_atomicsave`).
-- Not done: `FsView` (about 3 KB) could live in the DTCM instead of the scarce AXI RAM; the app header reads "V1.18 (testing)" again until the release.
+- Not done: `FsView` (about 3 KB) could live in the DTCM instead of the scarce AXI RAM.
 
 **Done when.** A PINK layer with LENGTH 16 and a long reverb plays a hiss swell every bar; a SIREN thrown into the echo warbles; a TAPE bed with DUCK 60 breathes with the kick; a V1.16 song loads with no generators and sounds the same; page 2 of a GEN layer shows its note, sweep and spectrum and the HISS page shows the bed and a duck meter that moves with the kick.
 
@@ -1087,5 +1087,5 @@ The sample's own START and END are kept and come back when GEN is OFF. The gener
 
 **Now.** `RAM_D1`: 73.5 KB free (was 1.4 KB). DTCM: 76.5 KB used of 128 KB, 54.5 KB free. Where to look for more room if it is needed again: the 24 KB and 12 KB DMA buffers can only move to another DMA-capable RAM (the D2 SRAMs are free, but the SDMMC2 internal DMA reaching them has to be checked in the reference manual), `layerLibrary` could drop the per-bank fill tables that are mostly empty, and anything the CPU alone touches (the effects' small state, the filter states) can follow the reverb into the DTCM.
 
-**Status: built in V1.18 (test build, not released).** **Done when** the reverb sounds exactly as before (tail, DECAY, SIZE, DAMPING, PRE-DELAY, SURROUND, a song with the reverb on loads and plays the same) and the CPU meter shows the same or lower.
+**Status: released in V1.18 (2026-11-21); the owner tested the file on the unit: everything seemed fine.** **Done when** the reverb sounds exactly as before (tail, DECAY, SIZE, DAMPING, PRE-DELAY, SURROUND, a song with the reverb on loads and plays the same) and the CPU meter shows the same or lower.
 

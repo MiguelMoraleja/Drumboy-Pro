@@ -16,6 +16,8 @@ The owner's standing rule (2026-11-13): never trade sound quality for speed, mem
 
 Songs and kits are saved only through `slotSave` (`Global/SlotFile.h`: temp file, checked, replace; backlog 65), never in place; a coefficient set the audio interrupt reads together is published inside an `IrqGuard` scope (`Global.h`); timer interrupts (`interruptPlay` and the others) never draw on the LCD: set a flag, draw in `update()`.
 
+New full-area screens: the numbers go in a hardware-free header (`GeneratorView.h`) and the drawing in a header-only template over the LCD (`GeneratorScreens.h`) with a host test on a pixel buffer using the firmware's font tables (`test_generatorscreens`: inside the lane area, only characters the font has, no overlaps; run it with `GS_DUMP_DIR=dir` to write PPM pictures and look at them). `RAM_D1` has little room left (backlog 66): put new buffers in the DTCM (`.dtcm`, zeroed in `main`) unless a DMA needs them, and keep big arrays off the 16 KB stack.
+
 SD writes with the data cache on need a cache clean before every DMA (`FATFS/Target/sd_diskio.c`): a missing clean in the scratch-buffer path corrupted two cards (backlog 56). Any new DMA from a cacheable buffer needs the same.
 
 The SD driver must never wait long: the HAL's error callbacks are connected in `FATFS/Target`, a transfer is bounded to 0.8 s, and the vendored HAL has shorter command timeouts (`SDMMC_CMDTIMEOUT` and `SDMMC_STOPTRANSFERTIMEOUT` 200 ms in `stm32h7xx_ll_sdmmc.h`; re-apply after a CubeMX regeneration; backlog 62). Anything that can take longer than a second in the main loop must feed the watchdog (`IWDG1->KR = 0xAAAA`). The build uses `-Ofast -ffast-math`: a float compare does not catch NaN or infinity, use `finiteOrZero` (`DspMath.h`).

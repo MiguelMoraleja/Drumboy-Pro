@@ -19,6 +19,7 @@
 #include "SampleView.h"
 #include "DubMix.h"
 #include "DubView.h"
+#include "Generator.h"
 #include "NoteView.h"
 #include "Pan.h"
 #include "UndoLog.h"
@@ -430,6 +431,15 @@ struct StereoDsp {
     bool layerStereo[10];                           // which layers did this block
 };
 extern StereoDsp stereoDsp;
+
+// Generator voices and the hiss bed (Generator.h): DTCM RAM, zeroed in main().
+struct GenDsp {
+    GenVoice voice[10];
+    HissBed hiss;
+    float hissL[I2S_BLOCK_SIZE];
+    float hissR[I2S_BLOCK_SIZE];
+};
+extern GenDsp genDsp;
 
 #define RAM_VIEW_SCRATCH_ADDRESS                    0xC0FF3000u
 static_assert((RAM_VIEW_SCRATCH_ADDRESS >= 0xC0FF2EA4u) && (RAM_VIEW_SCRATCH_ADDRESS + 4096u <= 0xC0FFFFF0u), "view scratch must fit the free tail of the SDRAM");
@@ -922,6 +932,9 @@ const char kHeaderMidiOut[]                         = "MIDI OUT  ";
 const char kHeaderMix[]                             = "MIX       ";
 const char kHeaderNew[]                             = "NEW       ";
 const char kHeaderPan[]                             = "PAN       ";
+const char kHeaderGen[]                             = "GEN       ";
+const char kHeaderGenLength[]                       = "LENGTH    ";
+const char kHeaderGenSweep[]                        = "SWEEP     ";
 const char kHeaderPattern[]                         = "PATTERN   ";
 const char kHeaderPhase[]                           = "PHASE     ";
 const char kHeaderPitch[]                           = "PITCH     ";
@@ -1308,6 +1321,12 @@ typedef enum {
     ENC_DUB_FX                                      = 0x8A,
     ENC_DUB_WIDTH                                   = 0x8B,
 
+    ENC_INST_2_GEN                                  = 0x8C,  // layer GEN (page 3, Generator.h): a generator instead of the sample
+    ENC_DUB_HISS                                    = 0x8D,  // DUB page 2: the hiss bed (Generator.h)
+    ENC_DUB_HISSLEVEL                               = 0x8E,
+    ENC_DUB_HISSTONE                                = 0x8F,
+    ENC_DUB_HISSDUCK                                = 0x90,
+
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
 
@@ -1347,7 +1366,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // LAYER_INST_1_MENU = 0x10
     {ENC_INST_1_INST, ENC_INST_1_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_1_START, ENC_INST_1_END, ENC_INST_1_TIMING, ENC_INST_1_PROB},
     // LAYER_INST_2_MENU = 0x11
-    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_INST_2_STYLE, ENC_INST_2_PAN, ENC_FNC_NONE},
+    {ENC_INST_2_INST, ENC_INST_2_SAMPLE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_INST_2_OUT, ENC_INST_2_STYLE, ENC_INST_2_PAN, ENC_INST_2_GEN},
     // LAYER_SONG_MENU = 0x12
     // Tabs 2-3 hold the fill graph.
     {ENC_SONG_FILL, ENC_SONG_PATTERN, ENC_FNC_NONE, ENC_FNC_NONE, ENC_SONG_TIMING, ENC_SONG_VELOCITY, ENC_SONG_MOVE, ENC_SONG_SHIFT},
@@ -1370,8 +1389,8 @@ const EncoderFunc encoderLocalFunction[][8] = {
     {ENC_DUB_LEVEL, ENC_DUB_BUS, ENC_DUB_ECHO, ENC_DUB_VERB, ENC_DUB_MODE, ENC_DUB_FEEDBACK, ENC_DUB_ECHORTN, ENC_DUB_VERBRTN}};
 
 // DUB page 2 (the next step in the MIXER cycle): the selected strip's pan and FX send on the top row,
-// the echo's width on the bottom row.
-const EncoderFunc kDubPage2Function[8] = {ENC_DUB_PAN, ENC_DUB_FX, ENC_FNC_NONE, ENC_FNC_NONE, ENC_DUB_WIDTH, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE};
+// the echo's width and the hiss bed (type, level, tone) on the bottom row, the hiss ducking top right.
+const EncoderFunc kDubPage2Function[8] = {ENC_DUB_PAN, ENC_DUB_FX, ENC_FNC_NONE, ENC_DUB_HISSDUCK, ENC_DUB_WIDTH, ENC_DUB_HISS, ENC_DUB_HISSLEVEL, ENC_DUB_HISSTONE};
 
 struct EncoderFuncData {
     EncoderFunc function;
@@ -1550,7 +1569,13 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
 
     {ENC_DUB_PAN,             ENC_RES_M, "PAN       ", "DUB   ", "   ", false},
     {ENC_DUB_FX,              ENC_RES_M, "FX SEND   ", "DUB   ", "  %", false},
-    {ENC_DUB_WIDTH,           ENC_RES_M, "ECHO WIDTH", "DUB   ", "  %", false}
+    {ENC_DUB_WIDTH,           ENC_RES_M, "ECHO WIDTH", "DUB   ", "  %", false},
+
+    {ENC_INST_2_GEN,          ENC_RES_S, "GEN       ", "LAYER ", "   ", false},
+    {ENC_DUB_HISS,            ENC_RES_S, "HISS      ", "DUB   ", "   ", false},
+    {ENC_DUB_HISSLEVEL,       ENC_RES_M, "HISS LEVEL", "DUB   ", "  %", false},
+    {ENC_DUB_HISSTONE,        ENC_RES_M, "HISS TONE ", "DUB   ", "  %", false},
+    {ENC_DUB_HISSDUCK,        ENC_RES_M, "HISS DUCK ", "DUB   ", "  %", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -6763,6 +6788,14 @@ struct BeatPlayData {
     uint8_t directionPhase;
 
     MixerInMode mixerInMode;
+
+    // GEN (Generator.h): a generator note instead of a sample. genType 0 = a sample.
+    uint8_t genType;
+    uint8_t genShape;                               // the sweep shape (the layer's DIRECTION)
+    bool genStart;                                  // the audio code starts the voice at the first block
+    float genRatio;                                 // the PITCH factor
+    float genOctaves;                               // SWEEP in octaves
+    uint32_t genSeed;
 };
 
 struct LayerPlayData {

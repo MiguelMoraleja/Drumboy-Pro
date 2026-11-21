@@ -412,6 +412,19 @@ class Controller {
     void lcd_drawDubMenu();
     void lcd_drawDub_Data();
     uint32_t file_dubCrc(uint32_t crc_);
+    // Generators (Generator.h): GEN on a layer, the hiss bed on DUB page 2 (a song setting)
+    GenMix genMix;
+    uint32_t genSeedCount = 0;                              // a new seed for every generator note
+    bool layer_canPlay(uint8_t layerNum_) const;            // a sample is loaded, or GEN is on
+    bool layerGenOn(uint8_t layerNum_) const;
+    void layer_playGen(uint8_t layerNum_, float fillVolMultiplier_);
+    void processAudioGenLayer(uint8_t layerNum_);
+    void layerInst_setGen(uint8_t layerNum_, uint8_t type_);
+    void layerInst_stepGenLength(uint8_t layerNum_, bool up_);
+    void layerInst_stepGenSweep(uint8_t layerNum_, bool up_);
+    void lcd_drawLayerInst_GenData(uint8_t layerNum_);
+    void lcd_drawLayerInst1Headers(uint8_t layerNum_);
+    uint32_t file_genCrc(uint32_t crc_);
     void layerInst_setSolo(uint8_t layerNum_, bool solo_);
     void layerInst_clearSolo();
     void lcd_drawLayerInst_StyleData(uint8_t layerNum_);

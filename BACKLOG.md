@@ -147,6 +147,8 @@ The sends, the channel filter and the MIX view are now designed as one dub mixer
 
 ### 3. LFOs can't modulate filters or effects
 
+**Status: first destinations built in V1.21 (test build): FREQ and RESONANCE of both filters** (details below the proposal). Effects, the reverb and the EQ are still open.
+
 **What happens.** Confirmed in code: LFOs have exactly eight destinations, all per layer: level, pitch, direction, resolution, start, end, timing, probability (`Layer::lfoLevel … lfoProbability`, applied in `layer_playBeat()`). Nothing connects an LFO to EQ, the filters, the effects or the reverb. This is a missing feature, not a bug.
 
 **Proposal.**
@@ -1115,3 +1117,14 @@ The sample's own START and END are kept and come back when GEN is OFF. The gener
 - **Setup:** `docs/nanokontrol-studio.md` (the CC list for the Kontrol Editor, the connection through Loopy Pro and the Scarlett or a USB host to DIN box).
 
 **Status: built in V1.20 (test build, not released). Done when** (on the unit): with the Studio as it is (no editor), a fader moved to the level shown takes hold and then sets that layer's LEVEL; the knobs set the ECHO send (the DUB desk follows); an M button mutes and unmutes the layer; TRACK > shows the cyan bar one column to the right and the faders take over again only when they reach the new values; the ECHO and VERB columns follow with their WET, FEEDBACK and DECAY; moving a fast fader does not slow the Drumboy.
+
+### 69. LFOs on the filters (V1.21, owner's request 2026-11-22: "start with more destinations for LFOs")
+
+First slice of item 3: the four continuous destinations FREQ and RESONANCE of filter 1 and filter 2.
+- **How:** `Global/LfoMod.h` (hardware-free, `test_lfomod`, 226 checks). The LFO value comes from the same table as a layer's (`kLfoDataLibrary[type][sampleCounter]`, `d` 0..1 around 0.5, depth `dep`). FREQ: `base x 2^(6 (d - 0.5) dep)`, so +-3 octaves at full depth, kept inside the filter's table range; RESONANCE: `round(range (d - 0.5) dep)` around the set index (+-50 % of the range at full depth). `Filter::designAt(hz, resonance)` designs and publishes under `IrqGuard` (the audio interrupt reads the whole set in one block); `calculateCoef()` is the set values.
+- **When:** `Controller::lfo_updateModules`, main loop, every 5 ms, only while the sequencer plays and the filter is on; the filter is designed again whenever the cutoff moved by more than 1/512 octave (about 0.14 %) or the resonance step changed (so a moving LFO is followed almost step by step, a still one costs one design); when playback stops, or the LFO is taken off, the set values come back with one design; a knob turn, or a change of SLOPE, TYPE or DRIVE, while modulating, designs at the set values and the next pass takes up the modulation again (`calculateCoef` clears `modActive`). **Sound-quality note (the owner's rule):** the coefficients are published whole, without interpolation, at 200 updates a second with steps under 0.14 % of the cutoff (the biggest step of a full-depth sine over 3200 steps is under 1/48 octave per LFO step); if a sweep on a high resonance is heard to zipper, the next measure is a per-block interpolation of the coefficients or a faster update, not fewer designs. A bad LFO value (NaN, infinity) is no modulation.
+- **UI:** SHIFT + turn on FREQ or RESONANCE on a FILTER page picks the LFO (-- , 01 to 10, wrapping), the layer pattern (on other pages that bind the filter encoders SHIFT does not pick); the text box under the field shows `LFO 03` in yellow (cleared on leaving the page). The LFO page is as before (type, rate, phase, invert, depth, active).
+- **File:** an `LFD` block (marker, version 1, four numbers) after the `QNT` block, read back only when that block was whole; a song without it, NEW and a load of an older song have no LFO on a filter; the autosave CRC includes it. Not in drumkit files.
+- **Not yet:** the layer's PAN, the effects' parameters and wet, the reverb, the EQ bands (the same `lfoModIndex` pattern fits them; each needs its UI slot and its smoothing); an LFO that restarts at each hit (backlog 25); the LFO value shown moving on the filter page.
+
+**Status: built in V1.21 (test build, not released). Done when** (on the unit): a sine LFO (rate about 1 bar, depth 100 %) on filter 1 FREQ sweeps the sound smoothly and audibly while playing, with no clicks, and the cutoff comes back to the set value when stopped; RESONANCE moves the peak; two filters with different LFOs work together; the assignments save and load with the song; `UDR` and `OVR` stay clear.

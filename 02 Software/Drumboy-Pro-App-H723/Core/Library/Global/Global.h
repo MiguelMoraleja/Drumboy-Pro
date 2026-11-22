@@ -9,6 +9,7 @@
 #include "FileFormat.h"
 #include "Quantize.h"
 #include "MidiCc.h"
+#include "LfoMod.h"
 #include "Lfo.h"
 #include "MCP23017.h"
 #include "Autosave.h"
@@ -2958,10 +2959,24 @@ struct Filter {
     BiquadCoef stage2;
     uint8_t stages                                  = 1;
 
+    // An LFO on FREQ and on RESONANCE (0 = none, 1 to 10; LfoMod.h): the main loop designs the filter at the
+    // modulated values while the sequencer plays. modActive: the coefficients are the LFO's, not the set values.
+    uint8_t lfoFreq                                 = 0;
+    uint8_t lfoReson                                = 0;
+    bool modActive                                  = false;
+    float modHz                                     = 0.0f;
+    uint8_t modRes                                  = 0;
+
+    // The set values.
     void calculateCoef() {
+        designAt(static_cast<float>(kFilterFrequencyDataLibrary[frequency].data), resonance);
+        modActive = false;  // the coefficients are the set values: the next LFO pass designs again at once
+    }
+
+    void designAt(float hz_, uint8_t resonance_) {
         // The design is in FilterCurve.h, shared with the curve on the filter page.
         BiquadCoef first, second;
-        const uint8_t count = filterDesign(type, slope, (float)kFilterFrequencyDataLibrary[frequency].data, kFilterResonanceDataLibrary[resonance].data,
+        const uint8_t count = filterDesign(type, slope, hz_, kFilterResonanceDataLibrary[resonance_].data,
                                            AUDIO_SAMPLE_RATE, first, second);
         IrqGuard guard;  // the audio interrupt reads all of them in one block
         b0 = first.b0;

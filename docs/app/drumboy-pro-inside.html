@@ -296,7 +296,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.20 (testing)</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.21 (testing)</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -333,6 +333,7 @@ table.rel td.new { min-width: 280px; }
       <p class="muted" style="font-size:.85rem"><b>Diagram</b> (V1.14): while the ROUTING page is open, the lanes give way to the patch as a picture. The six modules and the master are boxes along the top, joined as patched: a route to the next module is a line between the boxes, a longer one goes over them. Modules that get no signal are dimmed. Below, one row per source (ten layers, metronome, line-in) with a mark under the module it enters. A picture is in Screen ideas.</p>
       <p class="muted" style="font-size:.85rem"><b>Filter curve</b> (V1.14): while a FILTER page is open, the lanes give way to that filter's response from 20 Hz to 20 kHz, drawn from the same numbers the audio uses. The page's filter is cyan (gray while it is off) with its cutoff as a dotted line; the other filter is gray behind it when it is on. TYPE, SLOPE, FREQ, RESONANCE, DRY and WET all change the curve; DRIVE does not, because it is a gain with a soft clip before the filter.</p>
       <p class="muted" style="font-size:.85rem"><b>Slopes</b> (V1.14): SLOPE is now 06, 12 or 24 dB per octave. <b>24</b> is new: two filter sections in a row, flat up to the cutoff at the lowest RESONANCE and with one peak as you turn it up. <b>06</b> used to be the 12 dB filter mixed half and half with the unfiltered sound, which only ever took 6 dB off; it is now a real gentle filter that keeps falling 6 dB per octave (RESONANCE has no effect on it). A song that used 06 will sound different. 12 is unchanged.</p>
+      <p class="muted" style="font-size:.85rem"><b>LFOs on the filters</b> (V1.21): on a FILTER page, hold SHIFT and turn FREQ or RESONANCE to pick the LFO (-- none, 01 to 10) that modulates it; the LFO's number shows in yellow under the field. Unlike a layer field, which an LFO changes once per hit, a filter follows its LFO continuously while the sequencer plays: FREQ sweeps up to 3 octaves each way at full LFO depth (an octave is a doubling, kept inside the filter's range), RESONANCE up to half its range each way. The filter is designed again 200 times a second whenever the cutoff moved by even about 0.14 % or the resonance step changed, so the sweep follows the LFO almost continuously; when the sequencer stops, or the LFO is taken off, the set values come back. The LFO's type, rate, phase, invert and depth are set on the LFO page as for the layers. The assignments are saved in the song (an LFD block after the QNT block; older firmware never reads it) and not in the drumkit.</p>
       <p class="muted" style="font-size:.85rem"><b>EQ curve</b> (V1.14): while the EQ page is open, the lanes give way to the six bands together as one curve, with a small square for each band at its frequency and gain and its name above (LO, 1 to 4, HI). The curve is gray while the EQ is off.</p>
     </div>
 
@@ -2407,6 +2408,9 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
+  { v: "V1.21", date: "2026-11-22", status: "Testing, not published", pub: false,
+    nw: ["LFOs on the filters (backlog 3): hold SHIFT and turn FREQ or RESONANCE on a FILTER page to pick an LFO (-- or 01 to 10) for it; its number shows in yellow under the field. The filter follows the LFO continuously while the sequencer plays (FREQ up to 3 octaves each way at full depth, RESONANCE up to half its range each way), designed again up to 200 times a second as the cutoff moves, and returns to its set values when the sequencer stops or the LFO is taken off. Both filters, both fields. Saved in the song (an LFD block after the QNT block), not in the drumkit"],
+    fix: [] },
   { v: "V1.20", date: "2026-11-22", status: "Testing, not published", pub: false,
     nw: ["nanoKONTROL Studio on the DUB desk (backlog 68): the Drumboy reads MIDI control changes on any channel while MIDI IN is on, with the Studio's own CC numbers (faders 2 3 4 5 6 8 9 12, knobs 13 to 20, M buttons 21 to 28, TRACK 60 and 61). Faders set a layer's LEVEL (the echo's WET and the reverb's WET on the ECHO and VERB columns), knobs the layer's ECHO send (the echo's FEEDBACK, the reverb's DECAY), the M buttons mute a layer, and TRACK < and > slide the Studio's eight strips along the desk's twelve columns (a cyan bar above the plates marks them). A fader takes over only when it reaches the value shown, so a level never jumps. No Korg editor is needed; the CC list and the connection are in docs/nanokontrol-studio.md"],
     fix: [] },

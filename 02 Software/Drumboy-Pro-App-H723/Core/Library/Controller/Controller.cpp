@@ -646,6 +646,7 @@ void Controller::update() {
         }
 
         midi_serviceCc();  // the controller's faders, knobs and buttons
+        lfo_updateModules();  // the LFOs on the filters
 
         watchdog_stage(WD_STAGE_TRANSPORT);
         // 14. INBOUND MIDI TRANSPORT AND CLOCK
@@ -3807,12 +3808,16 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             break;
 
         case ENC_FILTER_0_FREQ:
-            if (filter[0].frequency < kMaxFilterFrequency)
+            if (keyboard.shiftKeyPress && ((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)))
+                filter_setLfo(0, false, (filter[0].lfoFreq < kMaxLfo) ? static_cast<uint8_t>(filter[0].lfoFreq + 1) : kMinLfo);
+            else if (filter[0].frequency < kMaxFilterFrequency)
                 filter_setFrequency(0, filter[0].frequency + 1);
             break;
 
         case ENC_FILTER_0_RESON:
-            if (filter[0].resonance < kMaxFilterResonance)
+            if (keyboard.shiftKeyPress && ((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)))
+                filter_setLfo(0, true, (filter[0].lfoReson < kMaxLfo) ? static_cast<uint8_t>(filter[0].lfoReson + 1) : kMinLfo);
+            else if (filter[0].resonance < kMaxFilterResonance)
                 filter_setResonance(0, filter[0].resonance + 1);
             break;
 
@@ -3853,12 +3858,16 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             break;
 
         case ENC_FILTER_1_FREQ:
-            if (filter[1].frequency < kMaxFilterFrequency)
+            if (keyboard.shiftKeyPress && ((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)))
+                filter_setLfo(1, false, (filter[1].lfoFreq < kMaxLfo) ? static_cast<uint8_t>(filter[1].lfoFreq + 1) : kMinLfo);
+            else if (filter[1].frequency < kMaxFilterFrequency)
                 filter_setFrequency(1, filter[1].frequency + 1);
             break;
 
         case ENC_FILTER_1_RESON:
-            if (filter[1].resonance < kMaxFilterResonance)
+            if (keyboard.shiftKeyPress && ((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)))
+                filter_setLfo(1, true, (filter[1].lfoReson < kMaxLfo) ? static_cast<uint8_t>(filter[1].lfoReson + 1) : kMinLfo);
+            else if (filter[1].resonance < kMaxFilterResonance)
                 filter_setResonance(1, filter[1].resonance + 1);
             break;
 
@@ -4479,12 +4488,16 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
             break;
 
         case ENC_FILTER_0_FREQ:
-            if (filter[0].frequency > kMinFilterFrequency)
+            if (keyboard.shiftKeyPress && ((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)))
+                filter_setLfo(0, false, (filter[0].lfoFreq > kMinLfo) ? static_cast<uint8_t>(filter[0].lfoFreq - 1) : kMaxLfo);
+            else if (filter[0].frequency > kMinFilterFrequency)
                 filter_setFrequency(0, filter[0].frequency - 1);
             break;
 
         case ENC_FILTER_0_RESON:
-            if (filter[0].resonance > kMinFilterResonance)
+            if (keyboard.shiftKeyPress && ((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)))
+                filter_setLfo(0, true, (filter[0].lfoReson > kMinLfo) ? static_cast<uint8_t>(filter[0].lfoReson - 1) : kMaxLfo);
+            else if (filter[0].resonance > kMinFilterResonance)
                 filter_setResonance(0, filter[0].resonance - 1);
             break;
 
@@ -4519,12 +4532,16 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
             break;
 
         case ENC_FILTER_1_FREQ:
-            if (filter[1].frequency > kMinFilterFrequency)
+            if (keyboard.shiftKeyPress && ((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)))
+                filter_setLfo(1, false, (filter[1].lfoFreq > kMinLfo) ? static_cast<uint8_t>(filter[1].lfoFreq - 1) : kMaxLfo);
+            else if (filter[1].frequency > kMinFilterFrequency)
                 filter_setFrequency(1, filter[1].frequency - 1);
             break;
 
         case ENC_FILTER_1_RESON:
-            if (filter[1].resonance > kMinFilterResonance)
+            if (keyboard.shiftKeyPress && ((menu == FILTER_0_MENU) || (menu == FILTER_1_MENU)))
+                filter_setLfo(1, true, (filter[1].lfoReson > kMinLfo) ? static_cast<uint8_t>(filter[1].lfoReson - 1) : kMaxLfo);
+            else if (filter[1].resonance > kMinFilterResonance)
                 filter_setResonance(1, filter[1].resonance - 1);
             break;
 
@@ -7007,6 +7024,7 @@ void Controller::file_readNotes(const char* fileName_) {
     euclid_resetSettings();  // and without an EUC block every layer has the default EUCLID settings
     genClear(genMix);  // and without a GEN block it has no generators and no hiss
     rhythm.quantizeStrength = kQuantizeStrengthDefault;  // and without a QNT block recording snaps fully, as before
+    filter[0].lfoFreq = filter[0].lfoReson = filter[1].lfoFreq = filter[1].lfoReson = 0;  // and without an LFD block no LFO is on a filter
     if (f_open(&sd.file, fileName_, FA_READ) != FR_OK) return;
     uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
     UINT got = 0;
@@ -7050,7 +7068,19 @@ void Controller::file_readNotes(const char* fileName_) {
                                 uint8_t quantData[kQuantizeFileSize] = {0};
                                 UINT quantGot = 0;
                                 uint8_t strength = kQuantizeStrengthDefault;
-                                if ((f_read(&sd.file, quantData, kQuantizeFileSize, &quantGot) == FR_OK) && quantizeReadBlock(strength, quantData, static_cast<uint16_t>(quantGot))) rhythm.quantizeStrength = strength;
+                                if ((f_read(&sd.file, quantData, kQuantizeFileSize, &quantGot) == FR_OK) && quantizeReadBlock(strength, quantData, static_cast<uint16_t>(quantGot))) {
+                                    rhythm.quantizeStrength = strength;
+                                    // The LFD block follows the QNT block (LfoMod.h): the LFOs on the filters.
+                                    uint8_t lfdData[kLfoModFileSize] = {0};
+                                    UINT lfdGot = 0;
+                                    uint8_t assign[kLfoModDests] = {0, 0, 0, 0};
+                                    if ((f_read(&sd.file, lfdData, kLfoModFileSize, &lfdGot) == FR_OK) && lfoModReadBlock(assign, lfdData, static_cast<uint16_t>(lfdGot))) {
+                                        filter[0].lfoFreq = assign[0];
+                                        filter[0].lfoReson = assign[1];
+                                        filter[1].lfoFreq = assign[2];
+                                        filter[1].lfoReson = assign[3];
+                                    }
+                                }
                             }
                         }
                     }
@@ -7141,6 +7171,11 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
             uint8_t quantData[kQuantizeFileSize];
             quantizeWriteBlock(rhythm.quantizeStrength, quantData);
             out.write(quantData, kQuantizeFileSize);
+            // and the LFD block after the QNT block (LfoMod.h): the LFOs on the filters
+            const uint8_t lfdAssign[kLfoModDests] = {filter[0].lfoFreq, filter[0].lfoReson, filter[1].lfoFreq, filter[1].lfoReson};
+            uint8_t lfdData[kLfoModFileSize];
+            lfoModWriteBlock(lfdAssign, lfdData);
+            out.write(lfdData, kLfoModFileSize);
         }, saveWatchdogTick);
         if (saved) result = SD_OK;
     }
@@ -9359,6 +9394,12 @@ void Controller::lcd_transitionMenu() {
             }
             break;
 
+        case FILTER_0_MENU:
+        case FILTER_1_MENU:
+            lcd_clearTextBox(3);  // the LFOs on FREQ and RESONANCE
+            lcd_clearTextBox(4);
+            break;
+
         case MIXER_MENU:
             for (uint8_t i = 0; i <= kMaxMenu4Tab; i++) {
                 lcd_clearTextBox(i);
@@ -11427,6 +11468,7 @@ void Controller::lcd_drawFilter_FrequencyData(uint8_t filterNum_) {
 
     // Draw frequency value
     lcd.drawText(kFilterFrequencyDataLibrary[filter[filterNum_].frequency].nameLongR, kMenuDataTextSize, kMenuDataX[3], kMenuDataY[3]);
+    lcd_drawFilter_LfoBox(filterNum_, 3);
 }
 
 void Controller::lcd_drawFilter_ResonanceData(uint8_t filterNum_) {
@@ -11439,6 +11481,21 @@ void Controller::lcd_drawFilter_ResonanceData(uint8_t filterNum_) {
     // 2. VALUE DRAW
     // Draw resonance text.
     lcd.drawText(kNumberDataLibrary[filter[filterNum_].resonance].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
+    lcd_drawFilter_LfoBox(filterNum_, 4);
+}
+
+void Controller::lcd_drawFilter_LfoBox(uint8_t filterNum_, uint8_t tab_) {
+    /// @brief The LFO on a filter's FREQ (tab 3) or RESONANCE (tab 4): "LFO 03" in yellow under the field, blank when none.
+    const uint8_t lfo = (tab_ == 3) ? filter[filterNum_].lfoFreq : filter[filterNum_].lfoReson;
+    if (lfo != 0) {
+        char text[12];
+        snprintf(text, sizeof text, "  LFO %02u", static_cast<unsigned>(lfo));
+        lcd_setMenuTextState(YELLOW);
+        lcd.drawText(text, kMenuTextBoxTextSize, kMenuTextBoxX[tab_], kMenuTextBoxY[tab_]);
+    } else {
+        lcd_setMenuTextState(BLACK);
+        lcd.drawText("        ", kMenuTextBoxTextSize, kMenuTextBoxX[tab_], kMenuTextBoxY[tab_]);
+    }
 }
 
 void Controller::lcd_drawFilter_DriveData(uint8_t filterNum_) {
@@ -14383,6 +14440,7 @@ void Controller::file_newAction() {
     fileSlotCurrent = -1;  // a new song is in no slot
     euclid_resetSettings();
     genClear(genMix);
+    filter[0].lfoFreq = filter[0].lfoReson = filter[1].lfoFreq = filter[1].lfoReson = 0;  // a new song has no LFO on a filter
     chainRestart(songChain, chainPlay);
     songStepSel = 0;
 
@@ -20519,7 +20577,10 @@ uint32_t Controller::file_genCrc(uint32_t crc_) {
     genWrite(genMix, genData);
     uint8_t quantData[kQuantizeFileSize];
     quantizeWriteBlock(rhythm.quantizeStrength, quantData);  // the strength is part of the song: autosave sees its edits
-    return autosaveCrc32(autosaveCrc32(crc_, genData, kGenFileSize), quantData, kQuantizeFileSize);
+    const uint8_t lfdAssign[kLfoModDests] = {filter[0].lfoFreq, filter[0].lfoReson, filter[1].lfoFreq, filter[1].lfoReson};
+    uint8_t lfdData[kLfoModFileSize];
+    lfoModWriteBlock(lfdAssign, lfdData);  // and the LFOs on the filters
+    return autosaveCrc32(autosaveCrc32(autosaveCrc32(crc_, genData, kGenFileSize), quantData, kQuantizeFileSize), lfdData, kLfoModFileSize);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -24688,6 +24749,55 @@ void Controller::dub_step(EncoderFunc function_, bool up_) {
     }
     lcd_drawDub_Data();
     viewDirty = true;
+}
+
+/* LFOs on the filters (LfoMod.h) ----------------------------------------------------*/
+
+void Controller::filter_setLfo(uint8_t filterNum_, bool reson_, uint8_t lfo_) {
+    /// @brief Picks the LFO (0 = none, 1 to 10) that modulates a filter's FREQ or RESONANCE (SHIFT + the field's
+    /// encoder). Going back to none is done by lfo_updateModules, which designs the filter at the set values again.
+    if ((filterNum_ > 1) || (lfo_ > kMaxLfo)) return;
+    (reson_ ? filter[filterNum_].lfoReson : filter[filterNum_].lfoFreq) = lfo_;
+    if (((menu == FILTER_0_MENU) && (filterNum_ == 0)) || ((menu == FILTER_1_MENU) && (filterNum_ == 1))) lcd_drawFilter_LfoBox(filterNum_, reson_ ? 4 : 3);
+}
+
+void Controller::lfo_updateModules() {
+    /// @brief Main loop, every 5 ms: while the sequencer plays, a filter with an LFO on FREQ or RESONANCE is
+    /// designed at the modulated values (a new design only when the frequency moved by 1/48 octave or the resonance
+    /// step changed); when it stops, or the LFO is taken off, the set values come back. The LFO is read from the
+    /// same table as a layer's, at the sequencer's tick.
+    if ((HAL_GetTick() - lfoModTick) < kLfoModUpdateMs) return;
+    lfoModTick = HAL_GetTick();
+    auto lfoOf = [this](uint8_t slot_, float& d_, float& dep_) -> bool {
+        if ((slot_ == 0) || !lfoLibrary[slot_ - 1].active) return false;
+        const Lfo& lfo = lfoLibrary[slot_ - 1];
+        uint16_t at = static_cast<uint16_t>(floorf(lfo.sampleCounter));
+        if (at >= kLfoTableSize) at = kLfoTableSize - 1;  // the counter may be read between the interrupt's increment and its wrap
+        d_ = kLfoDataLibrary[lfo.type][at];
+        dep_ = kNumberDataLibrary[lfo.depth].stdMultiplier;
+        return true;
+    };
+    for (uint8_t n = 0; n < 2; n++) {
+        Filter& f = filter[n];
+        const bool wanted = playActive && f.active && ((f.lfoFreq != 0) || (f.lfoReson != 0));
+        if (!wanted) {
+            if (f.modActive) {
+                f.modActive = false;
+                f.calculateCoef();  // the set values again
+            }
+            continue;
+        }
+        float hz = static_cast<float>(kFilterFrequencyDataLibrary[f.frequency].data), d, dep;
+        uint8_t res = f.resonance;
+        if (lfoOf(f.lfoFreq, d, dep)) hz = lfoModFreq(hz, d, dep, static_cast<float>(kFilterFrequencyDataLibrary[kMinFilterFrequency].data), static_cast<float>(kFilterFrequencyDataLibrary[kMaxFilterFrequency].data));
+        if (lfoOf(f.lfoReson, d, dep)) res = static_cast<uint8_t>(lfoModIndex(f.resonance, kMinFilterResonance, kMaxFilterResonance, d, dep));
+        if (!f.modActive || lfoFreqMoved(f.modHz, hz) || (res != f.modRes)) {
+            f.designAt(hz, res);
+            f.modHz = hz;
+            f.modRes = res;
+            f.modActive = true;
+        }
+    }
 }
 
 /* MIDI control changes: the nanoKONTROL Studio on the DUB desk (MidiCc.h) ----------*/

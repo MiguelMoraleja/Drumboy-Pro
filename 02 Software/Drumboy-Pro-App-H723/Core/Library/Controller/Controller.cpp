@@ -358,6 +358,7 @@ void Controller::initialize() {
             meterDrawn[i] = 0xFFFFFFFFu;  // layer meters: nothing drawn yet
             dubMeterDrawn[i] = 0xFFFF;
         }
+        dubMeterDrawn[kDubStrips] = dubMeterDrawn[kDubStrips + 1] = 0xFFFF;
         autosave_markClean();
         autosaveTiming.lastCheckMs = HAL_GetTick();
         lastInputMs = HAL_GetTick();
@@ -23005,6 +23006,7 @@ void Controller::lcd_drawLaneView() {
         dubMeterDrawn[i] = 0xFFFF;
     }
     dubReturnDrawn[0] = dubReturnDrawn[1] = 0;
+    dubMeterDrawn[kDubStrips] = dubMeterDrawn[kDubStrips + 1] = 0xFFFF;
     noteViewKey = 0;                                                  // and no step edit screen
     hissViewKey = 0;                                                  // and no HISS page
     fileViewKey = 0;                                                  // and no slot grid
@@ -24308,7 +24310,7 @@ void Controller::lcd_drawDubViewData() {
         uint32_t& drawn = (col < kDubStrips) ? dubStripDrawn[col] : dubReturnDrawn[col - kDubStrips];
         if (fp == drawn) continue;
         drawn = fp;
-        if (col < kDubStrips) dubMeterDrawn[col] = 0xFFFF;  // the column is cleared, its ladder too
+        dubMeterDrawn[col] = 0xFFFF;  // the column is cleared, its ladder too
         lcd_drawDeskColumn(col);
     }
 }
@@ -24321,6 +24323,14 @@ void Controller::lcd_drawDubMeters() {
         if (lit == dubMeterDrawn[i]) continue;
         dubMeterDrawn[i] = lit;
         lcd_drawDeskSegments(i, lit, audible);
+    }
+    for (uint8_t r = 0; r < 2; r++) {  // the returns: echo (column 10) and reverb (column 11)
+        const uint8_t col = kDubStrips + r;
+        const bool on = (r == 0) ? effect[0].active : reverb.active;
+        const uint8_t lit = on ? deskMeterLit(returnShown[r], kMeterBarWidth) : 0;
+        if (lit == dubMeterDrawn[col]) continue;
+        dubMeterDrawn[col] = lit;
+        lcd_drawDeskSegments(col, lit, on);
     }
 }
 
@@ -27231,6 +27241,13 @@ void Controller::lcd_drawLayerMeters() {
         layerPeak[i] = 0.0f;
     }
     __enable_irq();
+    for (uint8_t r = 0; r < 2; r++) {
+        __disable_irq();
+        const float p = returnPeak[r];
+        returnPeak[r] = 0.0f;
+        __enable_irq();
+        returnShown[r] = meterHold(returnShown[r], meterPixels(p));
+    }
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
         meterShown[i] = meterHold(meterShown[i], meterPixels(peak[i]));
         if (meterClip(peak[i])) meterClipUntil[i] = now + 600;
@@ -27760,6 +27777,22 @@ void Controller::processAudioRouting() {
 #ifdef DSP_PROFILE
         profSum[3 + module_] += DWT_CYCCNT - moduleStart;
 #endif
+        // DUB mode: the return columns' meters read what the echo and the reverb give back.
+        if (dubMix.on && ((module_ == NODE_FX1) || (module_ == NODE_REV))) {
+            const uint8_t r = (module_ == NODE_FX1) ? 0 : 1;
+            const float* l = (r == 0) ? audioEffect[0] : audioReverb_L;
+            const float* rr = (r == 0) ? stereoDsp.nodeR[3] : audioReverb_R;
+            float peak = returnPeak[r];
+            for (uint16_t j = 0; j < I2S_BLOCK_SIZE; j++) {
+                const float a = fabsf(l[j]);
+                if (a > peak) peak = a;
+                if (r == 1) {
+                    const float b = fabsf(rr[j]);
+                    if (b > peak) peak = b;
+                }
+            }
+            returnPeak[r] = finiteOrZero(peak);
+        }
         // DUB mode: a send into an effect that is switched off is a send into nothing, not a dry copy.
         if (dubMix.on) {
             if (((module_ == NODE_FX1) && !effect[0].active && !effect[0].genTransition.active) || ((module_ == NODE_FX2) && !effect[1].active && !effect[1].genTransition.active)) {

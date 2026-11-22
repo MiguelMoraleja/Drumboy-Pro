@@ -19,7 +19,7 @@ The Studio talks USB or Bluetooth and the Drumboy has only a MIDI DIN input, so 
 | TRACK ◀ | 60 |
 | TRACK ▶ | 61 |
 
-A button counts as pressed when it sends a value of 64 or more (it sends 127 when pressed). Everything else on the Studio (S, R, SELECT, the jog wheel, the X-Y pad, the transport) is ignored by the Drumboy. Other controllers that send these numbers (CC 2 to 6, 8, 9, 12 to 21 to 28, 60, 61) on any channel would act too.
+A button counts as pressed when it sends a value of 64 or more (it sends 127 when pressed). Everything else on the Studio (SELECT, the transport and the rest) is ignored by the Drumboy. Other controllers that send these numbers (CC 2 to 6, 8, 9, 12 to 21 to 28, 60, 61) on any channel would act too.
 
 ## What the controls do
 
@@ -37,22 +37,21 @@ The Studio has eight strips and the desk has thirteen columns: the ten layers, t
 
 A fader does not match the screen after the strips slid, after a song was loaded, or when the Drumboy starts. So a fader takes over only when it **reaches the value on the screen** (or crosses it): move it towards the value and it takes hold; the level never jumps. If you then change the value another way (the encoder, a loaded song, undo), the fader lets go again until it reaches the new value. The same goes for the knobs.
 
-## S, R, the X-Y pad and the jog wheel (V1.21)
+## S, R and the jog wheel (V1.21)
 
-| Control | CC (a first guess, see below) | Does |
+All numbers below were read from the unit.
+
+| Control | CC | Does |
 |---|---|---|
-| S button 1 to 8 | 29 to 36 | **echo throw** on the strip: its echo send opens fully while the button is held |
-| R button 1 to 8 | 37 to 44 | **reverb throw** on the strip: its reverb send opens fully while held |
-| X-Y pad, X | 45 | Filter 1 FREQ (the dub filter: strips on the FILT bus go through it) |
-| X-Y pad, Y | 46 | echo FEEDBACK; the top fifth of the pad goes **past 100 %** |
-| Jog wheel | 47 | echo TIME, one step per click (1/8, 1/6, 1/4, 1/3, 1/2, 1/1) |
+| S button 1 to 8 | 29 30 31 33 34 35 36 37 (32 is skipped) | **echo throw** on the strip: its echo send opens fully while the button is held |
+| R button 1 to 8 | 38 to 45 | **reverb throw** on the strip: its reverb send opens fully while held |
+| Jog wheel (the large disc) | 86 | echo TIME, one step per click (1/8, 1/6, 1/4, 1/3, 1/2, 1/1) |
+| SELECT 1 to 8 | 46 to 53 | not used |
 
-- The throws open the send smoothly (about 8 ms to open, 54 ms to close), also on a short tap. They need the DUB mixer ON (the sends only exist in DUB mode). They follow the strips when TRACK slides them.
-- **Echo feedback past 100 %:** up to 80 % of the pad's travel is the echo's normal feedback (0 to 80 %). The last fifth adds up to 35 % on top, so the loop gain reaches 115 %: the echo builds up and self-oscillates. While the boost is on, the echo's loop is soft-clipped so it stays bounded; below that, the echo is exactly as before. **Pull the pad down to stop it.** A new song, a loaded song and NEW clear the boost. (Feedback needs Effect 1 on DELAY, which switching the DUB mixer on does.) The echo's feedback value is also set by the pad (it is saved with the song like any change of it).
-- The X-Y pad's X sets Filter 1's cutoff directly (no take-over: it is a performance gesture). Filter 1 must be ON to hear it.
-- The jog wheel is read as clicks: any value from 1 to 63 is one click one way, 65 to 127 one click the other way. If your wheel sends something else, tell me what the DUB desk shows.
-
-**These five numbers (29 to 47) are a guess** that continues the Studio's own run (faders, knobs, M buttons and TRACK were read from your unit). To read the real ones: move a control and look at the **bottom-left corner of the DUB desk**: it shows the last controller message of any number for 3 seconds, for example `CC 37 = 127`. Tell me what each control shows and I'll correct the numbers (they are in one place in the firmware).
+- The throws open the send smoothly (about 8 ms to open, 54 ms to close), also on a short tap. They need the DUB mixer ON (the sends only exist in DUB mode). They follow the strips when TRACK slides them. They do not work on the ECHO, VERB and LINE IN columns.
+- The jog wheel is read as clicks: any value from 1 to 63 is one click one way, 65 to 127 one click the other way. If it behaves oddly (steps the wrong way, or does nothing), look at the monitor and tell me what the wheel sends.
+- There is no X-Y pad on this unit (the large disc is the jog wheel), so there is no controller for the echo's feedback past 100 % yet; the code for it (`ccFeedbackFromPad`, `Delay::boost`) is kept for a later mapping.
+- **The monitor:** the bottom-left corner of the DUB desk shows the last controller message of any number for 3 seconds, for example `CC 86 = 1`.
 
 ## Later
 

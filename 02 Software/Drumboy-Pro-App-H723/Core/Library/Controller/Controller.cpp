@@ -25035,30 +25035,13 @@ void Controller::midi_serviceCc() {
         for (uint8_t s = 0; s < kCcStrips; s++) {
             const uint8_t column = ccColumn(ccWindow, s);
             if ((column >= kDubStrips) || !io.midi.rxActive) continue;  // with MIDI IN off nothing is held: a lost release cannot leave a send open
-            if (t.held(static_cast<uint8_t>(kCcSoloBase + s))) want[column] |= THROW_ECHO;
+            if (t.held(kCcSolo[s])) want[column] |= THROW_ECHO;
             if (t.held(static_cast<uint8_t>(kCcRecBase + s))) want[column] |= THROW_VERB;
         }
         for (uint8_t i = 0; i < kDubStrips; i++) dubThrow[i] = want[i];
     }
 
-    // 4c. THE X-Y PAD: X is Filter 1's FREQ (the dub filter), Y the echo's FEEDBACK, past 100 % at the top
-    {
-        uint8_t value;
-        if (t.poll(kCcPadX, value)) {
-            filter_setFrequency(0, static_cast<uint8_t>((static_cast<uint32_t>(value > 127 ? 127 : value) * kMaxFilterFrequency + 63u) / 127u));
-            ccUiDirty = true;
-        }
-        if (t.poll(kCcPadY, value) && (effect[0].type == EF_DELAY)) {
-            uint8_t index;
-            float boost;
-            ccFeedbackFromPad(ccTo100(value), kMaxDelayFeedback, index, boost);
-            effect_setCData(0, EF_DELAY, index);  // (this clears a boost: the encoder, undo and a kit load must not keep one)
-            effect[0].delay.boost = boost;
-            ccUiDirty = true;
-        }
-    }
-
-    // 4d. THE JOG WHEEL: the echo's TIME, a step per click (a step the setter refuses, while a transition runs, waits)
+    // 4c. THE JOG WHEEL: the echo's TIME, a step per click (a step the setter refuses, while a transition runs, waits)
     {
         const int16_t clicks = t.takeRelative(kCcJog);
         ccJogPending = (effect[0].type == EF_DELAY) ? static_cast<int16_t>(ccJogPending + clicks) : static_cast<int16_t>(0);  // clicks with another effect on are dropped, not saved up

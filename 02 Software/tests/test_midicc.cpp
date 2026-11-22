@@ -22,7 +22,7 @@ static int failures = 0, checks = 0;
     } while (0)
 
 static void testMap() {
-    int faders = 0, knobs = 0, mutes = 0, prev = 0, next = 0, none = 0, solos = 0, recs = 0, pads = 0, jogs = 0;
+    int faders = 0, knobs = 0, mutes = 0, prev = 0, next = 0, none = 0, solos = 0, recs = 0, jogs = 0;
     for (int cc = 0; cc < 128; cc++) {
         const CcControl c = ccDecode(static_cast<uint8_t>(cc));
         switch (c.kind) {
@@ -31,15 +31,15 @@ static void testMap() {
             case CC_MUTE: mutes++; CHECK(c.strip == cc - 21 && cc >= 21 && cc <= 28, "mute cc %d", cc); break;
             case CC_TRACK_PREV: prev++; CHECK(cc == 60, "prev cc %d", cc); break;
             case CC_TRACK_NEXT: next++; CHECK(cc == 61, "next cc %d", cc); break;
-            case CC_SOLO: solos++; CHECK(c.strip == cc - 29 && cc >= 29 && cc <= 36, "S cc %d", cc); break;
-            case CC_REC: recs++; CHECK(c.strip == cc - 37 && cc >= 37 && cc <= 44, "R cc %d", cc); break;
-            case CC_PAD_X: case CC_PAD_Y: pads++; CHECK(cc == 45 || cc == 46, "pad cc %d", cc); break;
-            case CC_JOG: jogs++; CHECK(cc == 47, "jog cc %d", cc); break;
+            case CC_SOLO: solos++; CHECK(cc == kCcSolo[c.strip], "S cc %d", cc); break;
+            case CC_REC: recs++; CHECK(c.strip == cc - 38 && cc >= 38 && cc <= 45, "R cc %d", cc); break;
+            case CC_JOG: jogs++; CHECK(cc == 86, "jog cc %d", cc); break;
             default: none++; break;
         }
     }
-    CHECK(faders == 8 && knobs == 8 && mutes == 8 && prev == 1 && next == 1 && solos == 8 && recs == 8 && pads == 2 && jogs == 1 && none == 128 - 45, "counts %d %d %d %d %d %d %d %d %d %d", faders, knobs, mutes, prev, next, solos, recs, pads, jogs, none);
-    CHECK(ccDecode(45).kind == CC_PAD_X && ccDecode(46).kind == CC_PAD_Y, "X and Y");
+    CHECK(faders == 8 && knobs == 8 && mutes == 8 && prev == 1 && next == 1 && solos == 8 && recs == 8 && jogs == 1 && none == 128 - 43, "counts %d %d %d %d %d %d %d %d %d", faders, knobs, mutes, prev, next, solos, recs, jogs, none);
+    // Read from the unit: S 29 30 31 33 to 37, R 38 to 45, the Select buttons 46 to 53 are not used, the wheel is 86.
+    CHECK(ccDecode(32).kind == CC_NONE && ccDecode(33).kind == CC_SOLO && ccDecode(33).strip == 3 && ccDecode(37).strip == 7 && ccDecode(38).kind == CC_REC && ccDecode(45).strip == 7 && ccDecode(46).kind == CC_NONE && ccDecode(53).kind == CC_NONE && ccDecode(86).kind == CC_JOG, "numbers read from the unit");
     // The Studio's own numbers: faders 2 3 4 5 6 8 9 12, knobs 13 to 20, M buttons 21 to 28, TRACK 60 and 61.
     const uint8_t faderCc[8] = {2, 3, 4, 5, 6, 8, 9, 12};
     for (uint8_t s = 0; s < 8; s++) CHECK(ccDecode(faderCc[s]).kind == CC_FADER && ccDecode(faderCc[s]).strip == s, "fader %u", s + 1);

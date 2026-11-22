@@ -34,10 +34,11 @@ const uint8_t kCcMaxWindow = kCcColumns - kCcStrips;
 const uint8_t kCcFader[kCcStrips] = {2, 3, 4, 5, 6, 8, 9, 12};  // the faders are not consecutive
 const uint8_t kCcKnobBase = 13, kCcMuteBase = 21;               // knobs 13..20, M buttons 21..28
 const uint8_t kCcTrackPrev = 60, kCcTrackNext = 61;
-const uint8_t kCcSoloBase = 29, kCcRecBase = 37;                // S buttons 29..36, R buttons 37..44 (throws)
-const uint8_t kCcPadX = 45, kCcPadY = 46, kCcJog = 47;          // the X-Y pad and the jog wheel
+const uint8_t kCcSolo[kCcStrips] = {29, 30, 31, 33, 34, 35, 36, 37};  // the S buttons (CC 32 is not used), read from the unit
+const uint8_t kCcRecBase = 38;                                  // R buttons 38..45 (the throws; the Select buttons 46..53 are not used)
+const uint8_t kCcJog = 86;                                      // the jog wheel (the large disc)
 
-enum CcKind : uint8_t { CC_NONE = 0, CC_FADER, CC_KNOB, CC_MUTE, CC_TRACK_PREV, CC_TRACK_NEXT, CC_SOLO, CC_REC, CC_PAD_X, CC_PAD_Y, CC_JOG };
+enum CcKind : uint8_t { CC_NONE = 0, CC_FADER, CC_KNOB, CC_MUTE, CC_TRACK_PREV, CC_TRACK_NEXT, CC_SOLO, CC_REC, CC_JOG };
 
 struct CcControl {
     CcKind kind;
@@ -52,10 +53,10 @@ inline CcControl ccDecode(uint8_t cc_) {
     if ((cc_ >= kCcMuteBase) && (cc_ < kCcMuteBase + kCcStrips)) return CcControl{CC_MUTE, static_cast<uint8_t>(cc_ - kCcMuteBase)};
     if (cc_ == kCcTrackPrev) return CcControl{CC_TRACK_PREV, 0};
     if (cc_ == kCcTrackNext) return CcControl{CC_TRACK_NEXT, 0};
-    if ((cc_ >= kCcSoloBase) && (cc_ < kCcSoloBase + kCcStrips)) return CcControl{CC_SOLO, static_cast<uint8_t>(cc_ - kCcSoloBase)};
+    for (uint8_t s = 0; s < kCcStrips; s++) {
+        if (cc_ == kCcSolo[s]) return CcControl{CC_SOLO, s};
+    }
     if ((cc_ >= kCcRecBase) && (cc_ < kCcRecBase + kCcStrips)) return CcControl{CC_REC, static_cast<uint8_t>(cc_ - kCcRecBase)};
-    if (cc_ == kCcPadX) return CcControl{CC_PAD_X, 0};
-    if (cc_ == kCcPadY) return CcControl{CC_PAD_Y, 0};
     if (cc_ == kCcJog) return CcControl{CC_JOG, 0};
     return CcControl{CC_NONE, 0};
 }

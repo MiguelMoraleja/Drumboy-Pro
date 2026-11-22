@@ -29,7 +29,7 @@
 #include <stdint.h>
 
 const uint8_t kCcStrips = 8;        // the controller's strips
-const uint8_t kCcColumns = 12;      // the desk's columns: ten layers, ECHO, VERB
+const uint8_t kCcColumns = 13;      // the desk's columns: ten layers, ECHO, VERB, LINE IN
 const uint8_t kCcMaxWindow = kCcColumns - kCcStrips;
 const uint8_t kCcFader[kCcStrips] = {2, 3, 4, 5, 6, 8, 9, 12};  // the faders are not consecutive
 const uint8_t kCcKnobBase = 13, kCcMuteBase = 21;               // knobs 13..20, M buttons 21..28

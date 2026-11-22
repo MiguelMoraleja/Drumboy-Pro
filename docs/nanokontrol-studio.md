@@ -23,7 +23,7 @@ A button counts as pressed when it sends a value of 64 or more (it sends 127 whe
 
 ## What the controls do
 
-The Studio has eight strips and the desk has twelve columns: the ten layers, the ECHO return and the VERB return. TRACK ◀ and ▶ slide the eight strips along the twelve columns, one at a time (layers 1 to 8, then 2 to 9, up to layers 5 to 10 with ECHO and VERB). On the DUB desk a cyan bar above the plates marks the eight columns the controller is on (it appears with the first message).
+The Studio has eight strips and the desk has thirteen columns: the ten layers, the ECHO return, the VERB return and LINE IN (fader = line-in volume, knob = its echo send, M = mute). TRACK ◀ and ▶ slide the eight strips along the thirteen columns, one at a time (layers 1 to 8, then 2 to 9, up to layers 6 to 10 with ECHO, VERB and LINE IN). On the DUB desk a cyan bar above the plates marks the eight columns the controller is on (it appears with the first message).
 
 | Control | A layer column | ECHO column | VERB column |
 |---|---|---|---|

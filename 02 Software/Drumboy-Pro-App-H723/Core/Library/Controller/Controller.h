@@ -111,6 +111,8 @@ class Controller {
     RouteFade metroFade;                                                // metronome route fade (audio interrupt only)
     // CPU and MEM monitor (LoadMeter.h): the audio engine's load, measured in every build.
     // Layer meters and the status line (StatusLine.h).
+    volatile float linePeak = 0.0f;                                     // the line-in channel's peak since the last readout (audio interrupt)
+    uint16_t lineShown = 0;
     volatile float returnPeak[2] = {0, 0};                              // echo and reverb return peaks since the last readout (audio interrupt)
     uint16_t returnShown[2] = {0, 0};                                   // their meter heights as shown
     volatile float layerPeak[kLayerLibrarySize] = {0};                  // peak since the last readout (audio interrupt)
@@ -456,8 +458,8 @@ class Controller {
     uint8_t dubPage = 0;                                    // 0: the first DUB page, 1: the second (pan, FX send, echo width), 2: HISS (the bed, GeneratorView.h)
     uint8_t dubStripSel = 0;                                // the strip the DUB page edits (a pad press selects it)
     uint32_t dubStripDrawn[kDubStrips] = {0};               // the desk: what each strip shows (a fingerprint), 0 = nothing
-    uint32_t dubReturnDrawn[2] = {0, 0};
-    uint16_t dubMeterDrawn[kDubStrips + 2];                     // the desk's meter heights as drawn (0xFFFF = nothing)
+    uint32_t dubReturnDrawn[3] = {0, 0, 0};                 // ECHO, VERB and LINE IN
+    uint16_t dubMeterDrawn[kDubColumns];                     // the desk's meter heights as drawn (0xFFFF = nothing)
     uint32_t dubViewStateDrawn = 0;
     uint32_t dubViewState() const;
     void lcd_drawDubViewData();

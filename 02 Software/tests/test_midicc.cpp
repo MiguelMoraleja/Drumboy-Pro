@@ -47,7 +47,7 @@ static void testMap() {
     CHECK(ccDecode(60).kind == CC_TRACK_PREV && ccDecode(61).kind == CC_TRACK_NEXT, "TRACK");
     // Common controllers on other numbers stay unmapped: the mod wheel, volume, pan, sustain, all notes off.
     for (uint8_t cc : {1, 7, 10, 64, 120, 123}) CHECK(ccDecode(cc).kind == CC_NONE, "cc %u is not mapped", cc);
-    CHECK(kCcMaxWindow == 4 && ccColumn(4, 7) == 11 && ccColumn(0, 0) == 0, "twelve columns");
+    CHECK(kCcMaxWindow == 5 && ccColumn(5, 7) == 12 && ccColumn(0, 0) == 0, "thirteen columns");
 }
 
 static void testScaling() {
@@ -217,9 +217,9 @@ static void testFeedbackPad() {
 }
 
 static void testWindow() {
-    CHECK(ccMoveWindow(0, -1) == 0 && ccMoveWindow(0, 1) == 1 && ccMoveWindow(3, 1) == 4 && ccMoveWindow(4, 1) == 4 && ccMoveWindow(2, -1) == 1 && ccMoveWindow(0, 100) == 4, "the window slides and stops at its ends");
+    CHECK(ccMoveWindow(0, -1) == 0 && ccMoveWindow(0, 1) == 1 && ccMoveWindow(4, 1) == 5 && ccMoveWindow(5, 1) == 5 && ccMoveWindow(2, -1) == 1 && ccMoveWindow(0, 100) == 5, "the window slides and stops at its ends");
     // The strips cover layers 1-8 at 0, and columns 5-12 (layers 5-10, ECHO, VERB) at 4.
-    CHECK(ccColumn(0, 7) == 7 && ccColumn(4, 0) == 4 && ccColumn(4, 7) == 11, "columns");
+    CHECK(ccColumn(0, 7) == 7 && ccColumn(4, 0) == 4 && ccColumn(5, 7) == 12, "columns");
 }
 
 // The parser delivers the controller's messages: CC on channel 3, running status, interleaved clock bytes.

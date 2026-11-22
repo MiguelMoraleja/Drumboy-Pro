@@ -1129,3 +1129,12 @@ First slice of item 3: the four continuous destinations FREQ and RESONANCE of fi
 - **Not yet:** the layer's PAN, the effects' parameters and wet, the reverb, the EQ bands (the same `lfoModIndex` pattern fits them; each needs its UI slot and its smoothing); an LFO that restarts at each hit (backlog 25); the LFO value shown moving on the filter page.
 
 **Status: built in V1.21 (test build, not released). Done when** (on the unit): a sine LFO (rate about 1 bar, depth 100 %) on filter 1 FREQ sweeps the sound smoothly and audibly while playing, with no clicks, and the cutoff comes back to the set value when stopped; RESONANCE moves the peak; two filters with different LFOs work together; the assignments save and load with the song; `UDR` and `OVR` stay clear.
+
+
+## 70. DUB desk: LINE IN channel and harder returns (V1.21 test build)
+
+- **Returns:** the signal lights of ECHO and VERB read the output peak of the echo and the reverb. In DUB mode the echo takes its input at full level and the reverb's output gets +12 dB (`kDubEchoLevel`, `kDubReverbGain` in `DubMix.h`): a simulated drum hit came back from the reverb at -11 dB at WET 100 % (comb inputs scaled by 0.015), and the echo's hidden LEVEL (default 50 %) lost another 6 dB. CHAIN mode is untouched. No filter, bit depth or rate was changed (sound quality rule).
+- **LINE IN:** column 12 of the desk (13 columns of 70 px): fader = `mixer.liVolume` (0 to 20, 5 per step), BUS, ECHO and VERB sends, mute, signal light from the line-in peak. In DUB mode the line-in is routed with its own node gains (`dubLineGains`) instead of the MIXER IN destination. File: a `LIN` block (8 bytes) after `LFD`. nanoKONTROL: the window slides over 13 columns.
+- **Not yet:** throws (S, R) on the line-in, an FX send, pan.
+
+**Status: built in V1.21 (test build). Done when** (on the unit): a hit into the reverb at WET 100 % and send 100 % is clearly the loudest thing on the desk, the echo repeats are as loud as the dry hit at feedback 50 %, and a line-in source can be sent to the echo with the LINE IN knob while its light moves.

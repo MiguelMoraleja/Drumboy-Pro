@@ -432,6 +432,7 @@ static_assert(0xC0EA6000u + kPreviewRingSize * 4u <= 0xC0FB9640u, "preview ring 
 struct StereoDsp {
     float nodeR[5][I2S_BLOCK_SIZE];
     float srcGain[10][kRouteGainStateSize];
+    float lineGain[kRouteGainStateSize];            // the LINE IN channel's gains in DUB mode
     float layerR[10][I2S_BLOCK_SIZE];               // the right channel of a layer playing a stereo sample
     bool layerStereo[10];                           // which layers did this block
 };
@@ -1340,6 +1341,8 @@ typedef enum {
     ENC_DUB_HISSTONE                                = 0x8F,
     ENC_DUB_HISSDUCK                                = 0x90,
     ENC_RHYTHM_STRENGTH                             = 0x91,  // RHYTHM page, the fifth field: the quantize strength
+    ENC_DUB_STRIP                                   = 0x92,  // DUB page 2: which strip the page edits (the ten layers, then LINE IN)
+    ENC_DUB_LINEMUTE                                = 0x93,  // DUB page 2: the LINE IN channel's mute
 
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
@@ -1404,7 +1407,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
 
 // DUB page 2 (the next step in the MIXER cycle): the selected strip's pan and FX send on the top row,
 // the echo's width on the bottom row.
-const EncoderFunc kDubPage2Function[8] = {ENC_DUB_PAN, ENC_DUB_FX, ENC_FNC_NONE, ENC_FNC_NONE, ENC_DUB_WIDTH, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE};
+const EncoderFunc kDubPage2Function[8] = {ENC_DUB_PAN, ENC_DUB_FX, ENC_DUB_STRIP, ENC_DUB_LINEMUTE, ENC_DUB_WIDTH, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE};
 // DUB page 3, HISS (Generator.h; the lane area shows the bed, GeneratorView.h): type, level, tone and ducking.
 const EncoderFunc kDubPage3Function[8] = {ENC_DUB_HISS, ENC_DUB_HISSLEVEL, ENC_DUB_HISSTONE, ENC_DUB_HISSDUCK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE};
 const uint8_t kDubPageHiss = 2;  // dubPage of the HISS page (0 and 1 are the desk)
@@ -1593,7 +1596,9 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_DUB_HISSLEVEL,       ENC_RES_M, "HISS LEVEL", "DUB   ", "  %", false},
     {ENC_DUB_HISSTONE,        ENC_RES_M, "HISS TONE ", "DUB   ", "  %", false},
     {ENC_DUB_HISSDUCK,        ENC_RES_M, "HISS DUCK ", "DUB   ", "  %", false},
-    {ENC_RHYTHM_STRENGTH,     ENC_RES_M, "STRENGTH  ", "RHY   ", "  %", false}
+    {ENC_RHYTHM_STRENGTH,     ENC_RES_M, "STRENGTH  ", "RHY   ", "  %", false},
+    {ENC_DUB_STRIP,           ENC_RES_S, "STRIP     ", "DUB   ", "   ", false},
+    {ENC_DUB_LINEMUTE,        ENC_RES_S, "LINE MUTE ", "DUB   ", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");

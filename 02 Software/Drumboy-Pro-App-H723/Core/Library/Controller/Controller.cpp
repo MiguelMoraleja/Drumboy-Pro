@@ -358,7 +358,7 @@ void Controller::initialize() {
             meterDrawn[i] = 0xFFFFFFFFu;  // layer meters: nothing drawn yet
             dubMeterDrawn[i] = 0xFFFF;
         }
-        dubMeterDrawn[kDubStrips] = dubMeterDrawn[kDubStrips + 1] = 0xFFFF;
+        dubMeterDrawn[kDubStrips] = dubMeterDrawn[kDubStrips + 1] = dubMeterDrawn[kDubLineColumn] = 0xFFFF;
         autosave_markClean();
         autosaveTiming.lastCheckMs = HAL_GetTick();
         lastInputMs = HAL_GetTick();
@@ -4306,6 +4306,8 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
         case ENC_DUB_HISSLEVEL:
         case ENC_DUB_HISSTONE:
         case ENC_DUB_HISSDUCK:
+        case ENC_DUB_STRIP:
+        case ENC_DUB_LINEMUTE:
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, true);
             break;
 
@@ -4956,6 +4958,8 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_DUB_HISSLEVEL:
         case ENC_DUB_HISSTONE:
         case ENC_DUB_HISSDUCK:
+        case ENC_DUB_STRIP:
+        case ENC_DUB_LINEMUTE:
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, false);
             break;
 
@@ -7082,6 +7086,15 @@ void Controller::file_readNotes(const char* fileName_) {
                                         filter[1].lfoFreq = assign[2];
                                         filter[1].lfoReson = assign[3];
                                     }
+                                    // The LIN block follows the LFD block (DubMix.h): the LINE IN channel of the desk.
+                                    if (lfdGot == kLfoModFileSize) {
+                                        uint8_t linData[kDubLineFileSize] = {0};
+                                        UINT linGot = 0;
+                                        if ((f_read(&sd.file, linData, kDubLineFileSize, &linGot) == FR_OK) && !dubLineRead(dubMix, linData, static_cast<uint16_t>(linGot))) {
+                                            dubMix.line = DubStrip();
+                                            dubMix.lineMute = false;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -7178,6 +7191,10 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
             uint8_t lfdData[kLfoModFileSize];
             lfoModWriteBlock(lfdAssign, lfdData);
             out.write(lfdData, kLfoModFileSize);
+            // and the LIN block after the LFD block (DubMix.h): the LINE IN channel of the desk
+            uint8_t linData[kDubLineFileSize];
+            dubLineWrite(dubMix, linData);
+            out.write(linData, kDubLineFileSize);
         }, saveWatchdogTick);
         if (saved) result = SD_OK;
     }
@@ -20588,7 +20605,9 @@ uint32_t Controller::file_genCrc(uint32_t crc_) {
     const uint8_t lfdAssign[kLfoModDests] = {filter[0].lfoFreq, filter[0].lfoReson, filter[1].lfoFreq, filter[1].lfoReson};
     uint8_t lfdData[kLfoModFileSize];
     lfoModWriteBlock(lfdAssign, lfdData);  // and the LFOs on the filters
-    return autosaveCrc32(autosaveCrc32(autosaveCrc32(crc_, genData, kGenFileSize), quantData, kQuantizeFileSize), lfdData, kLfoModFileSize);
+    uint8_t linData[kDubLineFileSize];
+    dubLineWrite(dubMix, linData);  // and the LINE IN channel
+    return autosaveCrc32(autosaveCrc32(autosaveCrc32(autosaveCrc32(crc_, genData, kGenFileSize), quantData, kQuantizeFileSize), lfdData, kLfoModFileSize), linData, kDubLineFileSize);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -23005,8 +23024,8 @@ void Controller::lcd_drawLaneView() {
         dubStripDrawn[i] = 0;
         dubMeterDrawn[i] = 0xFFFF;
     }
-    dubReturnDrawn[0] = dubReturnDrawn[1] = 0;
-    dubMeterDrawn[kDubStrips] = dubMeterDrawn[kDubStrips + 1] = 0xFFFF;
+    dubReturnDrawn[0] = dubReturnDrawn[1] = dubReturnDrawn[2] = 0;
+    dubMeterDrawn[kDubStrips] = dubMeterDrawn[kDubStrips + 1] = dubMeterDrawn[kDubLineColumn] = 0xFFFF;
     noteViewKey = 0;                                                  // and no step edit screen
     hissViewKey = 0;                                                  // and no HISS page
     fileViewKey = 0;                                                  // and no slot grid
@@ -24016,6 +24035,11 @@ uint32_t Controller::dubViewState() const {
         for (const char* c = layerLibrary[i].instLoadedData.nameShortL; *c; c++) mix(static_cast<uint8_t>(*c));
         mix(genMix.type[i]);
     }
+    mix(dubMix.line.bus);
+    mix(dubMix.line.echo);
+    mix(dubMix.line.verb);
+    mix(dubMix.lineMute ? 1u : 0u);
+    mix(mixer.liVolume);
     mix(dubPage);
     if (dubPage == kDubPageHiss) return hissViewState();
     mix(effect[0].active);
@@ -24069,7 +24093,8 @@ void Controller::lcd_drawDeskColumn(uint8_t column_) {
     /// 11 VERB). A scribble plate, the bus switch, two knobs with their values, the pan bar, the
     /// fader with its scale and LED ladder, and the foot plate.
     const uint16_t x = deskX(column_);
-    const bool isReturn = (column_ >= kDubStrips);
+    const bool isLine = (column_ == kDubLineColumn);
+    const bool isReturn = (column_ >= kDubStrips) && !isLine;
     const uint8_t layer = column_;
     const Effect& echo = effect[0];
     const bool echoIsDelay = (echo.type == EF_DELAY);
@@ -24079,7 +24104,20 @@ void Controller::lcd_drawDeskColumn(uint8_t column_) {
     uint8_t level, knob[2], bus = DUB_BUS_FILT, pan = kPanCentre;
     const char* knobName[2];
     char line1[12], line2[12];
-    if (!isReturn) {
+    if (isLine) {
+        const DubStrip& st = dubMix.line;
+        audible = !dubMix.lineMute;
+        selected = (dubStripSel == kDubStrips);
+        muted = dubMix.lineMute;
+        level = dubLineFader(mixer.liVolume);
+        knob[0] = st.echo;
+        knob[1] = st.verb;
+        knobName[0] = "ECHO";
+        knobName[1] = "VERB";
+        bus = st.bus;
+        snprintf(line1, sizeof line1, "IN");
+        snprintf(line2, sizeof line2, "LINE");
+    } else if (!isReturn) {
         const DubStrip& st = dubMix.strip[layer];
         audible = layerAudible(layer);
         selected = (layer == dubStripSel);
@@ -24095,7 +24133,7 @@ void Controller::lcd_drawDeskColumn(uint8_t column_) {
         snprintf(line1, sizeof line1, "%.2s", kDataLayerNum[layer]);
         char layerName[16];
         layerShortName(layer, layerName, sizeof layerName);
-        snprintf(line2, sizeof line2, "%.9s", layerName);
+        snprintf(line2, sizeof line2, "%.8s", layerName);
     } else if (column_ == kDubStrips) {
         on = echo.active;
         level = echo.subEffect[echo.type].fData;
@@ -24185,8 +24223,8 @@ void Controller::lcd_drawDeskColumn(uint8_t column_) {
     }
 
     // 4. THE PAN BAR (layers): a slot with a centre notch and a marker, and its value
-    if (!isReturn) {
-        const uint16_t barX = x + 1, barW = 41;
+    if (!isReturn && !isLine) {
+        const uint16_t barX = x + 1, barW = 33;
         lcd.setForeColor(panHeard ? GRAY_50 : GRAY_35);
         lcd.drawRect(barX, kDeskPanY, barW, kDeskPanHeight);
         lcd.drawVLine(barX + barW / 2, kDeskPanY - 2, kDeskPanHeight + 4);
@@ -24225,7 +24263,9 @@ void Controller::lcd_drawDeskColumn(uint8_t column_) {
     lcd.drawRect(x + 1, kDeskFootY, kDeskWidth - 2, kDeskFootHeight);
     lcd.setFont(FONT_10x14);
     lcd.setForeColor(c);
-    if (!isReturn) {
+    if (isLine) {
+        lcd.drawText("IN", 2, x + 8, kDeskFootY + 6);
+    } else if (!isReturn) {
         lcd.drawText(kDataLayerNum[layer], 2, x + 8, kDeskFootY + 6);
     } else {
         lcd.drawText(column_ == kDubStrips ? "E" : "V", 1, x + 14, kDeskFootY + 6);
@@ -24233,9 +24273,9 @@ void Controller::lcd_drawDeskColumn(uint8_t column_) {
     lcd.setFont(FONT_05x07);
     const bool lamp = isReturn ? on : muted;
     lcd.setForeColor(lamp ? (isReturn ? GREEN : RED) : GRAY_25);
-    lcd.fillRect(x + 46, kDeskFootY + 6, 18, 14);
+    lcd.fillRect(x + 40, kDeskFootY + 6, 18, 14);
     lcd.setForeColor(GRAY_50);
-    lcd.drawText(isReturn ? "ON" : "MUTE", isReturn ? 2 : 4, x + 46 + (isReturn ? 2 : -3) + 1, kDeskFootY + 24);
+    lcd.drawText(isReturn ? "ON" : "MUTE", isReturn ? 2 : 4, x + 40 + (isReturn ? 2 : -3) + 1, kDeskFootY + 24);
     lcd.setBackColor(BLACK);
 }
 
@@ -24294,6 +24334,13 @@ void Controller::lcd_drawDubViewData() {
             mix((col == dubStripSel) ? 1u : 0u);
             for (const char* c = layerLibrary[col].instLoadedData.nameShortL; *c; c++) mix(static_cast<uint8_t>(*c));
             mix(genMix.type[col]);
+        } else if (col == kDubLineColumn) {
+            mix(dubMix.line.bus);
+            mix(dubMix.line.echo);
+            mix(dubMix.line.verb);
+            mix(dubMix.lineMute ? 1u : 0u);
+            mix(mixer.liVolume);
+            mix((dubStripSel == kDubStrips) ? 1u : 0u);
         } else if (col == kDubStrips) {
             mix(echo.active);
             mix(echo.type);
@@ -24307,7 +24354,7 @@ void Controller::lcd_drawDubViewData() {
             mix(reverb.size);
         }
         if (fp == 0) fp = 1;
-        uint32_t& drawn = (col < kDubStrips) ? dubStripDrawn[col] : dubReturnDrawn[col - kDubStrips];
+        uint32_t& drawn = (col < kDubStrips) ? dubStripDrawn[col] : dubReturnDrawn[col - kDubStrips];  // 10 ECHO, 11 VERB, 12 LINE IN
         if (fp == drawn) continue;
         drawn = fp;
         dubMeterDrawn[col] = 0xFFFF;  // the column is cleared, its ladder too
@@ -24331,6 +24378,14 @@ void Controller::lcd_drawDubMeters() {
         if (lit == dubMeterDrawn[col]) continue;
         dubMeterDrawn[col] = lit;
         lcd_drawDeskSegments(col, lit, on);
+    }
+    {  // LINE IN (column 12): its meter is the line-in's peak, dark while muted
+        const bool open = !dubMix.lineMute;
+        const uint8_t lit = open ? deskMeterLit(lineShown, kMeterBarWidth) : 0;
+        if (lit != dubMeterDrawn[kDubLineColumn]) {
+            dubMeterDrawn[kDubLineColumn] = lit;
+            lcd_drawDeskSegments(kDubLineColumn, lit, open);
+        }
     }
 }
 
@@ -24649,7 +24704,7 @@ void Controller::lcd_drawDubMenu() {
     /// @brief Draws the DUB page: icon, strip number and the eight fields.
     lcd_drawMenuIcon(DUB_MENU);
     lcd_setMenuHeaderState(CYAN);
-    lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
+    lcd.drawText((dubStripSel == kDubStrips) ? "L" : (kDataMenuNum + dubStripSel), 1, kMenuNumX, kMenuNumY);
     for (uint8_t f = 0; f < 8; f++) {
         const uint8_t fn = (dubPage == kDubPageHiss) ? static_cast<uint8_t>(kDubPage3Function[f])
                            : ((dubPage == 1) ? static_cast<uint8_t>(kDubPage2Function[f]) : static_cast<uint8_t>(ENC_DUB_LEVEL + f));
@@ -24663,7 +24718,8 @@ void Controller::lcd_drawDubMenu() {
 
 void Controller::lcd_drawDub_Data() {
     /// @brief Draws the DUB values: the selected strip (top row) and the desk (bottom row).
-    const DubStrip& strip = dubMix.strip[dubStripSel];
+    const bool lineSel = (dubStripSel == kDubStrips);
+    const DubStrip& strip = lineSel ? dubMix.line : dubMix.strip[dubStripSel];
     char text[8][kMenuDataTextSize + 1];
     if (dubPage >= 1) {
         for (uint8_t f = 0; f < 8; f++) snprintf(text[f], sizeof text[f], "%10s", "");
@@ -24675,18 +24731,26 @@ void Controller::lcd_drawDub_Data() {
             snprintf(text[3], sizeof text[3], "%10u", static_cast<unsigned>(genMix.hissDuck));
         } else {
             char label[8];
-            panLabel(label, sizeof label, dubMix.pan[dubStripSel]);
-            snprintf(text[0], sizeof text[0], "%10s", label);
-            snprintf(text[1], sizeof text[1], "%10u", static_cast<unsigned>(strip.fx));
+            if (lineSel) {
+                snprintf(text[0], sizeof text[0], "%10s", "-");
+                snprintf(text[1], sizeof text[1], "%10s", "-");
+                snprintf(text[2], sizeof text[2], "%10s", "LINE IN");
+            } else {
+                panLabel(label, sizeof label, dubMix.pan[dubStripSel]);
+                snprintf(text[0], sizeof text[0], "%10s", label);
+                snprintf(text[1], sizeof text[1], "%10u", static_cast<unsigned>(strip.fx));
+                snprintf(text[2], sizeof text[2], "%10u", static_cast<unsigned>(dubStripSel + 1));
+            }
+            snprintf(text[3], sizeof text[3], "%10s", dubMix.lineMute ? "MUTED" : "OPEN");
             snprintf(text[4], sizeof text[4], "%10u", static_cast<unsigned>(dubMix.echoWidth));
         }
         lcd_setMenuDataState(WHITE);
         for (uint8_t f = 0; f < 8; f++) lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[f], kMenuDataY[f]);
         lcd_setMenuHeaderState(CYAN);
-        lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
+        lcd.drawText((dubStripSel == kDubStrips) ? "L" : (kDataMenuNum + dubStripSel), 1, kMenuNumX, kMenuNumY);
         return;
     }
-    snprintf(text[0], sizeof text[0], "%10u", static_cast<unsigned>(layerLibrary[dubStripSel].level));
+    snprintf(text[0], sizeof text[0], "%10u", static_cast<unsigned>(lineSel ? dubLineFader(mixer.liVolume) : layerLibrary[dubStripSel].level));
     snprintf(text[1], sizeof text[1], "%10s", (strip.bus == DUB_BUS_DIR) ? "DIR" : "FILT");
     snprintf(text[2], sizeof text[2], "%10u", static_cast<unsigned>(strip.echo));
     snprintf(text[3], sizeof text[3], "%10u", static_cast<unsigned>(strip.verb));
@@ -24703,19 +24767,33 @@ void Controller::lcd_drawDub_Data() {
     for (uint8_t f = 0; f < 8; f++) lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[f], kMenuDataY[f]);
     // The strip number next to the icon.
     lcd_setMenuHeaderState(CYAN);
-    lcd.drawText(kDataMenuNum + dubStripSel, 1, kMenuNumX, kMenuNumY);
+    lcd.drawText((dubStripSel == kDubStrips) ? "L" : (kDataMenuNum + dubStripSel), 1, kMenuNumX, kMenuNumY);
 }
 
 void Controller::dub_step(EncoderFunc function_, bool up_) {
     /// @brief Steps one DUB field: the selected strip's LEVEL, BUS, ECHO or VERB, or the desk's MODE,
     /// echo FEEDBACK and the two returns (the echo's WET and the reverb's WET).
-    DubStrip& strip = dubMix.strip[dubStripSel];
+    const bool lineSel = (dubStripSel == kDubStrips);
+    DubStrip& strip = lineSel ? dubMix.line : dubMix.strip[dubStripSel];
     auto stepSend = [up_](uint8_t& v) {
         if (up_ && (v < kDubMaxSend)) v++;
         if (!up_ && (v > 0)) v--;
     };
     switch (function_) {
+        case ENC_DUB_STRIP:
+            if (up_ && (dubStripSel < kDubStrips)) dubStripSel++;
+            if (!up_ && (dubStripSel > 0)) dubStripSel--;
+            ccUiDirty = true;
+            break;
+        case ENC_DUB_LINEMUTE:
+            dubMix.lineMute = up_;
+            break;
         case ENC_DUB_LEVEL: {
+            if (lineSel) {  // the line-in volume: 20 steps of 1 dB on a fader of 0..100
+                if (up_ && (mixer.liVolume < kMaxMixerLiVolume)) mixer_setLiVolume(mixer.liVolume + 1);
+                if (!up_ && (mixer.liVolume > kMinMixerLiVolume)) mixer_setLiVolume(mixer.liVolume - 1);
+                break;
+            }
             const uint8_t level = layerLibrary[dubStripSel].level;
             layerInst_setLevel(dubStripSel, up_ ? (level < kMaxLayerLevel ? level + 1 : level) : (level > kMinLayerLevel ? level - 1 : level));
             break;
@@ -24751,13 +24829,14 @@ void Controller::dub_step(EncoderFunc function_, bool up_) {
             break;
         }
         case ENC_DUB_PAN: {
+            if (lineSel) break;  // the line-in channel is not panned
             const uint8_t cur = dubMix.pan[dubStripSel];
             if (up_ && (cur < kPanMax)) layerInst_setPan(dubStripSel, static_cast<uint8_t>(cur + 1));
             if (!up_ && (cur > 0)) layerInst_setPan(dubStripSel, static_cast<uint8_t>(cur - 1));
             break;
         }
         case ENC_DUB_FX:
-            stepSend(strip.fx);
+            if (!lineSel) stepSend(strip.fx);
             break;
         case ENC_DUB_WIDTH:
             // Steps of 5 %, to 100 %.
@@ -24841,6 +24920,7 @@ void Controller::lfo_updateModules() {
 uint8_t Controller::cc_current(CcKind kind_, uint8_t column_) const {
     /// @brief What the column's parameter is now, 0..100 (for the take-over: the controller must reach it).
     if (column_ < kDubStrips) return (kind_ == CC_FADER) ? layerLibrary[column_].level : dubMix.strip[column_].echo;
+    if (column_ == kDubLineColumn) return (kind_ == CC_FADER) ? dubLineFader(mixer.liVolume) : dubMix.line.echo;  // LINE IN: its volume and ECHO send
     if (column_ == kDubStrips) {  // the ECHO return: its WET and the echo's FEEDBACK
         if (effect[0].type != EF_DELAY) return 0;
         if (kind_ == CC_FADER) {
@@ -24862,6 +24942,11 @@ bool Controller::cc_apply(CcKind kind_, uint8_t column_, uint8_t percent_) {
         } else {
             dubMix.strip[column_].echo = (percent_ > kDubMaxSend) ? kDubMaxSend : percent_;
         }
+        return true;
+    }
+    if (column_ == kDubLineColumn) {
+        if (kind_ == CC_FADER) mixer_setLiVolume(dubLineVolume(percent_));
+        else dubMix.line.echo = (percent_ > kDubMaxSend) ? kDubMaxSend : percent_;
         return true;
     }
     if (column_ == kDubStrips) {
@@ -24920,6 +25005,10 @@ void Controller::midi_serviceCc() {
         const uint8_t presses = t.takePresses(static_cast<uint8_t>(kCcMuteBase + s));
         const uint8_t column = ccColumn(ccWindow, s);
         if ((presses & 1) && (column < kDubStrips)) layerInst_setMute(column, !layerLibrary[column].mute);
+        if ((presses & 1) && (column == kDubLineColumn)) {
+            dubMix.lineMute = !dubMix.lineMute;
+            ccUiDirty = true;
+        }
     }
 
     // 4. THE FADERS AND KNOBS: a value the setter refused earlier is tried again, then the new messages are applied
@@ -27103,6 +27192,16 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
         processAudioLayer();
         PROF_LAP(2);
 
+        // The line-in's peak (the LINE IN channel's meter): what comes in, before the channel's mute.
+        {
+            float peak = linePeak;
+            for (uint16_t j = 0; j < I2S_BLOCK_SIZE; j++) {
+                const float a = fabsf(audioReceive[j]);
+                if (a > peak) peak = a;
+            }
+            linePeak = finiteOrZero(peak);
+        }
+
         // Layer meters: the peak of each layer's block (read and reset by the main loop).
         for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
             float peak = layerPeak[i];
@@ -27241,6 +27340,13 @@ void Controller::lcd_drawLayerMeters() {
         layerPeak[i] = 0.0f;
     }
     __enable_irq();
+    {
+        __disable_irq();
+        const float p = linePeak;
+        linePeak = 0.0f;
+        __enable_irq();
+        lineShown = meterHold(lineShown, meterPixels(p));
+    }
     for (uint8_t r = 0; r < 2; r++) {
         __disable_irq();
         const float p = returnPeak[r];
@@ -27715,6 +27821,13 @@ void Controller::processAudioRouting() {
     // Every layer is panned (Pan.h) and reaches every node as a left and a right signal.
     RouteSource sources[2 + kLayerLibrarySize];
     sources[0] = {audioReceive, routeMaskFromEntry(mixer.liMixerInMode), &lineInFade};
+    // DUB mode: the line-in is the LINE IN channel, with its own bus, sends and mute (its volume is applied
+    // where the line-in is received).
+    float lineGains[kRouteNodeCount];
+    if (dubMix.on) {
+        dubLineGains(dubMix, lineGains);
+        sources[0] = {audioReceive, 0, nullptr, lineGains, stereoDsp.lineGain, 1.0f, 1.0f, nullptr};
+    }
     sources[1] = {audioMetronome, routeMaskFromEntry(metroOut), &metroFade};
     // DUB mode: a layer goes to every node with its own send gain (following its knob), not to the
     // one destination latched at the note.
@@ -27974,7 +28087,7 @@ void Controller::processAudioReverb() {
             float outL, outR;
 
             // Apply manual wet/dry mix
-            float mixedSignal = (processedSignal * reverb.wetFloat) + (inputSample * reverb.dryFloat * fxDryScale);
+            float mixedSignal = (processedSignal * reverb.wetFloat * dubReverbGain(dubMix.on)) + (inputSample * reverb.dryFloat * fxDryScale);
 
             // Handle Parameter Transitions
             if (reverb.genTransition.active) {
@@ -28190,7 +28303,7 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
 
                 // --- DAMPING FILTER (Feedback Loop) ---
                 // This one-pole filter softens the repeats.
-                float feedbackTarget = (input * delay_.level) + (rightSample * loopGain);
+                float feedbackTarget = (input * dubEchoLevel(dubMix.on && (effectNum_ == 0), delay_.level)) + (rightSample * loopGain);
                 if (delay_.boost > 0.0f) feedbackTarget = softKneeClip(feedbackTarget);  // only while boosted: the loop stays bounded when its gain passes 1, and the normal echo is untouched
                 float filteredFeedback = delay_.lastFeedbackSample + delay_.dampingAlpha * (feedbackTarget - delay_.lastFeedbackSample);
 

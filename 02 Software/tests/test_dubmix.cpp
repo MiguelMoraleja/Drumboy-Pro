@@ -371,6 +371,33 @@ int main() {
     }
 
     testThrowEnvelope();
+    CHECK(dubEchoLevel(true, 0.5f) == 1.0f && dubEchoLevel(false, 0.5f) == 0.5f, "echo input: full level in DUB, LEVEL in CHAIN");
+    {  // the LINE IN channel
+        DubMix d;
+        d.line.bus = DUB_BUS_DIR; d.line.echo = 40; d.line.verb = 25;
+        float g[kRouteNodeCount];
+        dubLineGains(d, g);
+        CHECK(g[NODE_MASTER] == 1.0f && g[NODE_EQ] == 0.0f && std::fabs(g[NODE_F2] - 0.4f) < 1e-6f && std::fabs(g[NODE_REV] - 0.25f) < 1e-6f && g[NODE_FX2] == 0.0f, "line gains");
+        d.lineMute = true;
+        dubLineGains(d, g);
+        bool allZero = true;
+        for (uint8_t n = 0; n < kRouteNodeCount; n++) allZero = allZero && (g[n] == 0.0f);
+        CHECK(allZero, "a muted line sends nowhere");
+        uint8_t blob[kDubLineFileSize];
+        dubLineWrite(d, blob);
+        DubMix back;
+        CHECK(dubLineRead(back, blob, kDubLineFileSize) && back.line.bus == DUB_BUS_DIR && back.line.echo == 40 && back.line.verb == 25 && back.lineMute, "line block round trip");
+        CHECK(!dubLineRead(back, blob, kDubLineFileSize - 1), "too short");
+        blob[5] = 101;
+        CHECK(!dubLineRead(back, blob, kDubLineFileSize), "a send over 100 rejects the block");
+        dubLineWrite(d, blob);
+        blob[0] = 'X';
+        CHECK(!dubLineRead(back, blob, kDubLineFileSize), "wrong marker");
+        bool inverse = true;
+        for (uint8_t v = 0; v <= 20; v++) inverse = inverse && (dubLineVolume(dubLineFader(v)) == v);
+        CHECK(inverse && dubLineFader(20) == 100 && dubLineVolume(100) == 20 && dubLineVolume(0) == 0 && dubLineVolume(255) == 20, "line volume <-> fader");
+    }
+    CHECK(dubReverbGain(true) == 4.0f && dubReverbGain(false) == 1.0f, "reverb return gain: +12 dB in DUB only");
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

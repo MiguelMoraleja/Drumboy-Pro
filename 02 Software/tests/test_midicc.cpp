@@ -25,18 +25,23 @@ static void testMap() {
     for (int cc = 0; cc < 128; cc++) {
         const CcControl c = ccDecode(static_cast<uint8_t>(cc));
         switch (c.kind) {
-            case CC_FADER: faders++; CHECK(c.strip == cc - 20 && cc >= 20 && cc <= 27, "fader cc %d", cc); break;
-            case CC_KNOB: knobs++; CHECK(c.strip == cc - 30 && cc >= 30 && cc <= 37, "knob cc %d", cc); break;
-            case CC_MUTE: mutes++; CHECK(c.strip == cc - 40 && cc >= 40 && cc <= 47, "mute cc %d", cc); break;
-            case CC_TRACK_PREV: prev++; CHECK(cc == 58, "prev cc %d", cc); break;
-            case CC_TRACK_NEXT: next++; CHECK(cc == 59, "next cc %d", cc); break;
+            case CC_FADER: faders++; CHECK(cc == kCcFader[c.strip], "fader cc %d", cc); break;
+            case CC_KNOB: knobs++; CHECK(c.strip == cc - 13 && cc >= 13 && cc <= 20, "knob cc %d", cc); break;
+            case CC_MUTE: mutes++; CHECK(c.strip == cc - 21 && cc >= 21 && cc <= 28, "mute cc %d", cc); break;
+            case CC_TRACK_PREV: prev++; CHECK(cc == 60, "prev cc %d", cc); break;
+            case CC_TRACK_NEXT: next++; CHECK(cc == 61, "next cc %d", cc); break;
             default: none++; break;
         }
     }
     CHECK(faders == 8 && knobs == 8 && mutes == 8 && prev == 1 && next == 1 && none == 128 - 26, "counts %d %d %d %d %d %d", faders, knobs, mutes, prev, next, none);
+    // The Studio's own numbers: faders 2 3 4 5 6 8 9 12, knobs 13 to 20, M buttons 21 to 28, TRACK 60 and 61.
+    const uint8_t faderCc[8] = {2, 3, 4, 5, 6, 8, 9, 12};
+    for (uint8_t s = 0; s < 8; s++) CHECK(ccDecode(faderCc[s]).kind == CC_FADER && ccDecode(faderCc[s]).strip == s, "fader %u", s + 1);
+    CHECK(ccDecode(13).kind == CC_KNOB && ccDecode(13).strip == 0 && ccDecode(20).strip == 7 && ccDecode(21).kind == CC_MUTE && ccDecode(21).strip == 0 && ccDecode(28).strip == 7, "knobs and M buttons");
+    CHECK(ccDecode(60).kind == CC_TRACK_PREV && ccDecode(61).kind == CC_TRACK_NEXT, "TRACK");
     // Common controllers on other numbers stay unmapped: the mod wheel, volume, pan, sustain, all notes off.
     for (uint8_t cc : {1, 7, 10, 64, 120, 123}) CHECK(ccDecode(cc).kind == CC_NONE, "cc %u is not mapped", cc);
-    CHECK(kCcChannel == 2 && kCcMaxWindow == 4 && ccColumn(4, 7) == 11 && ccColumn(0, 0) == 0, "channel 3, twelve columns");
+    CHECK(kCcMaxWindow == 4 && ccColumn(4, 7) == 11 && ccColumn(0, 0) == 0, "twelve columns");
 }
 
 static void testScaling() {
@@ -164,17 +169,17 @@ static void testParserFeed() {
     CcTable table;
     auto feed = [&](std::initializer_list<uint8_t> bytes) {
         for (uint8_t b : bytes) {
-            if (midiParse(p, b, e) && (e.type == MIDI_EVENT_CC) && (e.channel == kCcChannel)) table.set(e.data1, e.data2);
+            if (midiParse(p, b, e) && (e.type == MIDI_EVENT_CC)) table.set(e.data1, e.data2);  // any channel
         }
     };
-    feed({0xB2, 20, 64, 20, 66, 0xF8, 20, 70});  // fader 1 on channel 3 in running status, a clock byte in between
+    feed({0xB0, 2, 64, 2, 66, 0xF8, 2, 70});  // fader 1 on channel 1 in running status, a clock byte in between
     uint8_t v = 0;
-    CHECK(table.poll(20, v) && v == 70, "fader 1: latest value %u", v);
-    feed({0xB0, 21, 99});  // channel 1: not ours
-    CHECK(!table.poll(21, v), "other channels are ignored");
-    feed({0xB2, 40, 127, 40, 0});
-    CHECK(table.takePresses(40) == 1, "a button press through the parser");
-    feed({0x92, 36, 100});  // a note on channel 3 does not disturb it
+    CHECK(table.poll(2, v) && v == 70, "fader 1: latest value %u", v);
+    feed({0xB5, 3, 99});  // any channel counts
+    CHECK(table.poll(3, v) && v == 99, "other channels work too");
+    feed({0xB0, 21, 127, 21, 0});
+    CHECK(table.takePresses(21) == 1, "a button press through the parser");
+    feed({0x90, 36, 100});  // a note does not disturb it
     CHECK(!table.poll(36, v), "notes are not controllers");
 }
 

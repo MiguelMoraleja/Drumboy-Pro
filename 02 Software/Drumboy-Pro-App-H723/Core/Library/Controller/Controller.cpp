@@ -1240,10 +1240,10 @@ void Controller::receiveMidiCommand() {
             }
             break;
 
-        // 2b. CONTROL CHANGES on channel 3 (the nanoKONTROL Studio's scene 3): only the latest value of each
-        // controller is kept (MidiCc.h); the main loop applies it once per pass.
+        // 2b. CONTROL CHANGES on any channel (the nanoKONTROL Studio): only the latest value of each controller
+        // is kept (MidiCc.h); the main loop applies it once per pass.
         case MIDI_EVENT_CC:
-            if (event.channel == kCcChannel) io.midi.rxCc.set(event.data1, event.data2);
+            io.midi.rxCc.set(event.data1, event.data2);
             break;
 
         // 3. DRUMBOY SYSEX TRANSPORT COMMANDS
@@ -24784,7 +24784,7 @@ void Controller::midi_serviceCc() {
             CcTakeover& take = (k == 0) ? ccFaderTake[s] : ccKnobTake[s];
             if (ccPendingSet[k][s] && cc_apply(kind, column, ccPendingValue[k][s])) ccPendingSet[k][s] = false;
             uint8_t value;
-            if (!t.poll(static_cast<uint8_t>(((k == 0) ? kCcFaderBase : kCcKnobBase) + s), value)) continue;
+            if (!t.poll((k == 0) ? kCcFader[s] : static_cast<uint8_t>(kCcKnobBase + s), value)) continue;
             const uint8_t scaled = ccTo100(value);
             // While a value waits to be set, the parameter is as good as at that value (for the take-over's check of outside changes).
             const uint8_t current = ccPendingSet[k][s] ? ccPendingValue[k][s] : cc_current(kind, column);

@@ -1,27 +1,25 @@
 # nanoKONTROL Studio on the DUB mixer (V1.20)
 
-The Drumboy reads MIDI **control changes on channel 3** and uses them on the DUB desk. It works on every page, with the DUB mixer ON or OFF, as long as **MIDI IN** is on (any mode). To switch it off, switch MIDI IN off or take the controller off the line; there is no other setting.
+The Drumboy reads MIDI **control changes** (CC) and uses them on the DUB desk. It uses the Studio's **own numbers, as they were read from the unit**, so the Korg Kontrol Editor is not needed. The MIDI channel does not matter: a control change on any channel counts. It works on every page, with the DUB mixer ON or OFF, as long as **MIDI IN** is on (any mode). To switch it off, switch MIDI IN off or take the controller off the line.
 
 ## Connection
 
 The Studio talks USB or Bluetooth and the Drumboy has only a MIDI DIN input, so it needs a bridge:
 
-- **Loopy Pro on the iPad** (the plan): Studio to the iPad over USB, Loopy Pro to the Scarlett's MIDI out, the Scarlett's MIDI out to the Drumboy's MIDI IN. Loopy can filter and rename the messages if needed.
+- **Loopy Pro on the iPad** (the plan): Studio to the iPad over USB, Loopy Pro to the Scarlett's MIDI out, the Scarlett's MIDI out to the Drumboy's MIDI IN. In Loopy, route the Studio's MIDI to the Scarlett's MIDI output and make sure Loopy itself does not act on those controls.
 - **A USB host to DIN box**: the Studio plugged into a small converter that goes to the DIN. It works without the iPad.
 
-## Scene 3 in the Korg Kontrol Editor
-
-MIDI channel **3** for the whole scene. Every control sends a CC number (a button sends 127 when pressed and 0 when released: set it as a momentary button, not a toggle):
+## The controls (the Studio's own CC numbers)
 
 | Studio control | CC |
 |---|---|
-| Fader 1 to 8 | 20 to 27 |
-| Knob 1 to 8 | 30 to 37 |
-| M button 1 to 8 (Mute) | 40 to 47 |
-| TRACK ◀ | 58 |
-| TRACK ▶ | 59 |
+| Fader 1 to 8 | 2, 3, 4, 5, 6, 8, 9, 12 |
+| Knob 1 to 8 | 13 to 20 |
+| M button 1 to 8 (Mute) | 21 to 28 |
+| TRACK ◀ | 60 |
+| TRACK ▶ | 61 |
 
-Everything else on the Studio (S, R, SELECT, the jog wheel, the X-Y pad, the transport) can stay as it is; the Drumboy ignores it. (The transport can follow MIDI start and stop, on the Drumboy's MIDI page.)
+A button counts as pressed when it sends a value of 64 or more (it sends 127 when pressed). Everything else on the Studio (S, R, SELECT, the jog wheel, the X-Y pad, the transport) is ignored by the Drumboy. Other controllers that send these numbers (CC 2 to 6, 8, 9, 12 to 21 to 28, 60, 61) on any channel would act too.
 
 ## What the controls do
 
@@ -41,4 +39,4 @@ A fader does not match the screen after the strips slid, after a song was loaded
 
 ## Later steps
 
-Echo and reverb throws on the S and R buttons, the dub filter and the echo feedback past 100 % on the X-Y pad, and the echo time on the jog wheel need the dub mixer's next step (D2). MIDI learn (move a control, pick a function) and a settable channel can follow.
+Echo and reverb throws on the S and R buttons, the dub filter and the echo feedback past 100 % on the X-Y pad, and the echo time on the jog wheel need the dub mixer's next step (D2). MIDI learn (move a control, pick a function) can follow.

@@ -1,15 +1,16 @@
 // MIDI control change input: the nanoKONTROL Studio (or any controller) on the DUB mixer. Hardware-free so
 // it can be tested on a PC (02 Software/tests, test_midicc); the Controller applies what this decides.
 //
-// The controller sends on MIDI channel 3 (scene 3 of the Studio; the Drumboy's notes keep their own channel).
+// The numbers are the nanoKONTROL Studio's own (read from the unit, no editor needed) and the channel does not
+// matter: a control change on any channel counts (notes keep the channel set on the MIDI page).
 // Eight strips of the Studio control eight of the twelve columns of the dub desk: the ten layers, then the
 // ECHO and the VERB return. TRACK < and > slide the eight strips along the twelve columns.
 //
-//   control            CC       on a layer column          on the ECHO column   on the VERB column
-//   fader 1..8         20..27   LEVEL                      echo WET             reverb WET
-//   knob 1..8          30..37   ECHO send                  echo FEEDBACK        reverb DECAY
-//   M button 1..8      40..47   mute (a press toggles)     -                    -
-//   TRACK <  and  >    58, 59   the strips move one column
+//   control            CC                  on a layer column          on the ECHO column   on the VERB column
+//   fader 1..8         2 3 4 5 6 8 9 12    LEVEL                      echo WET             reverb WET
+//   knob 1..8          13..20              ECHO send                  echo FEEDBACK        reverb DECAY
+//   M button 1..8      21..28              mute (a press toggles)     -                    -
+//   TRACK <  and  >    60, 61              the strips move one column
 //
 // A moving fader sends hundreds of messages a second, and the receive interrupt only keeps the latest
 // value of each controller (CcTable); the main loop applies it once per pass. After the strips moved, or at
@@ -20,12 +21,12 @@
 
 #include <stdint.h>
 
-const uint8_t kCcChannel = 2;       // MIDI channel 3, counted from 0
 const uint8_t kCcStrips = 8;        // the controller's strips
 const uint8_t kCcColumns = 12;      // the desk's columns: ten layers, ECHO, VERB
 const uint8_t kCcMaxWindow = kCcColumns - kCcStrips;
-const uint8_t kCcFaderBase = 20, kCcKnobBase = 30, kCcMuteBase = 40;
-const uint8_t kCcTrackPrev = 58, kCcTrackNext = 59;
+const uint8_t kCcFader[kCcStrips] = {2, 3, 4, 5, 6, 8, 9, 12};  // the faders are not consecutive
+const uint8_t kCcKnobBase = 13, kCcMuteBase = 21;               // knobs 13..20, M buttons 21..28
+const uint8_t kCcTrackPrev = 60, kCcTrackNext = 61;
 
 enum CcKind : uint8_t { CC_NONE = 0, CC_FADER, CC_KNOB, CC_MUTE, CC_TRACK_PREV, CC_TRACK_NEXT };
 
@@ -35,7 +36,9 @@ struct CcControl {
 };
 
 inline CcControl ccDecode(uint8_t cc_) {
-    if ((cc_ >= kCcFaderBase) && (cc_ < kCcFaderBase + kCcStrips)) return CcControl{CC_FADER, static_cast<uint8_t>(cc_ - kCcFaderBase)};
+    for (uint8_t s = 0; s < kCcStrips; s++) {
+        if (cc_ == kCcFader[s]) return CcControl{CC_FADER, s};
+    }
     if ((cc_ >= kCcKnobBase) && (cc_ < kCcKnobBase + kCcStrips)) return CcControl{CC_KNOB, static_cast<uint8_t>(cc_ - kCcKnobBase)};
     if ((cc_ >= kCcMuteBase) && (cc_ < kCcMuteBase + kCcStrips)) return CcControl{CC_MUTE, static_cast<uint8_t>(cc_ - kCcMuteBase)};
     if (cc_ == kCcTrackPrev) return CcControl{CC_TRACK_PREV, 0};

@@ -11,6 +11,13 @@
 //   knob 1..8          13..20              ECHO send                  echo FEEDBACK        reverb DECAY
 //   M button 1..8      21..28              mute (a press toggles)     -                    -
 //   TRACK <  and  >    60, 61              the strips move one column
+//   S button 1..8      29..36 (see below)  ECHO throw while held   -                    -
+//   R button 1..8      37..44 (see below)  VERB throw while held   -                    -
+//   X-Y pad X, Y       45, 46 (see below)  Filter 1 FREQ (X), echo FEEDBACK (Y, past 100 % at the top)
+//   jog wheel          47 (see below)      echo TIME, a step per click
+// The S, R, X-Y and jog numbers (29 to 47) are a first guess that continues the Studio's own run (the owner reads
+// them on the unit and the numbers are corrected at one place, here); the DUB desk shows the last controller
+// message ("CC 37 127") for a few seconds so they can be read off the Drumboy itself.
 //
 // A moving fader sends hundreds of messages a second, and the receive interrupt only keeps the latest
 // value of each controller (CcTable); the main loop applies it once per pass. After the strips moved, or at
@@ -27,8 +34,10 @@ const uint8_t kCcMaxWindow = kCcColumns - kCcStrips;
 const uint8_t kCcFader[kCcStrips] = {2, 3, 4, 5, 6, 8, 9, 12};  // the faders are not consecutive
 const uint8_t kCcKnobBase = 13, kCcMuteBase = 21;               // knobs 13..20, M buttons 21..28
 const uint8_t kCcTrackPrev = 60, kCcTrackNext = 61;
+const uint8_t kCcSoloBase = 29, kCcRecBase = 37;                // S buttons 29..36, R buttons 37..44 (throws)
+const uint8_t kCcPadX = 45, kCcPadY = 46, kCcJog = 47;          // the X-Y pad and the jog wheel
 
-enum CcKind : uint8_t { CC_NONE = 0, CC_FADER, CC_KNOB, CC_MUTE, CC_TRACK_PREV, CC_TRACK_NEXT };
+enum CcKind : uint8_t { CC_NONE = 0, CC_FADER, CC_KNOB, CC_MUTE, CC_TRACK_PREV, CC_TRACK_NEXT, CC_SOLO, CC_REC, CC_PAD_X, CC_PAD_Y, CC_JOG };
 
 struct CcControl {
     CcKind kind;
@@ -43,6 +52,11 @@ inline CcControl ccDecode(uint8_t cc_) {
     if ((cc_ >= kCcMuteBase) && (cc_ < kCcMuteBase + kCcStrips)) return CcControl{CC_MUTE, static_cast<uint8_t>(cc_ - kCcMuteBase)};
     if (cc_ == kCcTrackPrev) return CcControl{CC_TRACK_PREV, 0};
     if (cc_ == kCcTrackNext) return CcControl{CC_TRACK_NEXT, 0};
+    if ((cc_ >= kCcSoloBase) && (cc_ < kCcSoloBase + kCcStrips)) return CcControl{CC_SOLO, static_cast<uint8_t>(cc_ - kCcSoloBase)};
+    if ((cc_ >= kCcRecBase) && (cc_ < kCcRecBase + kCcStrips)) return CcControl{CC_REC, static_cast<uint8_t>(cc_ - kCcRecBase)};
+    if (cc_ == kCcPadX) return CcControl{CC_PAD_X, 0};
+    if (cc_ == kCcPadY) return CcControl{CC_PAD_Y, 0};
+    if (cc_ == kCcJog) return CcControl{CC_JOG, 0};
     return CcControl{CC_NONE, 0};
 }
 
@@ -73,16 +87,24 @@ struct CcTable {
     volatile uint8_t value[128];
     volatile uint16_t seq[128];
     volatile uint8_t presses[128];
+    volatile uint16_t ups[128];    // messages of 1 to 63: a relative control (the jog wheel) turned one way
+    volatile uint16_t downs[128];  // messages of 65 to 127: the other way
     uint16_t seen[128];
     uint8_t pressSeen[128];
+    uint16_t upSeen[128];
+    uint16_t downSeen[128];
 
     CcTable() {
         for (uint8_t i = 0; i < 128; i++) {
             value[i] = 0;
             seq[i] = 0;
             presses[i] = 0;
+            ups[i] = 0;
+            downs[i] = 0;
             seen[i] = 0;
             pressSeen[i] = 0;
+            upSeen[i] = 0;
+            downSeen[i] = 0;
         }
     }
 
@@ -92,6 +114,8 @@ struct CcTable {
         value[cc_] = value_;
         seq[cc_] = static_cast<uint16_t>(seq[cc_] + 1);
         if (value_ >= 64) presses[cc_] = static_cast<uint8_t>(presses[cc_] + 1);
+        if ((value_ >= 1) && (value_ <= 63)) ups[cc_] = static_cast<uint16_t>(ups[cc_] + 1);
+        if ((value_ >= 65) && (value_ <= 127)) downs[cc_] = static_cast<uint16_t>(downs[cc_] + 1);
     }
 
     // From the main loop: true when the controller sent something since the last call, with its latest value.
@@ -103,6 +127,19 @@ struct CcTable {
         seen[cc_ & 127] = s;
         return true;
     }
+
+    // From the main loop: the clicks of a relative control since the last call, one per message (up minus down).
+    int16_t takeRelative(uint8_t cc_) {
+        const uint16_t u = ups[cc_ & 127], d = downs[cc_ & 127];
+        const int32_t n32 = static_cast<int32_t>(static_cast<uint16_t>(u - upSeen[cc_ & 127])) - static_cast<int32_t>(static_cast<uint16_t>(d - downSeen[cc_ & 127]));
+        const int16_t n = static_cast<int16_t>((n32 > 32000) ? 32000 : ((n32 < -32000) ? -32000 : n32));
+        upSeen[cc_ & 127] = u;
+        downSeen[cc_ & 127] = d;
+        return n;
+    }
+
+    // Is a button held now (its last value is 64 or more)?
+    bool held(uint8_t cc_) const { return value[cc_ & 127] >= 64; }
 
     // From the main loop: how many presses came since the last call (a press that came and went between two
     // passes still counts).
@@ -158,6 +195,22 @@ inline bool ccTakeoverStep(CcTakeover& t_, uint8_t scaled_, uint8_t current_) {
         t_.hasApplied = true;
     }
     return t_.engaged;
+}
+
+// The X-Y pad's Y axis as the echo's FEEDBACK. 0 to 80 % of the travel is the echo's normal range (index 0 to
+// kMax, the feedback gain 0 to 0.8); the last fifth adds a boost on top of the largest normal feedback, up to
+// kCcFeedbackBoost, so the loop gain goes past 1 (100 %) at the very top and the echo builds up and
+// self-oscillates (the loop is soft-clipped while the boost is on, so it stays bounded).
+const float kCcFeedbackBoost = 0.35f;
+inline void ccFeedbackFromPad(uint8_t percent_, uint8_t maxIndex_, uint8_t& index_, float& boost_) {
+    const uint8_t p = (percent_ > 100) ? 100 : percent_;
+    if (p <= 80) {
+        index_ = static_cast<uint8_t>((static_cast<uint32_t>(maxIndex_) * p + 40u) / 80u);
+        boost_ = 0.0f;
+    } else {
+        index_ = maxIndex_;
+        boost_ = kCcFeedbackBoost * static_cast<float>(p - 80) / 20.0f;
+    }
 }
 
 // TRACK < and > slide the window along the columns, without wrapping.

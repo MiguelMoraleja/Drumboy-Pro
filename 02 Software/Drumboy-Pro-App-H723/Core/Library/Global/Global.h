@@ -3442,6 +3442,7 @@ struct Delay {
     float time;                                     // Subdivision multiplier
     float level;                                    // Linear input gain
     float feedback;                                 // Linear feedback gain
+    float boost                                     = 0.0f;  // Extra feedback on top (the X-Y pad's top, MidiCc.h): past 1.0 the echo self-oscillates; the loop is soft-clipped while it is on
     float dampingAlpha;                             // Filter coefficient for damping
 
     // --- Buffer & Indices ---
@@ -3468,6 +3469,7 @@ struct Delay {
         fWet = kInitialDelayWet;
 
         // Reset filter and pointer state to deterministic startup values.
+        boost = 0.0f;
         lastFeedbackSample = 0.0f;
         recordInterval = 0;
         playInterval = 0;

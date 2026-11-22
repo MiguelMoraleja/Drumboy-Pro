@@ -1,6 +1,7 @@
 // Host-side tests for the MIDI control change input (Global/MidiCc.h): the CC map, the scaling, the latest-
 // value table, presses, the take-over of faders and the window of strips; and the parser's CC events that feed it.
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -21,7 +22,7 @@ static int failures = 0, checks = 0;
     } while (0)
 
 static void testMap() {
-    int faders = 0, knobs = 0, mutes = 0, prev = 0, next = 0, none = 0;
+    int faders = 0, knobs = 0, mutes = 0, prev = 0, next = 0, none = 0, solos = 0, recs = 0, pads = 0, jogs = 0;
     for (int cc = 0; cc < 128; cc++) {
         const CcControl c = ccDecode(static_cast<uint8_t>(cc));
         switch (c.kind) {
@@ -30,10 +31,15 @@ static void testMap() {
             case CC_MUTE: mutes++; CHECK(c.strip == cc - 21 && cc >= 21 && cc <= 28, "mute cc %d", cc); break;
             case CC_TRACK_PREV: prev++; CHECK(cc == 60, "prev cc %d", cc); break;
             case CC_TRACK_NEXT: next++; CHECK(cc == 61, "next cc %d", cc); break;
+            case CC_SOLO: solos++; CHECK(c.strip == cc - 29 && cc >= 29 && cc <= 36, "S cc %d", cc); break;
+            case CC_REC: recs++; CHECK(c.strip == cc - 37 && cc >= 37 && cc <= 44, "R cc %d", cc); break;
+            case CC_PAD_X: case CC_PAD_Y: pads++; CHECK(cc == 45 || cc == 46, "pad cc %d", cc); break;
+            case CC_JOG: jogs++; CHECK(cc == 47, "jog cc %d", cc); break;
             default: none++; break;
         }
     }
-    CHECK(faders == 8 && knobs == 8 && mutes == 8 && prev == 1 && next == 1 && none == 128 - 26, "counts %d %d %d %d %d %d", faders, knobs, mutes, prev, next, none);
+    CHECK(faders == 8 && knobs == 8 && mutes == 8 && prev == 1 && next == 1 && solos == 8 && recs == 8 && pads == 2 && jogs == 1 && none == 128 - 45, "counts %d %d %d %d %d %d %d %d %d %d", faders, knobs, mutes, prev, next, solos, recs, pads, jogs, none);
+    CHECK(ccDecode(45).kind == CC_PAD_X && ccDecode(46).kind == CC_PAD_Y, "X and Y");
     // The Studio's own numbers: faders 2 3 4 5 6 8 9 12, knobs 13 to 20, M buttons 21 to 28, TRACK 60 and 61.
     const uint8_t faderCc[8] = {2, 3, 4, 5, 6, 8, 9, 12};
     for (uint8_t s = 0; s < 8; s++) CHECK(ccDecode(faderCc[s]).kind == CC_FADER && ccDecode(faderCc[s]).strip == s, "fader %u", s + 1);
@@ -156,6 +162,60 @@ static void testTakeover() {
     }
 }
 
+static void testRelativeAndHeld() {
+    CcTable t;
+    CHECK(t.takeRelative(47) == 0, "nothing");
+    for (int i = 0; i < 3; i++) t.set(47, 1);   // three clicks one way
+    t.set(47, 127);                              // one the other
+    CHECK(t.takeRelative(47) == 2 && t.takeRelative(47) == 0, "3 up, 1 down = +2, then nothing");
+    t.set(47, 127);
+    t.set(47, 126);
+    t.set(47, 65);
+    CHECK(t.takeRelative(47) == -3, "any value from 65 to 127 is one click down");
+    t.set(47, 64);  // the middle: neither
+    t.set(47, 0);
+    CHECK(t.takeRelative(47) == 0, "0 and 64 are no click");
+    for (int i = 0; i < 300; i++) t.set(47, 1);
+    CHECK(t.takeRelative(47) == 300, "300 clicks between two passes are all counted");
+    for (int i = 0; i < 256; i++) t.set(47, 1);
+    CHECK(t.takeRelative(47) == 256, "exactly 256 clicks are not lost");
+    // A held button: its last value is 64 or more.
+    CcTable b;
+    CHECK(!b.held(29), "not held at the start");
+    b.set(29, 127);
+    CHECK(b.held(29), "held");
+    b.set(29, 0);
+    CHECK(!b.held(29), "released");
+}
+
+static void testFeedbackPad() {
+    uint8_t index = 0;
+    float boost = 0.0f;
+    ccFeedbackFromPad(0, 80, index, boost);
+    CHECK(index == 0 && boost == 0.0f, "bottom: no feedback");
+    ccFeedbackFromPad(40, 80, index, boost);
+    CHECK(index == 40 && boost == 0.0f, "half way: index 40 (%u)", index);
+    ccFeedbackFromPad(80, 80, index, boost);
+    CHECK(index == 80 && boost == 0.0f, "80 %% of the travel is the normal maximum");
+    ccFeedbackFromPad(90, 80, index, boost);
+    CHECK(index == 80 && std::fabs(boost - 0.175f) < 1e-5f, "90 %%: half the boost (%f)", boost);
+    ccFeedbackFromPad(100, 80, index, boost);
+    CHECK(index == 80 && std::fabs(boost - kCcFeedbackBoost) < 1e-5f, "the top: the whole boost");
+    ccFeedbackFromPad(255, 80, index, boost);
+    CHECK(index == 80 && boost <= kCcFeedbackBoost, "above 100 is 100");
+    // Monotonic: the total loop gain (index/100 + boost) never goes down as the pad goes up, and passes 1.0 only above the top fifth.
+    float previous = -1.0f;
+    for (int p = 0; p <= 100; p++) {
+        ccFeedbackFromPad(static_cast<uint8_t>(p), 80, index, boost);
+        const float gain = index / 100.0f + boost;
+        CHECK(gain >= previous, "monotonic at %d", p);
+        CHECK(gain <= 0.8f + kCcFeedbackBoost + 1e-5f, "the loop gain never passes %f (%f)", 0.8f + kCcFeedbackBoost, gain);
+        if (p <= 80) CHECK(boost == 0.0f, "no boost up to 80");
+        previous = gain;
+    }
+    CHECK(0.8f + kCcFeedbackBoost > 1.0f, "the top of the pad is past 100 %% loop gain");
+}
+
 static void testWindow() {
     CHECK(ccMoveWindow(0, -1) == 0 && ccMoveWindow(0, 1) == 1 && ccMoveWindow(3, 1) == 4 && ccMoveWindow(4, 1) == 4 && ccMoveWindow(2, -1) == 1 && ccMoveWindow(0, 100) == 4, "the window slides and stops at its ends");
     // The strips cover layers 1-8 at 0, and columns 5-12 (layers 5-10, ECHO, VERB) at 4.
@@ -188,6 +248,8 @@ int main() {
     testScaling();
     testTable();
     testTakeover();
+    testRelativeAndHeld();
+    testFeedbackPad();
     testWindow();
     testParserFeed();
     std::printf("%d checks, %d failures\n", checks, failures);

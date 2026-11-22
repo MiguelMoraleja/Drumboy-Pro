@@ -300,6 +300,13 @@ class Controller {
     bool ccPendingSet[2][kCcStrips];            // a value the setter refused (its mix transition was running) is tried again each pass
     uint8_t ccPendingValue[2][kCcStrips];       // [0] faders, [1] knobs
     uint32_t lfoModTick = 0;
+    volatile uint8_t dubThrow[kDubStrips];      // the throws held on the controller's S and R buttons (THROW_ECHO, THROW_VERB), per layer
+    float dubThrowEnv[kDubStrips][2];           // their smoothed envelopes, stepped once per audio block
+    int16_t ccJogPending = 0;                   // jog clicks not yet applied to the echo time (the setter refuses while a transition runs)
+    uint16_t ccMonitorSeen[128];                // the last controller message shown on the desk (every CC, mapped or not)
+    uint8_t ccLastCc = 0, ccLastValue = 0;
+    uint32_t ccLastMs = 0;
+    uint32_t ccMonitorDrawnKey = 0;
     bool ccSeen = false;                        // the controller has sent something: the desk marks its eight strips
     int8_t ccWindowDrawn = -1;                  // the window the desk's marker shows (-1 = nothing drawn, -2 = no marker)
     bool ccUiDirty = false;                     // something changed through the controller: the DUB page redraws soon

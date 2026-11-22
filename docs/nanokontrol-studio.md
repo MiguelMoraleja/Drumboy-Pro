@@ -37,6 +37,23 @@ The Studio has eight strips and the desk has twelve columns: the ten layers, the
 
 A fader does not match the screen after the strips slid, after a song was loaded, or when the Drumboy starts. So a fader takes over only when it **reaches the value on the screen** (or crosses it): move it towards the value and it takes hold; the level never jumps. If you then change the value another way (the encoder, a loaded song, undo), the fader lets go again until it reaches the new value. The same goes for the knobs.
 
-## Later steps
+## S, R, the X-Y pad and the jog wheel (V1.21)
 
-Echo and reverb throws on the S and R buttons, the dub filter and the echo feedback past 100 % on the X-Y pad, and the echo time on the jog wheel need the dub mixer's next step (D2). MIDI learn (move a control, pick a function) can follow.
+| Control | CC (a first guess, see below) | Does |
+|---|---|---|
+| S button 1 to 8 | 29 to 36 | **echo throw** on the strip: its echo send opens fully while the button is held |
+| R button 1 to 8 | 37 to 44 | **reverb throw** on the strip: its reverb send opens fully while held |
+| X-Y pad, X | 45 | Filter 1 FREQ (the dub filter: strips on the FILT bus go through it) |
+| X-Y pad, Y | 46 | echo FEEDBACK; the top fifth of the pad goes **past 100 %** |
+| Jog wheel | 47 | echo TIME, one step per click (1/8, 1/6, 1/4, 1/3, 1/2, 1/1) |
+
+- The throws open the send smoothly (about 8 ms to open, 54 ms to close), also on a short tap. They need the DUB mixer ON (the sends only exist in DUB mode). They follow the strips when TRACK slides them.
+- **Echo feedback past 100 %:** up to 80 % of the pad's travel is the echo's normal feedback (0 to 80 %). The last fifth adds up to 35 % on top, so the loop gain reaches 115 %: the echo builds up and self-oscillates. While the boost is on, the echo's loop is soft-clipped so it stays bounded; below that, the echo is exactly as before. **Pull the pad down to stop it.** A new song, a loaded song and NEW clear the boost. (Feedback needs Effect 1 on DELAY, which switching the DUB mixer on does.) The echo's feedback value is also set by the pad (it is saved with the song like any change of it).
+- The X-Y pad's X sets Filter 1's cutoff directly (no take-over: it is a performance gesture). Filter 1 must be ON to hear it.
+- The jog wheel is read as clicks: any value from 1 to 63 is one click one way, 65 to 127 one click the other way. If your wheel sends something else, tell me what the DUB desk shows.
+
+**These five numbers (29 to 47) are a guess** that continues the Studio's own run (faders, knobs, M buttons and TRACK were read from your unit). To read the real ones: move a control and look at the **bottom-left corner of the DUB desk**: it shows the last controller message of any number for 3 seconds, for example `CC 37 = 127`. Tell me what each control shows and I'll correct the numbers (they are in one place in the firmware).
+
+## Later
+
+MIDI learn (move a control, pick a function) so no numbers are needed.

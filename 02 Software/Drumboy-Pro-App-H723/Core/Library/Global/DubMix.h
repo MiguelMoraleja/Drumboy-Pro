@@ -57,6 +57,18 @@ inline void dubNodeGains(const DubStrip& s_, uint8_t throws_, float gains_[kRout
     gains_[NODE_FX2] = static_cast<float>(s_.fx > kDubMaxSend ? kDubMaxSend : s_.fx) * inv;
 }
 
+// A throw is smoothed so it does not click: a one-pole envelope stepped once per audio block (32 samples, 0.7 ms).
+// Held, it rises with a time constant of about 2.5 ms (95 % open after 11 blocks, about 8 ms); let go, it falls
+// with about 18 ms (95 % closed after 74 blocks, about 54 ms). The strip's send is then
+// send + (1 - send) x envelope, i.e. the send opens fully with the envelope.
+const float kThrowAttack = 0.25f, kThrowRelease = 0.04f;
+inline void dubThrowStep(float& env_, bool held_) {
+    env_ += ((held_ ? 1.0f : 0.0f) - env_) * (held_ ? kThrowAttack : kThrowRelease);
+    if (env_ < 1.0e-4f) env_ = 0.0f;
+    if (env_ > 0.9999f) env_ = 1.0f;
+}
+inline float dubSendWithThrow(float send_, float env_) { return send_ + (1.0f - send_) * env_; }
+
 // Dry of the effects and the reverb: off in DUB mode (their input is only the sends).
 inline float dubDryScale(bool dubMode_) { return dubMode_ ? 0.0f : 1.0f; }
 

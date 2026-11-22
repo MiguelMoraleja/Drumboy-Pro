@@ -7025,6 +7025,7 @@ void Controller::file_readNotes(const char* fileName_) {
     genClear(genMix);  // and without a GEN block it has no generators and no hiss
     rhythm.quantizeStrength = kQuantizeStrengthDefault;  // and without a QNT block recording snaps fully, as before
     filter[0].lfoFreq = filter[0].lfoReson = filter[1].lfoFreq = filter[1].lfoReson = 0;  // and without an LFD block no LFO is on a filter
+    effect[0].delay.boost = effect[1].delay.boost = 0.0f;  // an echo pushed past 100 % with the X-Y pad is back to its song's feedback
     if (f_open(&sd.file, fileName_, FA_READ) != FR_OK) return;
     uint8_t buffer[kNoteHeaderSize + 64 * kNoteEntrySize];
     UINT got = 0;
@@ -14441,6 +14442,7 @@ void Controller::file_newAction() {
     euclid_resetSettings();
     genClear(genMix);
     filter[0].lfoFreq = filter[0].lfoReson = filter[1].lfoFreq = filter[1].lfoReson = 0;  // a new song has no LFO on a filter
+    effect[0].delay.boost = effect[1].delay.boost = 0.0f;
     chainRestart(songChain, chainPlay);
     songStepSel = 0;
 
@@ -18118,6 +18120,7 @@ void Controller::effect_setType(uint8_t effectNum_, uint8_t type_) {
     if (type_ > kMaxEffectType) return;  // a value from a damaged or newer file would index the effect tables
 
     Effect& effect_ = effect[effectNum_];
+    effect_.delay.boost = 0.0f;  // a boost belongs to the echo it was set on
 
     // 1. TRANSITION GUARD
     // Ignore requests while a previous effect transition is still active.
@@ -18443,7 +18446,11 @@ void Controller::effect_setCData(uint8_t effectNum_, uint8_t subEffectNum_, uint
                 Delay& delay = effect_.delay;
                 subEffect_.cData = cData_;
                 delay.cFeedback = cData_;
-                delay.feedback = kNumberDataLibrary[cData_].stdMultiplier;
+                {
+                    IrqGuard guard;  // the audio interrupt reads the feedback and the boost together
+                    delay.feedback = kNumberDataLibrary[cData_].stdMultiplier;
+                    delay.boost = 0.0f;  // any other change of FEEDBACK (encoder, undo, a kit) ends a boost; the X-Y pad sets it again after
+                }
             } break;
 
             case EF_CHORUS: {  // rate
@@ -23003,6 +23010,7 @@ void Controller::lcd_drawLaneView() {
     fileViewKey = 0;                                                  // and no slot grid
     quantizeViewKey = 0;                                              // and no quantize screen
     ccWindowDrawn = -1;                                               // and no marker of the controller's strips
+    ccMonitorDrawnKey = 0;                                            // and no controller message
     fsDrawnSlot = -1;
     lcd_drawLaneViewData();
 }
@@ -24249,6 +24257,24 @@ void Controller::lcd_drawDubViewData() {
             lcd.fillRect(deskX(ccWindow), kDeskMarkY, (kCcStrips - 1) * kDeskStep + kDeskWidth, 2);
         }
     }
+    // The last message of the MIDI controller, in the corner under the foot plates (3 s): to read a control's CC number.
+    {
+        const bool show = (ccLastMs != 0) && ((HAL_GetTick() - ccLastMs) < 3000);
+        const uint32_t monitorKey = show ? (1u | (static_cast<uint32_t>(ccLastCc) << 8) | (static_cast<uint32_t>(ccLastValue) << 16)) : 0u;
+        if (monitorKey != ccMonitorDrawnKey) {
+            ccMonitorDrawnKey = monitorKey;
+            lcd.setBackColor(BLACK);
+            lcd.clearRect(kDeskX, kDeskMonitorY, 160, 7);
+            if (show) {
+                char text[24];
+                snprintf(text, sizeof text, "CC %u = %u", static_cast<unsigned>(ccLastCc), static_cast<unsigned>(ccLastValue));
+                lcd.setFont(FONT_05x07);
+                lcd.setAlignment(LEFT);
+                lcd.setForeColor(GRAY_75);
+                lcd.drawText(text, static_cast<uint16_t>(strlen(text)), kDeskX, kDeskMonitorY);
+            }
+        }
+    }
     const Effect& echo = effect[0];
     for (uint8_t col = 0; col < kDeskColumns; col++) {
         uint32_t fp = 2166136261u;
@@ -24903,6 +24929,66 @@ void Controller::midi_serviceCc() {
             ccPendingValue[k][s] = scaled;
         }
     }
+
+    // 4b. THE THROWS: S = the strip's echo send fully open, R = its reverb send, while held (the DUB mixer must be ON)
+    {
+        uint8_t want[kDubStrips] = {0};
+        for (uint8_t s = 0; s < kCcStrips; s++) {
+            const uint8_t column = ccColumn(ccWindow, s);
+            if ((column >= kDubStrips) || !io.midi.rxActive) continue;  // with MIDI IN off nothing is held: a lost release cannot leave a send open
+            if (t.held(static_cast<uint8_t>(kCcSoloBase + s))) want[column] |= THROW_ECHO;
+            if (t.held(static_cast<uint8_t>(kCcRecBase + s))) want[column] |= THROW_VERB;
+        }
+        for (uint8_t i = 0; i < kDubStrips; i++) dubThrow[i] = want[i];
+    }
+
+    // 4c. THE X-Y PAD: X is Filter 1's FREQ (the dub filter), Y the echo's FEEDBACK, past 100 % at the top
+    {
+        uint8_t value;
+        if (t.poll(kCcPadX, value)) {
+            filter_setFrequency(0, static_cast<uint8_t>((static_cast<uint32_t>(value > 127 ? 127 : value) * kMaxFilterFrequency + 63u) / 127u));
+            ccUiDirty = true;
+        }
+        if (t.poll(kCcPadY, value) && (effect[0].type == EF_DELAY)) {
+            uint8_t index;
+            float boost;
+            ccFeedbackFromPad(ccTo100(value), kMaxDelayFeedback, index, boost);
+            effect_setCData(0, EF_DELAY, index);  // (this clears a boost: the encoder, undo and a kit load must not keep one)
+            effect[0].delay.boost = boost;
+            ccUiDirty = true;
+        }
+    }
+
+    // 4d. THE JOG WHEEL: the echo's TIME, a step per click (a step the setter refuses, while a transition runs, waits)
+    {
+        const int16_t clicks = t.takeRelative(kCcJog);
+        ccJogPending = (effect[0].type == EF_DELAY) ? static_cast<int16_t>(ccJogPending + clicks) : static_cast<int16_t>(0);  // clicks with another effect on are dropped, not saved up
+        if (ccJogPending > 6) ccJogPending = 6;
+        if (ccJogPending < -6) ccJogPending = -6;
+        if ((ccJogPending != 0) && (effect[0].type == EF_DELAY)) {
+            const uint8_t current = effect[0].subEffect[EF_DELAY].aData;
+            const int next = static_cast<int>(current) + ((ccJogPending > 0) ? 1 : -1);
+            if ((next >= kMinDelayTime) && (next <= kMaxDelayTime)) {
+                effect_setAData(0, EF_DELAY, static_cast<uint8_t>(next));
+                if (effect[0].subEffect[EF_DELAY].aData != current) ccJogPending = static_cast<int16_t>(ccJogPending + ((ccJogPending > 0) ? -1 : 1));
+                ccUiDirty = true;
+            } else {
+                ccJogPending = 0;  // at the end of the range
+            }
+        }
+    }
+
+    // 4e. THE MONITOR: the last controller message of any number, shown on the DUB desk for a few seconds
+    for (uint8_t cc = 0; cc < 128; cc++) {
+        if (t.seq[cc] != ccMonitorSeen[cc]) {
+            ccMonitorSeen[cc] = t.seq[cc];
+            ccLastCc = cc;
+            ccLastValue = t.value[cc];
+            ccLastMs = HAL_GetTick();
+            if (menu == DUB_MENU) ccUiDirty = true;  // the monitor is on the DUB desk only: other pages are not redrawn for it
+        }
+    }
+    if ((ccMonitorDrawnKey != 0) && ((HAL_GetTick() - ccLastMs) >= 3000) && (menu == DUB_MENU)) ccUiDirty = true;  // it expires
 
     // 5. THE SCREEN: the DUB page's fields and its desk follow, at most every 40 ms
     if (ccUiDirty && ((HAL_GetTick() - ccUiMs) >= 40)) {
@@ -27624,8 +27710,14 @@ void Controller::processAudioRouting() {
         }
         panGain[i][0] = panCacheGain[i][0];
         panGain[i][1] = panCacheGain[i][1];
+        // A throw (S and R buttons of the controller) opens the strip's echo or reverb send fully while held, smoothed.
+        const uint8_t heldThrows = dubThrow[i];
+        dubThrowStep(dubThrowEnv[i][0], (heldThrows & THROW_ECHO) != 0);
+        dubThrowStep(dubThrowEnv[i][1], (heldThrows & THROW_VERB) != 0);
         if (dubMix.on) {
             dubNodeGains(dubMix.strip[i], 0, dubGains[i]);
+            dubGains[i][NODE_F2] = dubSendWithThrow(dubGains[i][NODE_F2], dubThrowEnv[i][0]);
+            dubGains[i][NODE_REV] = dubSendWithThrow(dubGains[i][NODE_REV], dubThrowEnv[i][1]);
             sources[2 + i] = {audioLayer[i], 0, nullptr, dubGains[i], stereoDsp.srcGain[i], panGain[i][0], panGain[i][1], stereoDsp.layerStereo[i] ? stereoDsp.layerR[i] : nullptr};
         } else {
             sources[2 + i] = {audioLayer[i], routeMaskFromEntry(layerPlayData[i].activeBeatPlayData.mixerInMode), nullptr, nullptr, stereoDsp.srcGain[i], panGain[i][0], panGain[i][1], stereoDsp.layerStereo[i] ? stereoDsp.layerR[i] : nullptr};
@@ -28060,11 +28152,13 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // left one and everything below is as before.
                 const float width = (effectNum_ == 0) ? pingWidth : 0.0f;
                 float rightSample = delayedSample;
-                if (width > 0.0f) rightSample = pingPongRight(delayedSample, delayBuf[pingPongSecondIndex(pIdx, delay_.lag, kDelaySize)], width, delay_.feedback);
+                const float loopGain = delay_.feedback + delay_.boost;  // boost: the X-Y pad's top, past 1.0 (MidiCc.h)
+                if (width > 0.0f) rightSample = pingPongRight(delayedSample, delayBuf[pingPongSecondIndex(pIdx, delay_.lag, kDelaySize)], width, loopGain);
 
                 // --- DAMPING FILTER (Feedback Loop) ---
                 // This one-pole filter softens the repeats.
-                float feedbackTarget = (input * delay_.level) + (rightSample * delay_.feedback);
+                float feedbackTarget = (input * delay_.level) + (rightSample * loopGain);
+                if (delay_.boost > 0.0f) feedbackTarget = softKneeClip(feedbackTarget);  // only while boosted: the loop stays bounded when its gain passes 1, and the normal echo is untouched
                 float filteredFeedback = delay_.lastFeedbackSample + delay_.dampingAlpha * (feedbackTarget - delay_.lastFeedbackSample);
 
                 // Update filter state for next sample

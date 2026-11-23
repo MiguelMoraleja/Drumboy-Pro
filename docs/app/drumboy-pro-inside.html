@@ -524,7 +524,7 @@ table.rel td.new { min-width: 280px; }
         </div>
         <div class="panel keys">
           <h3>On the device</h3>
-          <div class="k"><span class="keycap">⁘</span><div><b>Tap the SONG key</b> on its own (bottom right, the one you hold with the pads to pick a bank): the SONG page. Tap it there to turn the chain on or off (CHAIN).</div></div>
+          <div class="k"><span class="keycap">⁘</span><div><b>Tap the SONG key</b> on its own (bottom right, the one you hold with the pads to pick a bank): the SONG page. Turn the CHAIN field to switch the chain on or off. <b>Tap SONG again</b> (V1.21): the PERFORM page, for playing live: the bar and beat, the tempo, the chain, and a tile for each layer with its state (MUTE, SOLO), its pattern and its level. A layer pad mutes and unmutes its layer. Fields: TEMPO, BANK, STEP, REPEATS, FILL (the FILL condition held while the page is open) and UNDO (turn left to undo, right to redo). Tap SONG once more to go back to the chain.</div></div>
           <div class="k"><span class="keycap">↻</span><div><b>Fields:</b> STEP picks the step to edit, BANK and REPEATS set it, LENGTH adds or removes steps at the end (a new step copies the last one), END is LOOP or STOP, CHAIN ON/OFF.</div></div>
           <div class="k"><span class="keycap">⁘+</span><div><b>Picking a bank by hand</b> (SONG + pads) never turns the chain off. A bank the chain uses: the chain jumps to its step (from the loop end while playing). Any other bank plays one loop as a detour, then the chain goes on from where it was; the detour doesn't count as a repeat. Picked while stopped, it plays first. (V1.14; before, a bank outside the chain turned it off.)</div></div>
           <div class="k"><span class="keycap">⧉</span><div><b>Copy a whole bank:</b> on the SONG page hold COPY (all 10 layers of the active bank, beats and fills), pick another bank with SONG + pads, hold PASTE. Works while playing; the per-layer copy on the song page is unchanged.</div></div>
@@ -1173,58 +1173,58 @@ const IDEAS = [
       });
       P.text("127", 74, 216, 5, LC.G50, "R", null); P.text("100", 74, 362, 5, LC.G50, "R", null);
     } },
-  { id: "perform", group: 0, name: "Performance", item: "45", size: "M", today: false,
+  { id: "perform", group: 0, name: "Performance", item: "45", size: "M", today: false, built: "V1.21",
     note: ["",
-           "Proposal (not built): a page for playing live. While it is open the lane area shows what a performer needs at arm's length. At the top, the bar and beat as big digits, the tempo, and the chain: the playing step lit and filled up to the loop, with what comes next. Below, one tile per layer: its number, name and state in big letters (MUTE red, SOLO yellow, a layer silenced by a solo grey), its 16-step pattern with the playhead, and a live level bar. The big digits need one new routine, the firmware's 10x14 glyphs drawn with every pixel as a 3x3 block (a few lines, no new font). Same pattern as the other screens: the numbers in a hardware-free header with a host test, the drawing in a header-only template with a test on a pixel buffer. Nothing new is computed in the audio code: it reads the mute and solo flags, the playhead, the chain state and the layer meters that already exist. Where the page lives is open (a second step of the SONG key, or after DUB in the MIXER cycle)."],
+           "Built in V1.21 (waiting for the hardware test), as the second step of the SONG key: tap SONG for the chain page, tap it again for this page, again to go back (the chain is turned on and off by the CHAIN field of the chain page). The lane area shows what a performer needs at arm's length. At the top, the bar and the beat and the tempo as big seven-segment digits, and the chain: the playing step lit and filled up to the loop, with what comes next. Below, one tile per layer: its number and name, its state in big letters (MUTE red, SOLO yellow, a layer silenced by a solo grey), its 16-step pattern with the playhead, and a live level bar. A layer pad mutes and unmutes its layer (it does not play the sound). Fields: TEMPO, BANK (as SONG with a pad), STEP and REPEATS of the chain, FILL (turn right: the FILL condition holds as if the F key were held, until you turn it left or leave the page) and UNDO (turn left to undo, right to redo; it shows how many steps can be undone). Reads only flags and meters that already exist: nothing changed in the audio code."],
     draw() {
-      mMenu("PF", 6);
-      mField(0, "TEMPO", "120.0"); mField(1, "BANK", "2");
-      mField(4, "STEP", "   2 OF  4"); mField(5, "REPEATS", "2"); mField(6, "FILL", "OFF"); mField(7, "UNDO", "3");
+      mMenu("SG", 6);
+      mField(0, "TEMPO", "120"); mField(1, "BANK", "2");
+      mField(4, "STEP", "   2 OF  4"); mField(5, "REPEATS", "2X".padStart(10)); mField(6, "FILL", "OFF".padStart(10)); mField(7, "UNDO", "3");
+      P.rect(493, 30, 325, 60, LC.K);
+      P.text("PAD: MUTE", 494, 32, 7, LC.G75); P.text("SONG: CHAIN PAGE", 494, 43, 7, LC.G75);
       mBig();
-      // --- the top band: bar, tempo, chain
-      P.text("BAR", 30, 138, 7, LC.G75); P.big("03", 30, 150, 3, LC.W);
-      P.text("BEAT 2 OF 4", 30, 196, 5, LC.G75);
-      P.rect(178, 140, 1, 62, LC.G25);
-      P.text("TEMPO", 194, 138, 7, LC.G75); P.big("120", 194, 150, 3, LC.W); P.text("BPM", 194, 196, 5, LC.G75);
-      P.rect(376, 140, 1, 62, LC.G25);
-      P.text("CHAIN", 392, 138, 7, LC.G75); P.text("STEP 2 OF 4   LOOP 1 OF 2", 462, 138, 7, LC.CY);
+      // Same numbers as the firmware (PerformView.h, PerformScreens.h).
+      const RED = "#ff0000";
+      const seg7 = (n, x, y, c, off = "#101010") => {
+        const T = 6, W = 28, H = 46, M = y + (H - T) / 2, S = [0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F][n];
+        const seg = [[x + T, y, W - 2 * T, T], [x + W - T, y + T, T, (H - 3 * T) / 2 | 0], [x + W - T, M + T, T, (H - 3 * T) / 2 | 0], [x + T, y + H - T, W - 2 * T, T], [x, M + T, T, (H - 3 * T) / 2 | 0], [x, y + T, T, (H - 3 * T) / 2 | 0], [x + T, M, W - 2 * T, T]];
+        seg.forEach((s, k) => P.rect(s[0], s[1], s[2], s[3], S & (1 << k) ? c : off));
+      };
+      const num = (v, x, y, d, c) => { for (let k = 0; k < d; k++) seg7(Math.floor(v / Math.pow(10, d - 1 - k)) % 10, x + k * 36, y, c); };
+      P.text("BAR", 30, 136, 7, LC.G75); num(3, 30, 150, 2, LC.W); P.text("BEAT 2 OF 4  BAR 4", 30, 202, 5, LC.G75);
+      P.rect(162, 138, 1, 68, LC.G25);
+      P.text("TEMPO", 176, 136, 7, LC.G75); num(120, 176, 150, 3, LC.W); P.text("BPM", 176 + 3 * 36 + 4, 189, 5, LC.G75);
+      P.rect(332, 138, 1, 68, LC.G25);
+      P.text("CHAIN", 346, 136, 7, LC.G75); P.text("STEP 2 OF 4   LOOP 1 OF 2", 416, 136, 7, LC.CY);
       const steps = [[1, 4], [2, 2], [1, 4], [3, 2]], unit = 40;
-      let cx = 392;
+      let cx = 346;
       steps.forEach(([bank, rep], k) => {
-        const w = rep * unit - 4, c = k === 1 ? LC.CY : LC.G75;
-        if (k === 1) P.rect(cx, 156, unit - 3, 34, LC.G35);
+        const w = rep * unit - 3, c = k === 1 ? LC.CY : LC.G75;
+        if (k === 1) P.rect(cx, 156, unit - 3, 34, LC.G25);
         P.frame(cx, 156, w, 34, c);
-        for (let j = 1; j < rep; j++) for (let y = 160; y < 188; y += 3) P.rect(cx + j * unit - 3, y, 1, 1, c);
-        P.text(String(bank), cx + 6, 163, 10, c, "L", null);
+        P.text(String(bank), cx + 6, 166, 10, c, "L", null);
         cx += rep * unit;
       });
-      P.rect(392, 198, 540 - 140, 1, LC.G50);
-      P.text("NEXT: STEP 3  BANK 1", 392, 204, 5, LC.G50);
-      P.rect(21, 214, 918, 1, LC.G25);
+      P.text("NEXT: STEP 3  BANK 1", 346, 202, 5, LC.G50);
+      P.rect(24, 212, 912, 1, LC.G25);
       // --- one tile per layer
-      const muted = [3, 6], solo = [], pos = 6, hits = EUC.map(([n, k, r]) => euclidHits(n, k, r));
+      const muted = [3, 6], pos = 6, hits = EUC.map(([n, k, r]) => euclidHits(n, k, r));
       const peak = [78, 60, 44, 0, 52, 30, 0, 38, 22, 66];
       for (let i = 0; i < 10; i++) {
-        const x = 24 + i * 92, w = 88, isMute = muted.includes(i), isSolo = solo.includes(i);
-        const state = isMute ? "MUTE" : isSolo ? "SOLO" : "ON", sc = isMute ? LC.RE : isSolo ? LC.YE : LC.GN;
-        const dim = isMute;
-        P.frame(x, 220, w, 214, dim ? LC.G25 : LC.G50);
-        P.big(String(i + 1).padStart(2, "0"), x + 6, 226, 2, dim ? LC.G35 : LC.W);
-        P.text(LAYER_NAMES[i].slice(0, 9), x + 6, 258, 7, dim ? LC.G35 : LC.G75);
-        P.rect(x + 6, 274, w - 12, 30, isMute || isSolo ? sc : LC.K);
-        if (!isMute && !isSolo) P.frame(x + 6, 274, w - 12, 30, LC.G35);
-        P.text(state, x + w / 2, 282, 10, isMute || isSolo ? LC.K : LC.GN, "C", isMute || isSolo ? sc : LC.K);
-        // pattern: 16 steps, hits filled, the playhead outlined
+        const x = 24 + i * 92, w = 88, isMute = muted.includes(i), dim = isMute;
+        P.frame(x, 218, w, 216, dim ? LC.G25 : LC.G50);
+        P.text(String(i + 1).padStart(2, "0"), x + 6, 224, 10, dim ? LC.G50 : LC.W);
+        P.text(LAYER_NAMES[i].slice(0, 9), x + 6, 244, 7, dim ? LC.G50 : LC.G75);
+        if (isMute) { P.rect(x + 6, 262, w - 12, 30, RED); P.text("MUTE", x + w / 2, 270, 10, LC.W, "C", RED); }
+        else { P.frame(x + 6, 262, w - 12, 30, LC.G25); P.text("ON", x + w / 2, 270, 10, LC.GN, "C"); }
         const n = EUC[i][0];
         for (let s = 0; s < 16; s++) {
-          const on = hits[i].includes(s % n), sx = x + 6 + s * 5, here = s === pos;
-          P.rect(sx, 312, 4, 6, on ? (dim ? LC.G35 : LC.CY) : LC.G25);
-          if (here) P.rect(sx, 320, 4, 2, LC.YE);
+          const on = hits[i].includes(s % n), sx = x + 4 + s * 5;
+          P.rect(sx, 302, 4, 6, on ? (dim ? LC.G50 : LC.CY) : LC.G25);
+          if (s === pos) P.rect(sx, 310, 4, 2, LC.YE);
         }
-        // level bar
-        const bh = isMute ? 0 : Math.round(peak[i] * 100 / 100);
-        P.rect(x + w / 2 - 10, 330, 20, 100, LC.G25);
-        for (let k = 0; k < 13; k++) { const lit = k < Math.ceil(bh * 13 / 100); P.rect(x + w / 2 - 10, 430 - (k + 1) * 7.6, 20, 5, lit ? (k < 9 ? LC.GN : k < 12 ? LC.YE : LC.RE) : LC.G25); }
+        const lit = isMute ? 0 : Math.ceil(peak[i] * 13 / 100);
+        for (let k = 0; k < 13; k++) P.rect(x + (w - 20) / 2, 322 + (12 - k) * 8, 20, 6, k < lit ? (k < 9 ? LC.GN : k < 12 ? LC.YE : LC.RE) : LC.G25);
       }
     } },
 ];
@@ -2473,6 +2473,7 @@ function sgSetup() {
 const RELEASES = [
   { v: "V1.21", date: "2026-11-22", status: "Testing, not published", pub: false,
     nw: ["DUB desk, LINE IN channel (backlog 70): a thirteenth column after VERB. Its fader is the line-in volume (20 steps of 1 dB), its two knobs the BUS (FILT or DIR) and the ECHO and VERB sends of the line-in, with a mute and a signal light of its own. The DUB page 2 has STRIP (turn to the L strip) and LINE MUTE; the nanoKONTROL moves along 13 columns (fader = volume, knob = echo send, M = mute). Saved in a new LIN block after the LFD block; older songs have the line-in on FILT with no sends, as before. The columns are 70 px wide now to make room.",
+         "The PERFORM page (backlog 45): tap SONG on the SONG page for a live page: the bar and beat and the tempo as big seven-segment digits, the chain, and a tile for each layer with MUTE and SOLO in big letters, its 16-step pattern with the playhead and a level bar. A pad mutes its layer. Fields TEMPO, BANK, STEP, REPEATS, FILL (the FILL condition held while the page is open) and UNDO. Note: the tap that used to turn the chain on or off on the SONG page now opens this page; the CHAIN field does the on and off.",
          "The LFO on a filter shows its work: while it moves FREQ or RESONANCE, the field (and its HZ or KHZ unit) shows the value the LFO gives now, in yellow, like the layer's LFO values; the set value comes back in white when the sequencer stops or the LFO is taken off.",
          "The signal lights of the ECHO and VERB returns work (they read the output of the echo and the reverb).",
          "Hard-hitting returns: in DUB mode the echo takes its input at full level (the hidden LEVEL of 50 % was 6 dB of loss) and the reverb output gets +12 dB (a drum hit came back at only -11 dB at WET 100 %). Only DUB mode; CHAIN sounds as before.",

@@ -1764,6 +1764,9 @@ void Controller::keyboard_action() {
                             ledLayerSelectData = 0x03 << (selectedEncoderBank * 2);
                         } else if (preview_padReplay(layerNum)) {
                             // Browsing samples: the pad replays the preview, not the loaded sample.
+                        } else if ((menu == SONG_MENU) && (songPage == 1)) {
+                            // The PERFORM page: a pad toggles its layer's MUTE (the pad does not play the sound).
+                            layerInst_setMute(layerNum, !layerLibrary[layerNum].mute);
                         } else {
                             if ((menu == DUB_MENU) && (dubStripSel != layerNum)) {
                                 dubStripSel = layerNum;  // the DUB page edits the strip of the pad just pressed
@@ -2890,10 +2893,12 @@ void Controller::keyboard_action() {
                                         ledLayerSelectData = 0x00;
                                         break;
                                 }
-                                // Tapped on its own (no pad pressed while held): the SONG page; on
-                                // the SONG page a tap turns chain play on or off.
+                                // Tapped on its own (no pad pressed while held): the SONG page; on the SONG
+                                // page a tap goes to the PERFORM page and back (the chain is turned on and off
+                                // by the CHAIN field of the SONG page).
                                 if (!songKeyUsed && !alertFlag) {
-                                    (menu == SONG_MENU) ? song_setActive(!songChain.active) : song_select();
+                                    if (menu == SONG_MENU) song_togglePage();
+                                    else song_select();
                                 }
                                 break;
 
@@ -3493,6 +3498,7 @@ void Controller::encoder_update() {
             enc.function = encoderLocalFunction[menuSafe][i];
             if ((menuSafe == DUB_MENU) && (dubPage == 1)) enc.function = kDubPage2Function[i];
             if ((menuSafe == DUB_MENU) && (dubPage == kDubPageHiss)) enc.function = kDubPage3Function[i];
+            if ((menuSafe == SONG_MENU) && (songPage == 1)) enc.function = kPerfFunction[i];
         }
 
         // 2. COUNTER STATE RESET
@@ -4311,13 +4317,20 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, true);
             break;
 
+        case ENC_PERF_TEMPO:
+        case ENC_PERF_BANK:
+        case ENC_PERF_FILL:
+        case ENC_PERF_UNDO:
+            perf_step(encoder[encoderNum_].function, true);
+            break;
+
         case ENC_CHAIN_STEP:
         case ENC_CHAIN_BANK:
         case ENC_CHAIN_REPEATS:
         case ENC_CHAIN_LENGTH:
         case ENC_CHAIN_END:
         case ENC_CHAIN_PLAY:
-            song_step(encoder[encoderNum_].function, true);
+            (songPage == 1) ? perf_step(encoder[encoderNum_].function, true) : song_step(encoder[encoderNum_].function, true);
             break;
 
         default:
@@ -4963,13 +4976,20 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, false);
             break;
 
+        case ENC_PERF_TEMPO:
+        case ENC_PERF_BANK:
+        case ENC_PERF_FILL:
+        case ENC_PERF_UNDO:
+            perf_step(encoder[encoderNum_].function, false);
+            break;
+
         case ENC_CHAIN_STEP:
         case ENC_CHAIN_BANK:
         case ENC_CHAIN_REPEATS:
         case ENC_CHAIN_LENGTH:
         case ENC_CHAIN_END:
         case ENC_CHAIN_PLAY:
-            song_step(encoder[encoderNum_].function, false);
+            (songPage == 1) ? perf_step(encoder[encoderNum_].function, false) : song_step(encoder[encoderNum_].function, false);
             break;
 
         default:
@@ -22636,6 +22656,7 @@ void Controller::song_select() {
     preMenuTab = menuTab;
     menuTab = -1;  // every field has its own encoder
     menu = SONG_MENU;
+    songPage = 0;  // always the chain first; a second tap of the SONG key is the PERFORM page
     preMenuLayerClear();
     if (songStepSel >= songChain.count) songStepSel = 0;
     lcd_transitionMenu();
@@ -22824,7 +22845,7 @@ void Controller::song_step(EncoderFunc function_, bool up_) {
         song_setActive(!songChain.active);
         return;
     }
-    lcd_drawSong_Data();
+    lcd_drawSong_Data();      // (on the PERFORM page these draw its own values)
     lcd_drawSongOverview();
 }
 
@@ -22833,6 +22854,10 @@ static const uint8_t kSongTab[6] = {0, 1, 4, 5, 6, 7};
 
 void Controller::lcd_drawSongMenu() {
     /// @brief Draws the SONG page: the selected step's settings, the chain and where it is.
+    if (songPage == 1) {
+        lcd_drawPerformMenu();
+        return;
+    }
     lcd_drawMenuIcon(SONG_MENU);
     lcd_setMenuHeaderState(CYAN);
     lcd.clearRect(kMenuNumX, kMenuNumY, 7, 9);
@@ -22849,6 +22874,10 @@ void Controller::lcd_drawSongMenu() {
 
 void Controller::lcd_drawSong_Data() {
     /// @brief Draws the SONG page field values.
+    if (songPage == 1) {
+        lcd_drawPerform_Data();
+        return;
+    }
     if (songStepSel >= songChain.count) songStepSel = 0;
     const ChainStep& st = songChain.steps[songStepSel];
     char text[6][24];
@@ -22867,6 +22896,10 @@ void Controller::lcd_drawSong_Data() {
 void Controller::lcd_drawSongOverview() {
     /// @brief Draws the chain in the top-right area: up to 7 steps per line as BANKxREPEATS, the
     /// selected step in cyan and the step playing now in yellow, and the position below.
+    if (songPage == 1) {  // the PERFORM page has its own view: nothing in this corner
+        viewDirty = true;
+        return;
+    }
     const uint16_t kX = 494, kY = 32, kLineStep = 11, kAreaX = 493, kAreaY = 30, kAreaW = 325, kAreaH = 60;
     const uint16_t kCell = 5 * 9;  // 5 characters of the 7x9 font
     lcd.setBackColor(BLACK);
@@ -23059,6 +23092,7 @@ void Controller::lcd_drawLaneView() {
     hissViewKey = 0;                                                  // and no HISS page
     fileViewKey = 0;                                                  // and no slot grid
     quantizeViewKey = 0;                                              // and no quantize screen
+    perfViewKey = 0;                                                  // and no PERFORM page
     ccWindowDrawn = -1;                                               // and no marker of the controller's strips
     ccMonitorDrawnKey = 0;                                            // and no controller message
     fsDrawnSlot = -1;
@@ -23075,7 +23109,7 @@ void Controller::lcd_drawLaneViewData() {
             lcd_drawEuclidViewData();
             break;
         case SONG_MENU:
-            lcd_drawSongViewData();
+            (songPage == 1) ? lcd_drawPerformViewData() : lcd_drawSongViewData();
             break;
         case ROUTING_MENU:
             lcd_drawRoutingViewData();
@@ -23202,6 +23236,7 @@ void Controller::lcd_drawEuclidViewData() {
 void Controller::lcd_updateLaneView() {
     /// @brief Main loop: keeps the open page's full-area view current (redrawn at most every 80 ms
     /// while knobs turn), moves its playhead, and gives the lanes back when such a page was left.
+    if (perfFillLatch && !((menu == SONG_MENU) && (songPage == 1))) perfFillLatch = false;  // the PERFORM page's FILL lasts while the page is open
     if (!laneViewHidden()) {
         if (laneViewShown != INIT_MENU) lcd_restoreLanes();
         return;
@@ -23214,6 +23249,7 @@ void Controller::lcd_updateLaneView() {
     if ((menu == NOTE_MENU) && (noteViewState() != noteViewStateDrawn)) viewDirty = true;
     if (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (fileViewState() != fileViewStateDrawn)) viewDirty = true;
     if ((menu == RHYTHM_MENU) && (quantizeViewState() != quantizeViewStateDrawn)) viewDirty = true;
+    if ((menu == SONG_MENU) && (songPage == 1) && (perfViewState() != perfViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -23222,7 +23258,7 @@ void Controller::lcd_updateLaneView() {
     if (menu == EUCLID_MENU) {
         lcd_drawEuclidViewPlay();
     } else if (menu == SONG_MENU) {
-        lcd_drawSongViewPlay();
+        (songPage == 1) ? lcd_drawPerformPlay() : lcd_drawSongViewPlay();
     }
 }
 
@@ -24493,6 +24529,220 @@ void Controller::lcd_drawQuantizeViewData() {
     quantizeViewKey = quantizeViewStateDrawn;
     GsLcd g{lcd};
     qsDrawScreen(g, QsInput{rhythm.quantize, rhythm.quantizeStrength, menuTab == 4});
+}
+
+/* PERFORM: the second step of the SONG key (PerformView.h, PerformScreens.h) ------------------------*/
+
+static PfChain perfBuildChain(const SongChain& sc_, const ChainPlay& cp_, uint8_t sel_) {
+    /// @brief The chain as the top band shows it: the playing step while the chain is on, the selected one otherwise.
+    PfChain c;
+    memset(&c, 0, sizeof c);
+    c.count = (sc_.count > kPfMaxSteps) ? kPfMaxSteps : sc_.count;
+    for (uint8_t i = 0; i < c.count; i++) {
+        c.bank[i] = sc_.steps[i].bank;
+        c.repeats[i] = sc_.steps[i].repeats;
+    }
+    c.active = sc_.active;
+    c.loop = sc_.loop;
+    c.step = sc_.active ? cp_.step : sel_;
+    if (c.step >= c.count) c.step = 0;
+    c.loopsDone = sc_.active ? cp_.loopsDone : 0;
+    return c;
+}
+
+void Controller::song_togglePage() {
+    /// @brief The SONG key tapped again on the SONG page: the PERFORM page, and back to the chain.
+    songPage = songPage ? 0 : 1;
+    perfViewKey = 0;
+    viewFull = true;  // the other page's view replaces this one
+    lcd_drawSongMenu();
+    encoder_update();
+}
+
+void Controller::lcd_drawPerformMenu() {
+    /// @brief The PERFORM page's fields: TEMPO and BANK on the top row, STEP, REPEATS, FILL and UNDO on the bottom row.
+    lcd_drawMenuIcon(SONG_MENU);
+    lcd_setMenuHeaderState(CYAN);
+    lcd.clearRect(kMenuNumX, kMenuNumY, 7, 9);
+    static const uint8_t kTab[6] = {0, 1, 4, 5, 6, 7};
+    static const EncoderFunc kFn[6] = {ENC_PERF_TEMPO, ENC_PERF_BANK, ENC_CHAIN_STEP, ENC_CHAIN_REPEATS, ENC_PERF_FILL, ENC_PERF_UNDO};
+    for (uint8_t f = 0; f < 6; f++) {
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[kFn[f]].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[kTab[f]], kMenuHeaderY[kTab[f]]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[kTab[f]], kMenuSignBoxY[kTab[f]]);
+    }
+    // The corner of tabs 2 and 3: what the pads do here.
+    lcd.setBackColor(BLACK);
+    lcd.clearRect(493, 30, 325, 60);
+    lcd.setFont(FONT_07x09);
+    lcd.setAlignment(LEFT);
+    lcd.setForeColor(GRAY_75);
+    lcd.drawText("PAD: MUTE", 9, 494, 32);
+    lcd.drawText("SONG: CHAIN PAGE", 16, 494, 43);
+    lcd_drawPerform_Data();
+    viewDirty = true;
+}
+
+void Controller::lcd_drawPerform_Data() {
+    /// @brief The PERFORM page's field values.
+    if (songStepSel >= songChain.count) songStepSel = 0;
+    const ChainStep& st = songChain.steps[songStepSel];
+    static const uint8_t kTab[6] = {0, 1, 4, 5, 6, 7};
+    char text[6][24];
+    snprintf(text[0], sizeof(text[0]), "%10u", static_cast<unsigned>(rhythm.tempo));
+    snprintf(text[1], sizeof(text[1]), "%10u", static_cast<unsigned>(activeSongBank + 1));
+    snprintf(text[2], sizeof(text[2]), "%4u OF %2u", static_cast<unsigned>(songStepSel + 1), static_cast<unsigned>(songChain.count));
+    snprintf(text[3], sizeof(text[3]), "%9ux", static_cast<unsigned>(st.repeats));
+    snprintf(text[4], sizeof(text[4]), "%s", perfFillLatch ? kDataOn : kDataOff);
+    snprintf(text[5], sizeof(text[5]), "%10u", static_cast<unsigned>(undoLog.cursor));
+    lcd_setMenuDataState(WHITE);
+    for (uint8_t f = 0; f < 6; f++) lcd.drawText(text[f], kMenuDataTextSize, kMenuDataX[kTab[f]], kMenuDataY[kTab[f]]);
+}
+
+void Controller::perf_step(EncoderFunc function_, bool up_) {
+    /// @brief Steps one PERFORM field: TEMPO, BANK (as SONG + a pad: the chain follows), the chain STEP and its
+    /// REPEATS, the FILL latch (on while turned up), UNDO (turn left to undo, right to redo).
+    switch (function_) {
+        case ENC_PERF_TEMPO:
+            if (up_ && (rhythm.tempo < kMaxTempo)) rhythm_setTempo(static_cast<uint8_t>(rhythm.tempo + 1));
+            if (!up_ && (rhythm.tempo > kMinTempo)) rhythm_setTempo(static_cast<uint8_t>(rhythm.tempo - 1));
+            break;
+        case ENC_PERF_BANK: {
+            const uint8_t bank = up_ ? static_cast<uint8_t>((activeSongBank + 1) % kChainBanks) : static_cast<uint8_t>((activeSongBank + kChainBanks - 1) % kChainBanks);
+            song_manualBank(bank);
+            (playActive) ? layerSong_triggerBank(bank) : layerSong_selectBank(bank);
+            break;
+        }
+        case ENC_PERF_FILL:
+            perfFillLatch = up_;
+            break;
+        case ENC_PERF_UNDO:
+            if (!alertFlag) undo_apply(up_);
+            break;
+        default:
+            song_step(function_, up_);  // STEP and REPEATS: as on the chain page (it draws this page's values)
+            return;
+    }
+    lcd_drawPerform_Data();
+    viewDirty = true;
+}
+
+uint16_t Controller::perfPatternOf(uint8_t layerNum_) const {
+    /// @brief The 16 cells of the loop with a hit in them, for the active bank of a layer.
+    const Bank& bank = layerLibrary[layerNum_].bankLibrary[activeSongBank];
+    uint16_t bits = 0;
+    for (int16_t b = 0; b <= bank.lastActiveBeatNum; b++) {
+        const Beat& beat = bank.beatLibrary[b];
+        if (!beat.getActive()) continue;
+        const uint16_t start = beat.getStartInterval();
+        bits = static_cast<uint16_t>(bits | pfPattern(&start, 1, songInterval));
+    }
+    return bits;
+}
+
+uint32_t Controller::perfViewState() const {
+    /// @brief A fingerprint of what the PERFORM view shows except the playhead and the meters. Never 0.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(rhythm.tempo);
+    mix(activeSongBank);
+    mix(soloMask);
+    mix(songStepSel);
+    mix(songChain.count);
+    mix(songChain.active ? 1u : 0u);
+    mix(songChain.loop ? 1u : 0u);
+    mix(chainPlay.step);
+    mix(chainPlay.loopsDone);
+    for (uint8_t i = 0; i < songChain.count; i++) mix((static_cast<uint32_t>(songChain.steps[i].bank) << 8) | songChain.steps[i].repeats);
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        mix(layerLibrary[i].mute ? 1u : 0u);
+        mix(perfPatternOf(i));
+        for (const char* ch = layerLibrary[i].instLoadedData.nameShortL; *ch; ch++) mix(static_cast<uint8_t>(*ch));
+        mix(genMix.type[i]);
+    }
+    return h | 1u;
+}
+
+void Controller::lcd_drawPerformViewData() {
+    /// @brief The PERFORM view: from nothing when it opens, then only the parts whose numbers changed.
+    perfViewStateDrawn = perfViewState();
+    GsLcd g{lcd};
+    if (perfViewKey == 0) {
+        perfViewKey = 1;
+        pfDrawFrame(g);
+        perfTempoDrawn = 0xFFFF;
+        perfChainKey = 0;
+        for (uint8_t i = 0; i < kLayerLibrarySize; i++) perfTileKey[i] = 0;
+    }
+    if (rhythm.tempo != perfTempoDrawn) {
+        perfTempoDrawn = rhythm.tempo;
+        pfDrawTempo(g, rhythm.tempo);
+    }
+    const PfChain chain = perfBuildChain(songChain, chainPlay, songStepSel);
+    uint32_t ck = 2166136261u;
+    auto cmix = [&ck](uint32_t v) { ck = (ck ^ v) * 16777619u; };
+    cmix(chain.count);
+    cmix(chain.step);
+    cmix(chain.loopsDone);
+    cmix(chain.active ? 1u : 0u);
+    cmix(chain.loop ? 1u : 0u);
+    for (uint8_t i = 0; i < chain.count; i++) cmix((static_cast<uint32_t>(chain.bank[i]) << 8) | chain.repeats[i]);
+    ck |= 1u;
+    if (ck != perfChainKey) {
+        perfChainKey = ck;
+        pfDrawChain(g, chain);
+    }
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const PfState state = pfState(layerLibrary[i].mute, soloMask, i);
+        char name[16];
+        layerShortName(i, name, sizeof name);
+        name[9] = 0;
+        uint32_t key = 2166136261u;
+        auto tmix = [&key](uint32_t v) { key = (key ^ v) * 16777619u; };
+        tmix(state);
+        tmix(perfPatternOf(i));
+        for (const char* ch = name; *ch; ch++) tmix(static_cast<uint8_t>(*ch));
+        key |= 1u;
+        if (key == perfTileKey[i]) continue;
+        perfTileKey[i] = key;
+        pfDrawTile(g, i, kDataLayerNum[i], name, state);
+        perfCellDrawn[i] = -2;       // the pattern row and the meter come with the tile
+        perfMeterDrawn[i] = 0xFF;
+    }
+    perfBarKey = 0xFFFF;
+    lcd_drawPerformPlay();
+}
+
+void Controller::lcd_drawPerformPlay() {
+    /// @brief The PERFORM view's moving parts: the bar and beat, and each tile's playhead (drawn only when they change).
+    if (perfViewKey == 0) return;
+    GsLcd g{lcd};
+    uint8_t bar, beat;
+    pfBarBeat(playInterval, rhythm.measure, kMeasureInterval, rhythm.bar, bar, beat);
+    const uint16_t barKey = static_cast<uint16_t>((bar << 8) | beat | (playActive ? 0x8000u : 0u));
+    if (barKey != perfBarKey) {
+        perfBarKey = barKey;
+        pfDrawBarBeat(g, bar, beat, rhythm.measure, rhythm.bar, playActive);
+    }
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const int8_t cell = playActive ? static_cast<int8_t>(pfPlayCell(playInterval, songInterval)) : static_cast<int8_t>(-1);
+        if (cell == perfCellDrawn[i]) continue;
+        perfCellDrawn[i] = cell;
+        pfDrawPattern(g, i, perfPatternOf(i), cell, pfState(layerLibrary[i].mute, soloMask, i));
+    }
+}
+
+void Controller::lcd_drawPerformMeters() {
+    /// @brief The PERFORM view's level bars, from the lane meters' peaks (25 times a second).
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const bool heard = layerAudible(i);
+        const uint8_t lit = heard ? pfMeterLit(meterShown[i], kMeterBarWidth) : static_cast<uint8_t>(0);
+        if (lit == perfMeterDrawn[i]) continue;
+        perfMeterDrawn[i] = lit;
+        GsLcd g{lcd};
+        pfDrawMeter(g, i, lit, heard);
+    }
 }
 
 /* NOTE: the step edit screen (NoteView.h) ----------------------------------------*/
@@ -27398,6 +27648,7 @@ void Controller::lcd_drawLayerMeters() {
         lcd.setForeColor(clip ? RED : GRAY_25);
         lcd.fillRect(x + kMeterBarWidth, y, kMeterWidth - kMeterBarWidth, kMeterHeight);
     }
+    if ((menu == SONG_MENU) && (songPage == 1) && (laneViewShown == SONG_MENU) && (perfViewKey != 0)) lcd_drawPerformMeters();
     if ((menu == DUB_MENU) && (laneViewShown == DUB_MENU)) {
         if (dubPage == kDubPageHiss) {
             lcd_drawHissLive();
@@ -28998,7 +29249,7 @@ bool Controller::note_plays(uint8_t layerNum_, uint16_t note_) {
     if (note_ == 0) return true;  // no condition, 100%: nothing to roll, PRE unchanged
     NoteState state;
     state.loop = noteLoop;
-    state.fillHeld = keyboard.fillKeyPress;
+    state.fillHeld = keyboard.fillKeyPress || perfFillLatch;  // (the PERFORM page's FILL field holds it too)
     state.pre = notePre[layerNum_];
     const bool plays = notePlays(note_, state, static_cast<uint16_t>(rand() % 10000));
     notePre[layerNum_] = state.pre;

@@ -317,6 +317,14 @@ class Controller {
     int8_t ccWindowDrawn = -1;                  // the window the desk's marker shows (-1 = nothing drawn, -2 = no marker)
     bool ccUiDirty = false;                     // something changed through the controller: the DUB page redraws soon
     uint32_t ccUiMs = 0;
+    uint8_t songPage = 0;                       // the SONG key's pages: 0 the chain, 1 PERFORM (PerformView.h)
+    bool perfFillLatch = false;                 // PERFORM's FILL field: the FILL condition holds as if the F key were held
+    uint32_t perfViewKey = 0;                   // 0 = the PERFORM view is not drawn
+    uint32_t perfViewStateDrawn = 0;
+    uint32_t perfChainKey = 0, perfTileKey[kLayerLibrarySize] = {0};
+    uint16_t perfTempoDrawn = 0xFFFF, perfBarKey = 0xFFFF;
+    int8_t perfCellDrawn[kLayerLibrarySize];
+    uint8_t perfMeterDrawn[kLayerLibrarySize];
     uint32_t quantizeViewKey = 0;               // what the quantize screen was drawn from (0 = nothing)
     uint32_t quantizeViewStateDrawn = 0;
     uint8_t slotRepeat = 0;                     // consecutive repeats of a held UP or DOWN: after 8 the step is ten slots
@@ -424,6 +432,15 @@ class Controller {
     uint32_t songThumbState(uint8_t bank_, uint8_t color_) const;
     void lcd_drawSongViewData();
     void lcd_drawSongViewPlay();
+    void song_togglePage();
+    void perf_step(EncoderFunc function_, bool up_);
+    void lcd_drawPerformMenu();
+    void lcd_drawPerform_Data();
+    uint32_t perfViewState() const;
+    uint16_t perfPatternOf(uint8_t layerNum_) const;
+    void lcd_drawPerformViewData();
+    void lcd_drawPerformPlay();
+    void lcd_drawPerformMeters();
     void lcd_drawRoutingViewData();
     bool filterViewDrawn = false;           // curves are on screen (and stored in the view scratch)
     bool filterViewOther = false;           // the other filter's curve is among them

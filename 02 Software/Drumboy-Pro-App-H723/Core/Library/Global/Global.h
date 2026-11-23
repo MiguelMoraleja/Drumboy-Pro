@@ -27,6 +27,7 @@
 #include "GeneratorScreens.h"
 #include "QuantizeView.h"
 #include "QuantizeScreens.h"
+#include "PerformScreens.h"
 #include "NoteView.h"
 #include "Pan.h"
 #include "UndoLog.h"
@@ -1343,6 +1344,10 @@ typedef enum {
     ENC_RHYTHM_STRENGTH                             = 0x91,  // RHYTHM page, the fifth field: the quantize strength
     ENC_DUB_STRIP                                   = 0x92,  // DUB page 2: which strip the page edits (the ten layers, then LINE IN)
     ENC_DUB_LINEMUTE                                = 0x93,  // DUB page 2: the LINE IN channel's mute
+    ENC_PERF_TEMPO                                  = 0x94,  // PERFORM page (the second step of the SONG key, PerformView.h)
+    ENC_PERF_BANK                                   = 0x95,
+    ENC_PERF_FILL                                   = 0x96,
+    ENC_PERF_UNDO                                   = 0x97,
 
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
@@ -1410,6 +1415,8 @@ const EncoderFunc encoderLocalFunction[][8] = {
 const EncoderFunc kDubPage2Function[8] = {ENC_DUB_PAN, ENC_DUB_FX, ENC_DUB_STRIP, ENC_DUB_LINEMUTE, ENC_DUB_WIDTH, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE};
 // DUB page 3, HISS (Generator.h; the lane area shows the bed, GeneratorView.h): type, level, tone and ducking.
 const EncoderFunc kDubPage3Function[8] = {ENC_DUB_HISS, ENC_DUB_HISSLEVEL, ENC_DUB_HISSTONE, ENC_DUB_HISSDUCK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE};
+// PERFORM page (the second step of the SONG key): tempo and bank on the top row, the chain step and its repeats, the fill latch and undo on the bottom row.
+const EncoderFunc kPerfFunction[8] = {ENC_PERF_TEMPO, ENC_PERF_BANK, ENC_FNC_NONE, ENC_FNC_NONE, ENC_CHAIN_STEP, ENC_CHAIN_REPEATS, ENC_PERF_FILL, ENC_PERF_UNDO};
 const uint8_t kDubPageHiss = 2;  // dubPage of the HISS page (0 and 1 are the desk)
 
 struct EncoderFuncData {
@@ -1598,7 +1605,11 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_DUB_HISSDUCK,        ENC_RES_M, "HISS DUCK ", "DUB   ", "  %", false},
     {ENC_RHYTHM_STRENGTH,     ENC_RES_M, "STRENGTH  ", "RHY   ", "  %", false},
     {ENC_DUB_STRIP,           ENC_RES_S, "STRIP     ", "DUB   ", "   ", false},
-    {ENC_DUB_LINEMUTE,        ENC_RES_S, "LINE MUTE ", "DUB   ", "   ", false}
+    {ENC_DUB_LINEMUTE,        ENC_RES_S, "LINE MUTE ", "DUB   ", "   ", false},
+    {ENC_PERF_TEMPO,          ENC_RES_M, "TEMPO     ", "SONG  ", "BPM", false},
+    {ENC_PERF_BANK,           ENC_RES_S, "BANK      ", "SONG  ", "   ", false},
+    {ENC_PERF_FILL,           ENC_RES_S, "FILL      ", "SONG  ", "   ", false},
+    {ENC_PERF_UNDO,           ENC_RES_S, "UNDO      ", "SONG  ", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");

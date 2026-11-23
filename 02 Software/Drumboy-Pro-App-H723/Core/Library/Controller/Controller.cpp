@@ -23290,7 +23290,7 @@ void Controller::lcd_updateLaneView() {
     /// while knobs turn), moves its playhead, and gives the lanes back when such a page was left.
     if (perfFillLatch && !((menu == SONG_MENU) && (songPage == 1))) perfFillLatch = false;  // the PERFORM page's FILL lasts while the page is open
     if (qnApply != QN_READY) {  // QUANTIZE NOW: armed for five seconds and for one set of choices; DONE lasts while they stay
-        const bool here = (menu == RHYTHM_MENU) && (menuTab >= 5);
+        const bool here = (menu == RHYTHM_MENU);
         if (!here || (quantizeNow_key() != qnArmKey) || ((qnApply == QN_SURE) && ((HAL_GetTick() - qnArmMs) > 5000))) {
             qnApply = QN_READY;
             if (here) {
@@ -24705,6 +24705,17 @@ void Controller::lcd_drawQuantizeNowData() {
 
 void Controller::quantizeNow_step(EncoderFunc function_, bool up_) {
     /// @brief Turns one of the QUANTIZE NOW fields: its GRID, its SCOPE, and APPLY (right twice applies, left disarms).
+    /// Each field has its own encoder whatever tab is selected, so turning one brings its screen up (the lanes give way):
+    /// the notes are never changed without the picture on the screen.
+    if ((menu == RHYTHM_MENU) && (function_ >= ENC_RHYTHM_QNGRID) && (function_ <= ENC_RHYTHM_QNAPPLY)) {
+        const int8_t want = static_cast<int8_t>(5 + (function_ - ENC_RHYTHM_QNGRID));
+        if (menuTab != want) {
+            preMenuTab = menuTab;
+            menuTab = want;
+            lcd_transitionSelect();
+            viewDirty = true;
+        }
+    }
     switch (function_) {
         case ENC_RHYTHM_QNGRID:
             if (up_ && (qnGrid < kQnMaxGrid)) qnGrid++;

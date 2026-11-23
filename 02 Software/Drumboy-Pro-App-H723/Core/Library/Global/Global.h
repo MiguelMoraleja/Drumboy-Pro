@@ -28,6 +28,7 @@
 #include "QuantizeView.h"
 #include "QuantizeScreens.h"
 #include "PerformScreens.h"
+#include "LfoScreens.h"
 #include "NoteView.h"
 #include "Pan.h"
 #include "UndoLog.h"

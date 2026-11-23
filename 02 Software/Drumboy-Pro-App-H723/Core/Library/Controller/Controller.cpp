@@ -3,6 +3,13 @@
 
 #include <new>
 
+// An LFO's value now, 0..1 with 0.5 in the middle, as every reader of the LFOs takes it. INVERT turns the wave upside down
+// (it only turned the picture on the LFO page before; the sound did not follow).
+static inline float lfoTableValue(const Lfo& lfo_) {
+    const float v = kLfoDataLibrary[lfo_.type][(uint16_t)floor(lfo_.sampleCounter)];
+    return lfo_.invert ? 1.0f - v : v;
+}
+
 // Edited copy of the selected layer's bank. Beat-list edits (BeatList.h) are made here and
 // swapped in by layerSong_commitBank() with the sequencer interrupt held off, so playback
 // never sees a half-edited bank.
@@ -20234,7 +20241,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
             if (layer.style) {
                 if ((layer.lfoProbability) && (lfoLibrary[layer.lfoProbability - 1].active)) {
                     Lfo& lfo = lfoLibrary[layer.lfoProbability - 1];
-                    float lfoData = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
+                    float lfoData = lfoTableValue(lfo);
                     float lfoDepth = kNumberDataLibrary[lfo.depth].stdMultiplier;
                     nProbability = layer.probability + round(100 * (lfoData - 0.5) * lfoDepth);
                     nProbability = clamp(nProbability, (int16_t)kMinLayerProbability, (int16_t)kMaxLayerProbability);
@@ -20263,7 +20270,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     // calculate level with lfo
                     if ((layer.lfoLevel) && (lfoLibrary[(layer.lfoLevel - 1)].active)) {
                         Lfo& lfo = lfoLibrary[layer.lfoLevel - 1];
-                        float lfoData = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
+                        float lfoData = lfoTableValue(lfo);
                         float lfoDepth = kNumberDataLibrary[lfo.depth].stdMultiplier;
                         nLevel = layer.level + round(50 * (lfoData - 0.5) * lfoDepth);
                         nLevel = clamp(nLevel, (int16_t)kMinLayerLevel, (int16_t)kMaxLayerLevel);
@@ -20277,7 +20284,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     // older files keep the old rule.)
                     if ((layer.lfoPitch) && (lfoLibrary[(layer.lfoPitch - 1)].active)) {
                         Lfo& lfo = lfoLibrary[(layer.lfoPitch - 1)];
-                        float lfoData = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
+                        float lfoData = lfoTableValue(lfo);
                         float lfoDepth = kNumberDataLibrary[lfo.depth].stdMultiplier;
                         nPitch = pitchWithLfo(layer.pitch, lfoData, lfoDepth);
                     } else {
@@ -20288,7 +20295,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     // calculate resolution with lfo
                     if ((layer.lfoResolution) && (lfoLibrary[(layer.lfoResolution - 1)].active)) {
                         Lfo& lfo = lfoLibrary[(layer.lfoResolution - 1)];
-                        float lfoData = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
+                        float lfoData = lfoTableValue(lfo);
                         float lfoDepth = kNumberDataLibrary[lfo.depth].stdMultiplier;
                         nResolution = layer.resolution + round(24 * (lfoData - 0.5) * lfoDepth);
                         nResolution = clamp(nResolution, (int8_t)kMinLayerResolution, (int8_t)kMaxLayerResolution);
@@ -20300,7 +20307,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     // calculate start point with lfo
                     if ((layer.lfoStart) && (lfoLibrary[(layer.lfoStart - 1)].active)) {
                         Lfo& lfo = lfoLibrary[(layer.lfoStart - 1)];
-                        float lfoData = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
+                        float lfoData = lfoTableValue(lfo);
                         float lfoDepth = kNumberDataLibrary[lfo.depth].stdMultiplier;
                         nStart = layer.start + round(100 * (lfoData - 0.5) * lfoDepth);
                         nStart = clamp(nStart, (int16_t)0, (int16_t)100);
@@ -20311,7 +20318,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     // calculate end point with lfo
                     if ((layer.lfoEnd) && (lfoLibrary[(layer.lfoEnd - 1)].active)) {
                         Lfo& lfo = lfoLibrary[(layer.lfoEnd - 1)];
-                        float lfoData = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
+                        float lfoData = lfoTableValue(lfo);
                         float lfoDepth = kNumberDataLibrary[lfo.depth].stdMultiplier;
                         nEnd = layer.end + round(100 * (lfoData - 0.5) * lfoDepth);
                         nEnd = clamp(nEnd, (int16_t)0, (int16_t)100);
@@ -20332,7 +20339,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     // calculate direction with lfo
                     if ((layer.lfoDirection) && (lfoLibrary[(layer.lfoDirection - 1)].active)) {
                         Lfo& lfo = lfoLibrary[(layer.lfoDirection - 1)];
-                        float lfoData = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
+                        float lfoData = lfoTableValue(lfo);
                         float lfoDepth = kNumberDataLibrary[lfo.depth].stdMultiplier;
                         uint8_t data = round(4 * (lfoData - 0.5) * lfoDepth) + 2;
                         nDirection = kLayerDirectionProbability[layer.direction][data];
@@ -20346,7 +20353,7 @@ void Controller::layer_playBeat(uint8_t layerNum_, float fillVolMultiplier_) {
                     // calculate timing delay with lfo
                     if ((layer.lfoTiming) && (lfoLibrary[(layer.lfoTiming - 1)].active)) {
                         Lfo& lfo = lfoLibrary[(layer.lfoTiming - 1)];
-                        float lfoData = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
+                        float lfoData = lfoTableValue(lfo);
                         float lfoDepth = kNumberDataLibrary[lfo.depth].stdMultiplier;
                         nTiming = layer.timing + round(100 * (lfoData - 0.5) * lfoDepth);
                         nTiming = clamp(nTiming, (int16_t)kMinLayerTiming, (int16_t)kMaxLayerTiming);
@@ -20456,7 +20463,7 @@ void Controller::layer_playGen(uint8_t layerNum_, float fillVolMultiplier_) {
     auto lfoAt = [this](uint8_t slot_, float& data_, float& depth_) -> bool {
         if ((slot_ == 0) || !lfoLibrary[slot_ - 1].active) return false;
         Lfo& lfo = lfoLibrary[slot_ - 1];
-        data_ = kLfoDataLibrary[lfo.type][(uint16_t)floor(lfo.sampleCounter)];
+        data_ = lfoTableValue(lfo);
         depth_ = kNumberDataLibrary[lfo.depth].stdMultiplier;
         return true;
     };
@@ -23069,7 +23076,7 @@ bool Controller::laneViewHidden() const {
     /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG, ROUTING,
     /// FILTER, EQ and instrument page 2 pages). Everything that draws into a lane checks it, and asks for the view to be
     /// refreshed instead.
-    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU) ||
+    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == LFO_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU) ||
            (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (menuTab > 0)) ||  // the load, save and clear tabs show the slots
            ((menu == RHYTHM_MENU) && (menuTab >= 3));                              // the QUANTIZE and STRENGTH fields show the grids
 }
@@ -23093,6 +23100,7 @@ void Controller::lcd_drawLaneView() {
     fileViewKey = 0;                                                  // and no slot grid
     quantizeViewKey = 0;                                              // and no quantize screen
     perfViewKey = 0;                                                  // and no PERFORM page
+    lfoViewKey = 0;                                                   // and no LFO overview
     ccWindowDrawn = -1;                                               // and no marker of the controller's strips
     ccMonitorDrawnKey = 0;                                            // and no controller message
     fsDrawnSlot = -1;
@@ -23110,6 +23118,9 @@ void Controller::lcd_drawLaneViewData() {
             break;
         case SONG_MENU:
             (songPage == 1) ? lcd_drawPerformViewData() : lcd_drawSongViewData();
+            break;
+        case LFO_MENU:
+            lcd_drawLfoViewData();
             break;
         case ROUTING_MENU:
             lcd_drawRoutingViewData();
@@ -23250,6 +23261,7 @@ void Controller::lcd_updateLaneView() {
     if (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (fileViewState() != fileViewStateDrawn)) viewDirty = true;
     if ((menu == RHYTHM_MENU) && (quantizeViewState() != quantizeViewStateDrawn)) viewDirty = true;
     if ((menu == SONG_MENU) && (songPage == 1) && (perfViewState() != perfViewStateDrawn)) viewDirty = true;
+    if ((menu == LFO_MENU) && (lfoViewState() != lfoViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -23259,6 +23271,8 @@ void Controller::lcd_updateLaneView() {
         lcd_drawEuclidViewPlay();
     } else if (menu == SONG_MENU) {
         (songPage == 1) ? lcd_drawPerformPlay() : lcd_drawSongViewPlay();
+    } else if (menu == LFO_MENU) {
+        lcd_drawLfoViewPlay();
     }
 }
 
@@ -24531,6 +24545,102 @@ void Controller::lcd_drawQuantizeViewData() {
     qsDrawScreen(g, QsInput{rhythm.quantize, rhythm.quantizeStrength, menuTab == 4});
 }
 
+/* LFO overview: the full-area view of the LFO page (LfoView.h, LfoScreens.h) ---------------------*/
+
+static const char* lfoTrimmed(const char* s_) {
+    while (*s_ == ' ') s_++;
+    return s_;
+}
+
+uint32_t Controller::lfoViewState() const {
+    /// @brief A fingerprint of what the LFO overview shows except the phase dot. Never 0.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(static_cast<uint32_t>(selectedLfoNum + 1));
+    for (uint8_t n = 0; n < kLfoLibrarySize; n++) {
+        const Lfo& l = lfoLibrary[n];
+        mix(l.active ? 1u : 0u);
+        mix(l.type);
+        mix(l.rate);
+        mix(l.phase);
+        mix(l.depth);
+        mix(l.invert ? 1u : 0u);
+    }
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const Layer& y = layerLibrary[i];
+        mix((static_cast<uint32_t>(y.lfoLevel) << 24) | (static_cast<uint32_t>(y.lfoPitch) << 16) | (static_cast<uint32_t>(y.lfoDirection) << 8) | y.lfoResolution);
+        mix((static_cast<uint32_t>(y.lfoStart) << 24) | (static_cast<uint32_t>(y.lfoEnd) << 16) | (static_cast<uint32_t>(y.lfoTiming) << 8) | y.lfoProbability);
+        for (const char* ch = y.instLoadedData.nameShortL; *ch; ch++) mix(static_cast<uint8_t>(*ch));
+        mix(genMix.type[i]);
+    }
+    for (uint8_t n = 0; n < 2; n++) mix((static_cast<uint32_t>(filter[n].lfoFreq) << 8) | filter[n].lfoReson);
+    return h | 1u;
+}
+
+void Controller::lcd_drawLfoViewData() {
+    /// @brief The LFO overview from nothing: the ten rows, the selected LFO's title, wave and the list of what it moves.
+    lfoViewStateDrawn = lfoViewState();
+    if (selectedLfoNum < 0) return;
+    const uint8_t sel = static_cast<uint8_t>(selectedLfoNum);
+    GsLcd g{lcd};
+    uint8_t layerLfo[kLayerLibrarySize][kLvLayerFields];
+    uint8_t filterLfo[2][kLvFilterFields];
+    char layerNames[kLayerLibrarySize][16];
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const Layer& y = layerLibrary[i];
+        const uint8_t row[kLvLayerFields] = {y.lfoLevel, y.lfoPitch, y.lfoDirection, y.lfoResolution, y.lfoStart, y.lfoEnd, y.lfoTiming, y.lfoProbability};
+        memcpy(layerLfo[i], row, kLvLayerFields);
+        layerShortName(i, layerNames[i], sizeof layerNames[i]);
+    }
+    for (uint8_t n = 0; n < 2; n++) {
+        filterLfo[n][0] = filter[n].lfoFreq;
+        filterLfo[n][1] = filter[n].lfoReson;
+    }
+    static LvUse uses[kLvMaxUses];
+    for (uint8_t n = 0; n < kLfoLibrarySize; n++) {
+        const Lfo& l = lfoLibrary[n];
+        const uint16_t count = lvCollect(static_cast<uint8_t>(n + 1), layerLfo, kLayerLibrarySize, filterLfo, uses, kLvMaxUses);
+        lvDrawRow(g, n, n == sel, l.active, count, kLfoDataLibrary[l.type], kLfoTableSize, l.invert, l.depth);
+    }
+    const Lfo& lfo = lfoLibrary[sel];
+    LvInfo info;
+    memset(&info, 0, sizeof info);
+    info.number = static_cast<uint8_t>(sel + 1);
+    info.active = lfo.active;
+    snprintf(info.type, sizeof info.type, "%s", lfoTrimmed(kLfoTypeDataLibrary[lfo.type].nameLongR));
+    snprintf(info.rate, sizeof info.rate, "%s", kLfoRateDataLibrary[lfo.rate].nameShortR);
+    snprintf(info.phase, sizeof info.phase, "%s", kLfoPhaseDataLibrary[lfo.phase].nameShortR);
+    info.depth = lfo.depth;
+    info.invert = lfo.invert;
+    lvDrawTitle(g, info);
+    lvDrawPlotFrame(g);
+    lvDrawPlotColumns(g, kLfoDataLibrary[lfo.type], kLfoTableSize, lfo.active, lfo.invert, lfo.depth, 0, kLvPlotW - 1);
+    const uint16_t total = lvCollect(static_cast<uint8_t>(sel + 1), layerLfo, kLayerLibrarySize, filterLfo, uses, kLvMaxUses);
+    lvDrawUsed(g, uses, layerNames, total, lfo.active);
+    lfoDotDrawn = -1;  // the plot is new: no dot on it
+    lfoViewKey = 1;
+    lcd_drawLfoViewPlay();
+}
+
+void Controller::lcd_drawLfoViewPlay() {
+    /// @brief The phase dot of the selected LFO: it moves along its first cycle while the song plays (redrawn only when its column changes).
+    if ((lfoViewKey == 0) || (selectedLfoNum < 0)) return;
+    static uint32_t dotMs = 0;
+    if ((HAL_GetTick() - dotMs) < 40) return;  // 25 times a second at most
+    dotMs = HAL_GetTick();
+    const Lfo& lfo = lfoLibrary[selectedLfoNum];
+    GsLcd g{lcd};
+    int16_t column = -1;
+    if (playActive && lfo.active) column = static_cast<int16_t>(lvDotColumn(lfo.sampleCounter / kLfoSampleSize));
+    if (column == lfoDotDrawn) return;
+    if (lfoDotDrawn >= 0) {  // the wave back under the old dot and its line
+        const int16_t from = (lfoDotDrawn > 4) ? static_cast<int16_t>(lfoDotDrawn - 4) : static_cast<int16_t>(0);
+        lvDrawPlotColumns(g, kLfoDataLibrary[lfo.type], kLfoTableSize, lfo.active, lfo.invert, lfo.depth, static_cast<uint16_t>(from), static_cast<uint16_t>(lfoDotDrawn + 4));
+    }
+    if (column >= 0) lvDrawDot(g, kLfoDataLibrary[lfo.type], kLfoTableSize, lfo.invert, lfo.depth, static_cast<uint16_t>(column));
+    lfoDotDrawn = column;
+}
+
 /* PERFORM: the second step of the SONG key (PerformView.h, PerformScreens.h) ------------------------*/
 
 static PfChain perfBuildChain(const SongChain& sc_, const ChainPlay& cp_, uint8_t sel_) {
@@ -25167,7 +25277,7 @@ void Controller::lfo_updateModules() {
         const Lfo& lfo = lfoLibrary[slot_ - 1];
         uint16_t at = static_cast<uint16_t>(floorf(lfo.sampleCounter));
         if (at >= kLfoTableSize) at = kLfoTableSize - 1;  // the counter may be read between the interrupt's increment and its wrap
-        d_ = kLfoDataLibrary[lfo.type][at];
+        d_ = lfo.invert ? 1.0f - kLfoDataLibrary[lfo.type][at] : kLfoDataLibrary[lfo.type][at];
         dep_ = kNumberDataLibrary[lfo.depth].stdMultiplier;
         return true;
     };

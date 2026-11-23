@@ -317,6 +317,9 @@ class Controller {
     int8_t ccWindowDrawn = -1;                  // the window the desk's marker shows (-1 = nothing drawn, -2 = no marker)
     bool ccUiDirty = false;                     // something changed through the controller: the DUB page redraws soon
     uint32_t ccUiMs = 0;
+    uint32_t lfoViewKey = 0;                    // 0 = the LFO overview is not drawn
+    uint32_t lfoViewStateDrawn = 0;
+    int16_t lfoDotDrawn = -1;                   // the phase dot's plot column as drawn (-1 = none)
     uint8_t songPage = 0;                       // the SONG key's pages: 0 the chain, 1 PERFORM (PerformView.h)
     bool perfFillLatch = false;                 // PERFORM's FILL field: the FILL condition holds as if the F key were held
     uint32_t perfViewKey = 0;                   // 0 = the PERFORM view is not drawn
@@ -433,6 +436,9 @@ class Controller {
     void lcd_drawSongViewData();
     void lcd_drawSongViewPlay();
     void song_togglePage();
+    uint32_t lfoViewState() const;
+    void lcd_drawLfoViewData();
+    void lcd_drawLfoViewPlay();
     void perf_step(EncoderFunc function_, bool up_);
     void lcd_drawPerformMenu();
     void lcd_drawPerform_Data();

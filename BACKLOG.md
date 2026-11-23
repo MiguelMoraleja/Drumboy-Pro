@@ -1142,3 +1142,9 @@ First slice of item 3: the four continuous destinations FREQ and RESONANCE of fi
 - **Not yet:** throws (S, R) on the line-in, an FX send, pan.
 
 **Status: built in V1.21 (test build). Done when** (on the unit): a hit into the reverb at WET 100 % and send 100 % is clearly the loudest thing on the desk, the echo repeats are as loud as the dry hit at feedback 50 %, and a line-in source can be sent to the echo with the LINE IN knob while its light moves.
+
+### Crash report 2026-11-23: `CRASH 7 S15 P16 L24` (V1.21 test build with the Performance page and the LFO overview)
+
+- Decoded: a watchdog restart (the main loop did not run for 6 s), in stage 15 (MIDI notes in; this stage also holds the nanoKONTROL handler and the filter LFO update), on page 0x16 (the SONG page, chain or PERFORM), audio load 24 % (so not an overload).
+- Nothing found by reading: no loop or wait in the code that runs in that stage. To see which of the three parts stalls, the nanoKONTROL handler and the filter LFO update now have their own stages (18 and 19, `WD_STAGE_CC`, `WD_STAGE_LFO`) in the next test build; stage 15 then means the note loop itself.
+- Open: what the owner was doing (nanoKONTROL or MIDI notes in, which SONG page, playing or stopped) and whether it repeats.

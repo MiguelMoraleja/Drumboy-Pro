@@ -119,6 +119,8 @@ enum WdStageCode {
     WD_STAGE_MIDIRX = 15,    // MIDI notes in
     WD_STAGE_TRANSPORT = 16, // MIDI transport and clock in
     WD_STAGE_SYNC = 17,      // sync in
+    WD_STAGE_CC = 18,        // the MIDI controller (midi_serviceCc)
+    WD_STAGE_LFO = 19,       // the LFOs on the filters (lfo_updateModules)
 };
 
 typedef struct {

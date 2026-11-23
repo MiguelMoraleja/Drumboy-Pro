@@ -653,7 +653,9 @@ void Controller::update() {
             }
         }
 
+        watchdog_stage(WD_STAGE_CC);  // (so that a stall here names itself in the crash record)
         midi_serviceCc();  // the controller's faders, knobs and buttons
+        watchdog_stage(WD_STAGE_LFO);
         lfo_updateModules();  // the LFOs on the filters
 
         watchdog_stage(WD_STAGE_TRANSPORT);

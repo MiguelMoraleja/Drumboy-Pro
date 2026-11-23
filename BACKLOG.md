@@ -506,6 +506,8 @@ Matters for playing the Drumboy from Loopy Pro (through a Scarlett interface). C
 
 **Update V1.16, built and released (hardware test of the thru pending):** MIDI thru of the real-time bytes (`midiThruForwards` in `MidiParser.h`, `midi_thru`, host test in `test_midi`). With SYNC on MIDI IN and on MIDI OUT, an accepted incoming clock tick and the transport bytes (start, continue, stop, reset) are passed on to MIDI OUT from the receive interrupt; the Drumboy sends no clock or transport of its own while it follows (already so since V1.13). A tick the clock lock rejects as too fast is not passed, so a loop through an interface dies out. Notes and controllers are not passed on: the Drumboy plays incoming notes and sends its own, so forwarding them could double.
 
+**LFO overview (proposal, mockup 2026-11-23, app Screen ideas tab):** while the LFO page is open the lane area shows the ten LFOs as rows (number, small wave, how many things it moves), the selected one as a big wave with a phase dot, and a USED BY list of every layer field and filter field that follows it, each with a bar of its value now. Reads existing tables only. Open: owner's go.
+
 ### 35. LFO destinations for the per-note settings
 
 **Asked by the owner (2026-11-08):** can VELOCITY, CHANCE, CONDITION and NUDGE (NOTE page, [33](#33-per-note-editing-velocity-probability-and-more)) be moved by an LFO?

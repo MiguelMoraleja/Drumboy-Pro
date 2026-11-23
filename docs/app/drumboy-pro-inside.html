@@ -1227,6 +1227,48 @@ const IDEAS = [
         for (let k = 0; k < 13; k++) P.rect(x + (w - 20) / 2, 322 + (12 - k) * 8, 20, 6, k < lit ? (k < 9 ? LC.GN : k < 12 ? LC.YE : LC.RE) : LC.G25);
       }
     } },
+  { id: "lfopage", group: 0, name: "LFO overview", item: "3, 35, 45", size: "M", today: false,
+    note: ["",
+           "Proposal (not built): while the LFO page is open the lane area shows all ten LFOs at once and, for the selected one, where it is used. On the left, one row per LFO: its number, a small picture of its wave (dim when switched off) and how many things it moves. On the right, the selected LFO as a big wave with a yellow dot at its phase now (it moves while the song plays), its rate, depth, phase and invert. Below, the USED BY list: every layer field (LEVEL, PITCH, START, PROB and so on) and every filter field (F1 FREQ, F2 RESON) that follows this LFO, each with a small bar of the value it has at this moment. Nothing is new in the engine: it reads the LFO tables and the assignment fields that exist (the layers' eight and the filters' four). It also gives the open LFO work a place to show: later destinations (layer pan, effect and reverb wet, EQ) would appear in the same list."],
+    draw() {
+      mMenu("LF", 3);
+      mField(0, "ACTIVE", "ON".padStart(10)); mField(1, "TYPE", "SAW".padStart(10));
+      mField(4, "RATE", "1/4".padStart(10)); mField(5, "PHASE", "0".padStart(10)); mField(6, "INVERT", "OFF".padStart(10)); mField(7, "DEPTH", "60", "  %");
+      P.rect(493, 30, 325, 60, LC.K);
+      mBig();
+      const wave = (t, k) => { const x = t - Math.floor(t); return [Math.sin(2 * Math.PI * x), 1 - 4 * Math.abs(x - 0.5), 1 - 2 * x, x < 0.5 ? 1 : -1, Math.sin(Math.floor(t * 4) * 12.9898) * 0.9][k]; };
+      const types = [0, 1, 2, 3, 4, 0, 1, 2, 3, 0], names = ["SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM"];
+      const uses = [2, 1, 5, 0, 1, 3, 0, 0, 0, 1], on = [1, 1, 1, 0, 1, 1, 1, 0, 0, 1], sel = 2;
+      // left: the ten LFOs
+      for (let n = 0; n < 10; n++) {
+        const y = 138 + n * 30, isSel = n === sel, c = on[n] ? (isSel ? LC.CY : LC.G75) : LC.G35;
+        if (isSel) P.rect(24, y - 1, 236, 28, LC.G25);
+        P.frame(24, y - 1, 236, 28, isSel ? LC.CY : LC.G25);
+        P.text(String(n + 1).padStart(2, "0"), 32, y + 5, 10, c);
+        for (let x = 0; x < 120; x++) { const v = on[n] ? wave(x / 60, types[n]) : 0; P.rect(76 + x, y + 12 - Math.round(v * 8), 1, 1, c); }
+        P.text(uses[n] ? "X" + uses[n] : "--", 252, y + 8, 7, on[n] && uses[n] ? LC.YE : LC.G50, "R", null);
+      }
+      // right: the selected LFO
+      P.text("LFO 03   " + names[types[sel]] + "   RATE 1/4   PHASE 0   DEPTH 60   INVERT OFF", 278, 138, 7, LC.CY);
+      const PX = 278, PY = 160, PW = 650, PH = 130, mid = PY + PH / 2, ph = 0.37;
+      P.frame(PX - 1, PY - 1, PW + 2, PH + 2, LC.G25);
+      for (let x = 0; x < PW; x += 4) P.rect(PX + x, mid, 2, 1, LC.G35);
+      for (let k = 1; k < 4; k++) for (let y = PY; y < PY + PH; y += 4) P.rect(PX + k * PW / 4, y, 1, 1, LC.G25);
+      for (let x = 0; x < PW; x++) { const v = wave(x / (PW / 2) , types[sel]) * 0.6, y = mid - v * (PH / 2 - 6); P.rect(PX + x, y, 1, 2, LC.CY); }
+      const dx = PX + ph * PW / 2 * 1, dv = wave(ph, types[sel]) * 0.6;
+      P.rect(dx, PY, 1, PH, LC.G50); P.disc(Math.round(dx), Math.round(mid - dv * (PH / 2 - 6)), 5, LC.YE);
+      P.text("1 BAR", PX, PY + PH + 4, 5, LC.G50); P.text("2 CYCLES", PX + PW, PY + PH + 4, 5, LC.G50, "R");
+      // below: USED BY
+      P.text("USED BY", 278, 308, 7, LC.G75);
+      const used = [["L1 KICK 808", "LEVEL", 62], ["L3 HAT CLOSED", "PITCH", 40], ["L3 HAT CLOSED", "PROBABILITY", 75], ["L7 TOM LOW", "START", 20], ["F1", "FREQ", 55]];
+      used.forEach(([who, what, v], k) => {
+        const col = k % 2, row = Math.floor(k / 2), x = 278 + col * 330, y = 326 + row * 34;
+        P.frame(x, y, 316, 28, LC.G35);
+        P.text(who, x + 8, y + 4, 7, LC.W); P.text(what, x + 8, y + 15, 5, LC.G75);
+        P.rect(x + 170, y + 9, 130, 10, LC.G25); P.rect(x + 170, y + 9, Math.round(130 * v / 100), 10, LC.YE);
+      });
+      P.text("TURN THE LFO FIELDS: THE PICTURE FOLLOWS", 278, 430, 5, LC.G50);
+    } },
 ];
 // --- Full-area views: the lane area (920x310) shows one feature while its page is open ---
 function mBig() { P.rect(21, 132, 918, 308, LC.K); }

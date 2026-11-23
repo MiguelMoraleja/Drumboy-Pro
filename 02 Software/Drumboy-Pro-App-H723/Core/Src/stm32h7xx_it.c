@@ -219,15 +219,43 @@ void PendSV_Handler(void)
 /**
   * @brief This function handles System tick timer.
   */
-void SysTick_Handler(void)
+/* The stall detector (CrashRecord.h): every millisecond, if the main loop has not finished a pass for STALL_AFTER_MS,
+   the program counter and link register of the code this interrupt interrupted are kept (every 50 ms), so that a
+   watchdog restart can say where the loop was stuck. The loop clears it by running again. Start-up (loops == 0)
+   is not watched, and a long load that feeds the watchdog itself only leaves a record that is cleared afterwards. */
+__attribute__((used)) void SysTick_Body(uint32_t* frame)
 {
-  /* USER CODE BEGIN SysTick_IRQn 0 */
-
-  /* USER CODE END SysTick_IRQn 0 */
+  static uint32_t lastLoops = 0xFFFFFFFFu, lastChangeMs = 0, lastCaptureMs = 0;
   HAL_IncTick();
-  /* USER CODE BEGIN SysTick_IRQn 1 */
+  const WdStage* w = (const WdStage*)WATCHDOG_STAGE_ADDRESS;
+  StallRecord* s = (StallRecord*)STALL_ADDRESS;
+  const uint32_t now = HAL_GetTick();
+  const uint32_t loops = w->loops;
+  if ((loops != lastLoops) || (loops == 0u))
+  {
+    lastLoops = loops;
+    lastChangeMs = now;
+    s->magic = 0;
+    return;
+  }
+  if (((now - lastChangeMs) >= STALL_AFTER_MS) && ((now - lastCaptureMs) >= 50u))
+  {
+    const uint32_t f = (uint32_t)frame;
+    if ((f >= 0x24000000u) && (f <= (0x24050000u - 32u)) && ((f & 3u) == 0u))
+    {
+      lastCaptureMs = now;
+      s->pc = frame[6];
+      s->lr = frame[5];
+      s->sp = f;
+      s->magic = STALL_MAGIC;
+    }
+  }
+}
 
-  /* USER CODE END SysTick_IRQn 1 */
+__attribute__((naked)) void SysTick_Handler(void)
+{
+  /* r0 = the stack frame of the code interrupted (main or process stack), then the C body; r4 only keeps the stack 8-byte aligned. */
+  __asm volatile("tst lr, #4\n ite eq\n mrseq r0, msp\n mrsne r0, psp\n push {r4, lr}\n bl SysTick_Body\n pop {r4, pc}\n");
 }
 
 /******************************************************************************/

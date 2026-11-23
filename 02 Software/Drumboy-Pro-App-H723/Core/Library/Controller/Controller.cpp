@@ -6798,12 +6798,13 @@ bool Controller::crash_report() {
     CrashRecord* record = reinterpret_cast<CrashRecord*>(CRASH_RECORD_ADDRESS);
     // A restart by the watchdog leaves no record of its own: make one from the stage the loop was in.
     if ((RCC->RSR & RCC_RSR_IWDG1RSTF) && !crashValid(record)) {
-        crashFromWatchdog(record, reinterpret_cast<const WdStage*>(WATCHDOG_STAGE_ADDRESS), (static_cast<uint32_t>(FW_VERSION_MAJOR) << 8) | static_cast<uint32_t>(FW_VERSION_MINOR));
+        crashFromWatchdog(record, reinterpret_cast<const WdStage*>(WATCHDOG_STAGE_ADDRESS), reinterpret_cast<const StallRecord*>(STALL_ADDRESS), (static_cast<uint32_t>(FW_VERSION_MAJOR) << 8) | static_cast<uint32_t>(FW_VERSION_MINOR));
     }
     RCC->RSR |= RCC_RSR_RMVF;
     WdStage* wd = reinterpret_cast<WdStage*>(WATCHDOG_STAGE_ADDRESS);
     wd->stage = WD_STAGE_NONE;
     wd->loops = 0;
+    reinterpret_cast<StallRecord*>(STALL_ADDRESS)->magic = 0;  // no stall seen yet
     if (!crashValid(record)) {
         crashClear(record);
         return false;

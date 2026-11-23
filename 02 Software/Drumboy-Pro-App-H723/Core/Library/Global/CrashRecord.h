@@ -19,6 +19,7 @@
 #ifndef __CRASHRECORD_H
 #define __CRASHRECORD_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -78,7 +79,11 @@ static inline void crashAlertText(const CrashRecord* r_, char* out_, size_t size
         // (LOV when it was at or over 99 %: the audio engine starved the main loop). Shown on the
         // screen so the card need not be read.
         const unsigned long stage = (r_->pc >> 8) & 0xFF, page = r_->pc & 0xFF, load = r_->sp / 10;
-        if (load >= 99) {
+        if (r_->psr != 0) {
+            // The stall detector (SysTick) saw where the main loop was stuck: "CRASH 7 S15 P16 @2AB1C" = flash address 0802AB1C
+            // (the full address and the caller are in System/Crash.log: psr = pc, bfar = lr).
+            snprintf(out_, size_, "CRASH 7 S%02lu P%02lX @%05lX", stage, page, (unsigned long)(r_->psr & 0xFFFFFu));
+        } else if (load >= 99) {
             snprintf(out_, size_, "CRASH 7 S%02lu P%02lX LOV", stage, page);
         } else {
             snprintf(out_, size_, "CRASH 7 S%02lu P%02lX L%02lu", stage, page, load);
@@ -130,18 +135,34 @@ typedef struct {
     uint32_t spare;  // the audio load (the CPU bar) in tenths of a percent, as last shown
 } WdStage;
 
-// The record a watchdog restart leaves: pc = (stage << 8) | menu so the screen shows it.
-static inline void crashFromWatchdog(CrashRecord* r_, const WdStage* w_, uint32_t version_) {
+// Where the main loop was when it stopped for 4 s: the SysTick interrupt (stm32h7xx_it.c) copies the program counter
+// and the link register of the code it interrupted here, every 50 ms while the loop is stalled, and clears it when
+// the loop runs again. It sits in the 16 bytes between the stage block and the crash record. At a watchdog restart
+// the record holds it (psr = pc, bfar = lr, mmfar = sp), so System/Crash.log names the code that hung:
+// arm-none-eabi-addr2line -f -C -e build/app.elf 0xPC (the screen shows the low 20 bits: CRASH 7 S15 P16 @2AB1C).
+#define STALL_ADDRESS 0x2001FFB0u
+#define STALL_MAGIC 0x53544C4Cu  // "STLL"
+#define STALL_AFTER_MS 4000u
+typedef struct {
+    uint32_t magic;  // STALL_MAGIC when the rest is valid
+    uint32_t pc;
+    uint32_t lr;
+    uint32_t sp;
+} StallRecord;
+
+// The record a watchdog restart leaves: pc = (stage << 8) | menu so the screen shows it. s_ may be NULL.
+static inline void crashFromWatchdog(CrashRecord* r_, const WdStage* w_, const StallRecord* s_, uint32_t version_) {
     r_->magic = 0;
     r_->kind = CRASH_WATCHDOG;
     r_->pc = ((w_->stage & 0xFFFFu) << 8) | (w_->menu & 0xFFu);
     r_->lr = w_->loops;
-    r_->psr = 0;
+    const int stalled = (s_ != NULL) && (s_->magic == STALL_MAGIC) && (s_->pc != 0);
+    r_->psr = stalled ? s_->pc : 0;  // where the main loop was stuck (0 = not seen)
     r_->sp = w_->spare;  // the audio load when it stopped: near 1000 means the audio starved the loop
     r_->cfsr = 0;
     r_->hfsr = 0;
-    r_->bfar = 0;
-    r_->mmfar = 0;
+    r_->bfar = stalled ? s_->lr : 0;
+    r_->mmfar = stalled ? s_->sp : 0;
     r_->version = version_;
     crashSeal(r_);
 }

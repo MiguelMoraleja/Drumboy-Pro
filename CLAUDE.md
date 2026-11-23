@@ -26,7 +26,7 @@ The Makefile does not see a change of `DCACHE` or `PROFILE` (the data cache is o
 
 ## Crash reports
 
-A crash restarts the firmware and shows `CRASH k AT pppppppp` (also a line in `System/Crash.log` on the SD card; `CrashRecord.h`). To find the code: check out the commit of that firmware, `make`, then `arm-none-eabi-addr2line -f -C -e build/app.elf 0xpppppppp` (also the `lr` value from the log). Builds are reproducible, so the addresses match the released file. kind: 1 HardFault, 2 MemManage, 3 BusFault, 4 UsageFault, 5 NMI, 6 Error_Handler.
+A crash restarts the firmware and shows `CRASH k AT pppppppp` (also a line in `System/Crash.log` on the SD card; `CrashRecord.h`). To find the code: check out the commit of that firmware, `make`, then `arm-none-eabi-addr2line -f -C -e build/app.elf 0xpppppppp` (also the `lr` value from the log). Builds are reproducible, so the addresses match the released file. kind: 1 HardFault, 2 MemManage, 3 BusFault, 4 UsageFault, 5 NMI, 6 Error_Handler. Kind 7 is the watchdog (a stall): `CRASH 7 Snn Ppp @aaaaa` = stage, page (hex) and the low 20 bits of the flash address the main loop was stuck at (seen by the SysTick stall detector after 4 s; the full pc is `psr=` in `System/Crash.log`, its caller `bfar=`): run addr2line on it as above.
 
 ## Every release
 

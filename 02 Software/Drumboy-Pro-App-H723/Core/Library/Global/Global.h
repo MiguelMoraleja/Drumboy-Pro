@@ -29,6 +29,7 @@
 #include "QuantizeScreens.h"
 #include "PerformScreens.h"
 #include "LfoScreens.h"
+#include "QuantizeNowScreens.h"
 #include "NoteView.h"
 #include "Pan.h"
 #include "UndoLog.h"
@@ -1349,6 +1350,9 @@ typedef enum {
     ENC_PERF_BANK                                   = 0x95,
     ENC_PERF_FILL                                   = 0x96,
     ENC_PERF_UNDO                                   = 0x97,
+    ENC_RHYTHM_QNGRID                               = 0x98,  // RHYTHM page, QUANTIZE NOW (QuantizeNow.h): its grid, its scope and the apply step
+    ENC_RHYTHM_QNSCOPE                              = 0x99,
+    ENC_RHYTHM_QNAPPLY                              = 0x9A,
 
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
@@ -1365,7 +1369,7 @@ const EncoderFunc encoderLocalFunction[][8] = {
     // MIXER_MENU = 0x04
     {ENC_MIXER_MASTERVOLUME, ENC_MIXER_HPVOLUME, ENC_MIXER_LOVOLUME, ENC_MIXER_LIVOLUME, ENC_MIXER_LIMIXERIN, ENC_MIXER_PAN, ENC_MIXER_LIMITER, ENC_MIXER_NORMALIZE},
     // RHYTHM_MENU = 0x05
-    {ENC_RHYTHM_TEMPO, ENC_RHYTHM_MEASURE, ENC_RHYTHM_BAR, ENC_RHYTHM_QUANTIZE, ENC_RHYTHM_STRENGTH, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE},
+    {ENC_RHYTHM_TEMPO, ENC_RHYTHM_MEASURE, ENC_RHYTHM_BAR, ENC_RHYTHM_QUANTIZE, ENC_RHYTHM_STRENGTH, ENC_RHYTHM_QNGRID, ENC_RHYTHM_QNSCOPE, ENC_RHYTHM_QNAPPLY},
     // METRO_MENU = 0x06
     {ENC_METRO_ACTIVE, ENC_METRO_PRECOUNT, ENC_METRO_SAMPLE, ENC_METRO_VOLUME, ENC_METRO_PREVIEW, ENC_METRO_PREVIEW_LEVEL, ENC_METRO_AUTOSAVE, ENC_FNC_NONE},
     // IO_MENU = 0x07
@@ -1610,7 +1614,10 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_PERF_TEMPO,          ENC_RES_M, "TEMPO     ", "SONG  ", "BPM", false},
     {ENC_PERF_BANK,           ENC_RES_S, "BANK      ", "SONG  ", "   ", false},
     {ENC_PERF_FILL,           ENC_RES_S, "FILL      ", "SONG  ", "   ", false},
-    {ENC_PERF_UNDO,           ENC_RES_S, "UNDO      ", "SONG  ", "   ", false}
+    {ENC_PERF_UNDO,           ENC_RES_S, "UNDO      ", "SONG  ", "   ", false},
+    {ENC_RHYTHM_QNGRID,       ENC_RES_M, "NOW GRID  ", "RHY   ", "   ", false},
+    {ENC_RHYTHM_QNSCOPE,      ENC_RES_S, "NOW SCOPE ", "RHY   ", "   ", false},
+    {ENC_RHYTHM_QNAPPLY,      ENC_RES_S, "NOW APPLY ", "RHY   ", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -2319,7 +2326,7 @@ const uint8_t kMaxQuantize                          = kQuantizeGridCount - 1;  /
 const uint8_t kMinQuantizeStrength                  = 0;
 const uint8_t kMaxQuantizeStrength                  = 100;
 const uint8_t kQuantizeStrengthStep                 = 5;
-const uint8_t kMaxRhythmTab                         = 4;  // TEMPO, MEASURE, BAR, QUANTIZE and the QUANTIZE STRENGTH
+const uint8_t kMaxRhythmTab                         = 7;  // TEMPO, MEASURE, BAR, QUANTIZE, the QUANTIZE STRENGTH, then QUANTIZE NOW: its grid, scope and apply step
 
 const uint8_t kInitialTempo                         = 120;
 const uint8_t kInitialMeasure                       = 4;

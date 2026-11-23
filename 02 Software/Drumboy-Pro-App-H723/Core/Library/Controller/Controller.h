@@ -330,6 +330,10 @@ class Controller {
     uint8_t perfMeterDrawn[kLayerLibrarySize];
     uint32_t quantizeViewKey = 0;               // what the quantize screen was drawn from (0 = nothing)
     uint32_t quantizeViewStateDrawn = 0;
+    uint8_t qnGrid = kQuantizeGridDefault;      // QUANTIZE NOW: the grid it snaps to (set to the page's own grid when the page opens)
+    uint8_t qnScope = 0;                        // THIS LAYER, THIS BANK, ALL LAYERS
+    QnApplyState qnApply = QN_READY;
+    uint32_t qnArmKey = 0, qnArmMs = 0;         // what APPLY was armed for, and when
     uint8_t slotRepeat = 0;                     // consecutive repeats of a held UP or DOWN: after 8 the step is ten slots
     uint8_t slotStep(bool repeat_);
     uint32_t fileViewState() const;
@@ -917,6 +921,12 @@ class Controller {
     void lcd_drawRhythm_BarData();
     void lcd_drawRhythm_QuantizeData();
     void lcd_drawRhythm_StrengthData();
+    void lcd_drawRhythm_NowData();
+    void quantizeNow_step(EncoderFunc function_, bool up_);
+    void quantizeNow_apply();
+    uint32_t quantizeNow_key() const;
+    uint32_t quantizeNow_viewState() const;
+    void lcd_drawQuantizeNowData();
     // Metronome menu functions
     void lcd_drawMetroMenu();
     void lcd_drawMetro_ActiveData();

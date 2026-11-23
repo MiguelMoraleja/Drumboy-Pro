@@ -32,6 +32,7 @@ enum UndoKind : uint8_t {
     UNDO_NOTE,      // the NOTE page
     UNDO_GENERATE,  // beats generated with the long ADD press
     UNDO_RECORD,    // a recording take (one session)
+    UNDO_QUANTIZE,  // QUANTIZE NOW (RHYTHM page): the notes of every bank in its scope
 };
 
 inline bool undoJoinsByTime(UndoKind k_) { return (k_ == UNDO_FILL) || (k_ == UNDO_MOVE) || (k_ == UNDO_NOTE) || (k_ == UNDO_GENERATE); }

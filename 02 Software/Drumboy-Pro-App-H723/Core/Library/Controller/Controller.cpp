@@ -3745,6 +3745,12 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             rhythm_setQuantizeStrength(static_cast<uint8_t>(rhythm.quantizeStrength + kQuantizeStrengthStep));
             break;
 
+        case ENC_RHYTHM_QNGRID:
+        case ENC_RHYTHM_QNSCOPE:
+        case ENC_RHYTHM_QNAPPLY:
+            quantizeNow_step(encoder[encoderNum_].function, true);
+            break;
+
             // Io functions
 
         case ENC_IO_SYNCIN:
@@ -4431,6 +4437,12 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
 
         case ENC_RHYTHM_STRENGTH:
             rhythm_setQuantizeStrength((rhythm.quantizeStrength > kQuantizeStrengthStep) ? static_cast<uint8_t>(rhythm.quantizeStrength - kQuantizeStrengthStep) : kMinQuantizeStrength);
+            break;
+
+        case ENC_RHYTHM_QNGRID:
+        case ENC_RHYTHM_QNSCOPE:
+        case ENC_RHYTHM_QNAPPLY:
+            quantizeNow_step(encoder[encoderNum_].function, false);
             break;
 
             // Io functions
@@ -11063,8 +11075,20 @@ void Controller::lcd_drawRhythmMenu() {
     lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]);
     lcd.drawText("  %", kMenuSignTextSize, kMenuSignBoxX[4], kMenuSignBoxY[4]);
 
+    // QUANTIZE NOW (QuantizeNow.h): its grid starts as the page's own grid, then its scope and the apply step.
+    if (rhythm.quantize != kQuantizeGridOff) qnGrid = rhythm.quantize;
+    if (qnGrid > kQnMaxGrid) qnGrid = kQuantizeGridDefault;
+    qnApply = QN_READY;
+    for (uint8_t f = 0; f < 3; f++) {
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText(kEncoderFuncDataLibrary[ENC_RHYTHM_QNGRID + f].funcHeader, kMenuHeaderTextSize, kMenuHeaderX[5 + f], kMenuHeaderY[5 + f]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[5 + f], kMenuSignBoxY[5 + f]);
+    }
+
     // 5. DATA DRAW
     // Draw rhythm parameter values.
+    lcd_drawRhythm_NowData();
     lcd_drawRhythm_TempoData();
     lcd_drawRhythm_MeasureData();
     lcd_drawRhythm_BarData();
@@ -11142,6 +11166,20 @@ void Controller::lcd_drawRhythm_BarData() {
     // Draw LOCK status with active/inactive color.
     (rhythm.barLock) ? lcd_setMenuTextState(MAGENTA) : lcd_setMenuTextState(BLACK);
     lcd.drawText("    LOCK", kMenuTextBoxTextSize, kMenuTextBoxX[2], kMenuTextBoxY[2]);
+}
+
+void Controller::lcd_drawRhythm_NowData() {
+    /// @brief The three QUANTIZE NOW fields: its grid, its scope and the apply step.
+    char text[3][16];
+    snprintf(text[0], sizeof text[0], "%s", quantizeGrid(qnGrid).nameLongR);
+    static const char* const kScope[kQnScopes] = {"     LAYER", "      BANK", "       ALL"};
+    snprintf(text[1], sizeof text[1], "%s", kScope[qnScope < kQnScopes ? qnScope : 0]);
+    snprintf(text[2], sizeof text[2], "%10s", qnApplyName(qnApply));
+    lcd_setMenuDataState(WHITE);
+    lcd.drawText(text[0], kMenuDataTextSize, kMenuDataX[5], kMenuDataY[5]);
+    lcd.drawText(text[1], kMenuDataTextSize, kMenuDataX[6], kMenuDataY[6]);
+    lcd_setMenuDataState((qnApply == QN_SURE) ? YELLOW : ((qnApply == QN_DONE) ? CYAN : WHITE));
+    lcd.drawText(text[2], kMenuDataTextSize, kMenuDataX[7], kMenuDataY[7]);
 }
 
 void Controller::lcd_drawRhythm_StrengthData() {
@@ -23251,6 +23289,16 @@ void Controller::lcd_updateLaneView() {
     /// @brief Main loop: keeps the open page's full-area view current (redrawn at most every 80 ms
     /// while knobs turn), moves its playhead, and gives the lanes back when such a page was left.
     if (perfFillLatch && !((menu == SONG_MENU) && (songPage == 1))) perfFillLatch = false;  // the PERFORM page's FILL lasts while the page is open
+    if (qnApply != QN_READY) {  // QUANTIZE NOW: armed for five seconds and for one set of choices; DONE lasts while they stay
+        const bool here = (menu == RHYTHM_MENU) && (menuTab >= 5);
+        if (!here || (quantizeNow_key() != qnArmKey) || ((qnApply == QN_SURE) && ((HAL_GetTick() - qnArmMs) > 5000))) {
+            qnApply = QN_READY;
+            if (here) {
+                lcd_drawRhythm_NowData();
+                viewDirty = true;
+            }
+        }
+    }
     if (!laneViewHidden()) {
         if (laneViewShown != INIT_MENU) lcd_restoreLanes();
         return;
@@ -24534,6 +24582,7 @@ void Controller::lcd_drawHissLive() {
 
 uint32_t Controller::quantizeViewState() const {
     /// @brief A fingerprint of what the quantize screen shows: the grid, the strength and the selected field. Never 0.
+    if (menuTab >= 5) return quantizeNow_viewState();
     return 0x01000000u | (static_cast<uint32_t>(menuTab == 4) << 16) | (static_cast<uint32_t>(rhythm.quantizeStrength) << 8) | rhythm.quantize;
 }
 
@@ -24541,11 +24590,186 @@ void Controller::lcd_drawQuantizeViewData() {
     /// @brief The RHYTHM page's QUANTIZE and STRENGTH screen: every grid as a row of points over two beats, the
     /// chosen one lit, what it is, and what the strength does to a hit played late. Drawn from nothing whenever
     /// the grid, the strength or the selected field changes.
+    if (menuTab >= 5) {
+        lcd_drawQuantizeNowData();
+        return;
+    }
     quantizeViewStateDrawn = quantizeViewState();
     if (quantizeViewStateDrawn == quantizeViewKey) return;
+    if ((quantizeViewKey >> 24) == 0x02u) {  // coming from QUANTIZE NOW: its picture is still on the area
+        lcd.setBackColor(BLACK);
+        lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
+    }
     quantizeViewKey = quantizeViewStateDrawn;
     GsLcd g{lcd};
     qsDrawScreen(g, QsInput{rhythm.quantize, rhythm.quantizeStrength, menuTab == 4});
+}
+
+/* QUANTIZE NOW: quantize the notes already recorded, with a look first (QuantizeNow.h) -------------*/
+
+static void qnLayerBank(const Controller& c_, int8_t sel_, uint8_t& layer_) {
+    (void)c_;
+    layer_ = (sel_ >= 0) ? static_cast<uint8_t>(sel_) : static_cast<uint8_t>(0);
+}
+
+uint32_t Controller::quantizeNow_key() const {
+    /// @brief What an armed APPLY is armed for: the grid, the strength, the scope, the layer and the bank.
+    uint8_t layer;
+    qnLayerBank(*this, selectedLayerNum, layer);
+    return (static_cast<uint32_t>(qnGrid) << 24) | (static_cast<uint32_t>(rhythm.quantizeStrength) << 16) | (static_cast<uint32_t>(qnScope) << 12) | (static_cast<uint32_t>(layer) << 4) | activeSongBank;
+}
+
+uint32_t Controller::quantizeNow_viewState() const {
+    /// @brief A fingerprint of what QUANTIZE NOW shows: its choices, and the start of every note in its scope. The top byte
+    /// tells it from the QUANTIZE screen's fingerprint. Never 0.
+    uint8_t layer;
+    qnLayerBank(*this, selectedLayerNum, layer);
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(quantizeNow_key());
+    mix(qnApply);
+    mix(songInterval);
+    const uint8_t l0 = (qnScope == kQnScopeLayer) ? layer : static_cast<uint8_t>(0);
+    const uint8_t l1 = (qnScope == kQnScopeLayer) ? static_cast<uint8_t>(layer + 1) : kLayerLibrarySize;
+    const uint8_t b0 = (qnScope == kQnScopeAll) ? static_cast<uint8_t>(0) : activeSongBank;
+    const uint8_t b1 = (qnScope == kQnScopeAll) ? kBankLibrarySize : static_cast<uint8_t>(activeSongBank + 1);
+    for (uint8_t l = l0; l < l1; l++) {
+        for (uint8_t b = b0; b < b1; b++) {
+            const Bank& bank = layerLibrary[l].bankLibrary[b];
+            for (int16_t i = 0; i <= bank.lastActiveBeatNum; i++) {
+                if (bank.beatLibrary[i].getActive()) mix(bank.beatLibrary[i].getStartInterval());
+            }
+        }
+    }
+    {  // the selected layer's name and its notes are in the picture whatever the scope
+        const Bank& pb = layerLibrary[layer].bankLibrary[activeSongBank];
+        for (int16_t i = 0; i <= pb.lastActiveBeatNum; i++) {
+            if (pb.beatLibrary[i].getActive()) mix(pb.beatLibrary[i].getStartInterval());
+        }
+        for (const char* ch = layerLibrary[layer].instLoadedData.nameShortL; *ch; ch++) mix(static_cast<uint8_t>(*ch));
+    }
+    return (h & 0x00FFFFFFu) | 0x02000000u;
+}
+
+void Controller::lcd_drawQuantizeNowData() {
+    /// @brief The QUANTIZE NOW view: the choices, the totals for the scope, and the first two beats of the selected layer
+    /// before and after. Drawn from nothing whenever a choice or a note changes.
+    quantizeViewStateDrawn = quantizeNow_viewState();
+    if (quantizeViewStateDrawn == quantizeViewKey) return;
+    if ((quantizeViewKey >> 24) != 0x02u) {  // coming from the QUANTIZE screen (or nothing): clear the area
+        lcd.setBackColor(BLACK);
+        lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
+    }
+    quantizeViewKey = quantizeViewStateDrawn;
+    uint8_t layer;
+    qnLayerBank(*this, selectedLayerNum, layer);
+    GsLcd g{lcd};
+    qnDrawFrame(g);
+    char name[16], title[64];
+    layerShortName(layer, name, sizeof name);
+    snprintf(title, sizeof title, "QUANTIZE NOW   LAYER %.2s  %.12s   BANK %u", kDataLayerNum[layer], name, static_cast<unsigned>(activeSongBank + 1));
+    qnDrawTitle(g, title);
+    qnDrawScope(g, qnScope);
+    // Totals for the scope.
+    QnTotals totals;
+    memset(&totals, 0, sizeof totals);
+    const uint8_t l0 = (qnScope == kQnScopeLayer) ? layer : static_cast<uint8_t>(0);
+    const uint8_t l1 = (qnScope == kQnScopeLayer) ? static_cast<uint8_t>(layer + 1) : kLayerLibrarySize;
+    const uint8_t b0 = (qnScope == kQnScopeAll) ? static_cast<uint8_t>(0) : activeSongBank;
+    const uint8_t b1 = (qnScope == kQnScopeAll) ? kBankLibrarySize : static_cast<uint8_t>(activeSongBank + 1);
+    uint16_t starts[kBeatLibrarySize];
+    for (uint8_t l = l0; l < l1; l++) {
+        for (uint8_t b = b0; b < b1; b++) {
+            const Bank& bank = layerLibrary[l].bankLibrary[b];
+            uint16_t n = 0;
+            for (int16_t i = 0; (i <= bank.lastActiveBeatNum) && (n < kBeatLibrarySize); i++) {
+                if (bank.beatLibrary[i].getActive()) starts[n++] = bank.beatLibrary[i].getStartInterval();
+            }
+            qnAddBank(totals, starts, n, qnGrid, rhythm.quantizeStrength, songInterval);
+        }
+    }
+    qnDrawTotals(g, totals);
+    qnDrawApply(g, qnApply);
+    // The picture: the selected layer's active bank.
+    {
+        const Bank& bank = layerLibrary[layer].bankLibrary[activeSongBank];
+        uint16_t n = 0;
+        for (int16_t i = 0; (i <= bank.lastActiveBeatNum) && (n < kBeatLibrarySize); i++) {
+            if (bank.beatLibrary[i].getActive()) starts[n++] = bank.beatLibrary[i].getStartInterval();
+        }
+        QnNote notes[kQnMaxNotes];
+        const uint8_t count = qnPreview(starts, n, qnGrid, rhythm.quantizeStrength, songInterval, notes);
+        qnDrawPicture(g, qnGrid, rhythm.quantizeStrength, notes, count, songInterval);
+    }
+}
+
+void Controller::quantizeNow_step(EncoderFunc function_, bool up_) {
+    /// @brief Turns one of the QUANTIZE NOW fields: its GRID, its SCOPE, and APPLY (right twice applies, left disarms).
+    switch (function_) {
+        case ENC_RHYTHM_QNGRID:
+            if (up_ && (qnGrid < kQnMaxGrid)) qnGrid++;
+            if (!up_ && (qnGrid > 0)) qnGrid--;
+            break;
+        case ENC_RHYTHM_QNSCOPE:
+            if (up_ && (qnScope + 1 < kQnScopes)) qnScope++;
+            if (!up_ && (qnScope > 0)) qnScope--;
+            break;
+        case ENC_RHYTHM_QNAPPLY: {
+            bool apply = false;
+            const QnApplyState before = qnApply;
+            qnApply = qnApplyTurn(qnApply, up_, apply);
+            if ((before != QN_SURE) && (qnApply == QN_SURE)) {
+                qnArmKey = quantizeNow_key();
+                qnArmMs = HAL_GetTick();
+            }
+            if (apply) quantizeNow_apply();
+            break;
+        }
+        default:
+            return;
+    }
+    if (function_ != ENC_RHYTHM_QNAPPLY) qnApply = QN_READY;  // new choices: nothing armed
+    lcd_drawRhythm_NowData();
+    viewDirty = true;
+}
+
+void Controller::quantizeNow_apply() {
+    /// @brief Snaps the notes of the scope to the grid at the page's strength: one undo step for every bank it touches,
+    /// each bank rebuilt (sorted, notes landing on the same point joined, ends and fills recomputed) and swapped in with
+    /// the sequencer interrupt held off, so it is safe while playing.
+    uint8_t layer;
+    qnLayerBank(*this, selectedLayerNum, layer);
+    const uint8_t l0 = (qnScope == kQnScopeLayer) ? layer : static_cast<uint8_t>(0);
+    const uint8_t l1 = (qnScope == kQnScopeLayer) ? static_cast<uint8_t>(layer + 1) : kLayerLibrarySize;
+    const uint8_t b0 = (qnScope == kQnScopeAll) ? static_cast<uint8_t>(0) : activeSongBank;
+    const uint8_t b1 = (qnScope == kQnScopeAll) ? kBankLibrarySize : static_cast<uint8_t>(activeSongBank + 1);
+    undoRecordOpen = false;
+    undoLog.startGroup();
+    for (uint8_t l = l0; l < l1; l++) {
+        for (uint8_t b = b0; b < b1; b++) {
+            const uint16_t slot = undoLog.add(l, b);
+            memcpy(static_cast<void*>(&undoStore[slot]), static_cast<const void*>(&layerLibrary[l].bankLibrary[b]), sizeof(Bank));
+        }
+    }
+    undoLog.lastKind = UNDO_QUANTIZE;
+    undoLog.lastLayer = 0xFF;
+    for (uint8_t l = l0; l < l1; l++) {
+        for (uint8_t b = b0; b < b1; b++) {
+            IWDG1->KR = 0xAAAA;
+            layerSongScratch = layerLibrary[l].bankLibrary[b];
+            for (uint8_t i = 0; i < kBeatLibrarySize; i++) {
+                Beat& beat = layerSongScratch.beatLibrary[i];
+                if (!beat.getActive()) continue;
+                beat.setStartInterval(quantizeSnap(beat.getStartInterval(), qnGrid, rhythm.quantizeStrength, songInterval));
+            }
+            beatListRebuild(layerSongScratch, songInterval);
+            __disable_irq();
+            layerLibrary[l].bankLibrary[b] = layerSongScratch;
+            layerSong_calculatePlayBeatNum(l, b, playInterval);
+            __enable_irq();
+        }
+    }
+    for (uint8_t l = l0; l < l1; l++) lcd_drawSong(l, activeSongBank);
 }
 
 /* LFO overview: the full-area view of the LFO page (LfoView.h, LfoScreens.h) ---------------------*/

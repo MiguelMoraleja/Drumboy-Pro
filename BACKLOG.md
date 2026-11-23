@@ -1148,3 +1148,7 @@ First slice of item 3: the four continuous destinations FREQ and RESONANCE of fi
 - Decoded: a watchdog restart (the main loop did not run for 6 s), in stage 15 (MIDI notes in; this stage also holds the nanoKONTROL handler and the filter LFO update), on page 0x16 (the SONG page, chain or PERFORM), audio load 24 % (so not an overload).
 - Nothing found by reading: no loop or wait in the code that runs in that stage. To see which of the three parts stalls, the nanoKONTROL handler and the filter LFO update now have their own stages (18 and 19, `WD_STAGE_CC`, `WD_STAGE_LFO`) in the next test build; stage 15 then means the note loop itself.
 - Open: what the owner was doing (nanoKONTROL or MIDI notes in, which SONG page, playing or stopped) and whether it repeats.
+
+### Quantize now: a utility for notes already recorded (proposal, mockup 2026-11-23; owner chose "quantize existing notes")
+
+A screen with the RHYTHM page's grid and strength and a scope (this layer, this bank, all layers): the selected layer's notes over two beats as they are and where each would land (a line between), a bar per note for how far it moves, counts (notes, move, on grid, largest move), and APPLY (one undo step). Nothing changes until APPLY. Built from `Quantize.h` (`quantizeSnap` with the spec and the strength), the beat lists and the undo log (`undo_captureAllLayers`). Open: where the page lives, which gesture applies it, and whether the strength applies as in recording (partial move) or always to the grid. App: Screen ideas tab, "Quantize now".

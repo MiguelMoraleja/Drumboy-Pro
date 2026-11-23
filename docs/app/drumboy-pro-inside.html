@@ -873,6 +873,14 @@ const P = {
     }
   },
 };
+// Scaled text (the proposal for the Performance view): the firmware's own 10x14 glyphs, every pixel drawn as k x k.
+P.big = function (str, x, y, k, c) {
+  const F = LCD_FONTS["10"], cw = (F.w + F.s) * k;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i), gl = F.g[code < 128 ? LCD_FONTMAP[code] : 52];
+    for (let r = 0; r < F.h; r++) for (let b = 0; b < F.w; b++) if ((gl[r] >> (F.w - 1 - b)) & 1) P.rect(x + i * cw + b * k, y + r * k, k, k, c);
+  }
+};
 const stepX = s => SONG_X + Math.floor(s * SONG_W / STEPS);
 function mMenu(code, num) {
   P.rect(60, 46, 32, 24, LC.K);
@@ -1088,8 +1096,8 @@ const IDEAS = [
       mField(0, "LEVEL", "74"); mField(1, "BUS", "FILT"); mField(2, "ECHO", "35", "  %"); mField(3, "VERB", "62", "  %");
       mField(4, "MODE", "DUB"); mField(5, "FEEDBACK", "55", "  %"); mField(6, "ECHO RTN", "80", "  %"); mField(7, "VERB RTN", "70", "  %");
       mBig();
-      // Same numbers as the firmware (DubView.h, lcd_drawDeskColumn).
-      const AMB = "#ffa600", X0 = 24, STEP = 76, W = 73;
+      // Same numbers as the firmware (DubView.h, lcd_drawDeskColumn), 13 columns of 70 px since V1.21.
+      const AMB = "#ffa600", X0 = 24, STEP = 70, W = 67;
       const lev = [82, 74, 60, 55, 70, 45, 66, 40, 50, 58], ech = [0, 35, 0, 20, 100, 45, 30, 10, 60, 20], vrb = [5, 62, 8, 20, 55, 10, 30, 0, 15, 70];
       const bus = [1, 0, 0, 1, 0, 0, 0, 0, 0, 0], pan = [20, 20, 6, 31, 20, 20, 20, 12, 20, 20], met = [70, 58, 40, 12, 50, 20, 0, 30, 8, 66];
       const sel = 1, muted = 6, FY = 246, FH = 128, CAP = 11;
@@ -1099,11 +1107,12 @@ const IDEAS = [
         P.disc(cx, cy, 10, LC.G25); P.ring(cx, cy, 11, c);
         const [px, py] = pt(9, pc); P.line(cx, cy, px, py, AMB); P.line(cx + 1, cy, px + 1, py, AMB);
       };
-      const ladder = (x, lit, on) => { for (let k = 0; k < 13; k++) { const y = FY + FH - (k + 1) * 9, c = on && k < lit ? (k < 9 ? LC.GN : k < 12 ? LC.YE : LC.RE) : LC.G25; P.rect(x + 50, y, 7, 7, c); } };
+      const ladder = (x, lit, on) => { for (let k = 0; k < 13; k++) { const y = FY + FH - (k + 1) * 9, c = on && k < lit ? (k < 9 ? LC.GN : k < 12 ? LC.YE : LC.RE) : LC.G25; P.rect(x + 46, y, 7, 7, c); } };
       const column = (col) => {
-        const x = X0 + col * STEP, ret = col >= 10, isSel = col === sel;
+        const x = X0 + col * STEP, line = col === 12, ret = col >= 10 && !line, isSel = col === sel;
         let l1, l2, level, k, kn, on = true, aud = true, bs = 0, pn = 20, lamp, pn_heard = false;
-        if (!ret) { l1 = String(col + 1).padStart(2, "0"); l2 = LAYER_NAMES[col].slice(0, 9); level = lev[col]; k = [ech[col], vrb[col]]; kn = ["ECHO", "VERB"]; bs = bus[col]; pn = pan[col]; aud = col !== muted; lamp = col === muted; pn_heard = bs === 1; }
+        if (line) { l1 = "IN"; l2 = "LINE"; level = 75; k = [40, 25]; kn = ["ECHO", "VERB"]; bs = 0; lamp = false; }
+        else if (!ret) { l1 = String(col + 1).padStart(2, "0"); l2 = LAYER_NAMES[col].slice(0, 8); level = lev[col]; k = [ech[col], vrb[col]]; kn = ["ECHO", "VERB"]; bs = bus[col]; pn = pan[col]; aud = col !== muted; lamp = col === muted; pn_heard = bs === 1; }
         else if (col === 10) { l1 = "ECHO"; l2 = "DELAY"; level = 80; k = [69, 30]; kn = ["FDBK", "DAMP"]; lamp = true; }
         else { l1 = "VERB"; l2 = "REVERB"; level = 70; k = [60, 40]; kn = ["DECAY", "SIZE"]; lamp = true; }
         const c = !aud || !on ? LC.G35 : (isSel ? AMB : (col % 2 ? LC.G75 : LC.W));
@@ -1112,32 +1121,32 @@ const IDEAS = [
         if (isSel) { P.rect(x + 1, 134, W - 2, 20, AMB); P.text(l1, x + 5, 137, 5, LC.K, "L", AMB); P.text(l2, x + 5, 145, 5, LC.K, "L", AMB); }
         else { P.frame(x + 1, 134, W - 2, 20, LC.G50); P.text(l1, x + 5, 137, 5, c); P.text(l2, x + 5, 145, 5, c); }
         // 2. bus switch / ON
-        if (!ret) { [["FILT", 0], ["DIR", 1]].forEach(([n, v], i) => { const cx = x + 1 + i * 36, lit = bs === v; if (lit) { P.rect(cx, 158, 35, 11, aud ? LC.G75 : LC.G35); P.text(n, cx + Math.floor((35 - n.length * 7) / 2) + 1, 160, 5, LC.K, "L", aud ? LC.G75 : LC.G35); } else { P.frame(cx, 158, 35, 11, LC.G35); P.text(n, cx + Math.floor((35 - n.length * 7) / 2) + 1, 160, 5, LC.G50); } }); }
+        if (!ret) { [["FILT", 0], ["DIR", 1]].forEach(([n, v], i) => { const cx = x + 1 + i * 33, lit = bs === v; if (lit) { P.rect(cx, 158, 32, 11, aud ? LC.G75 : LC.G35); P.text(n, cx + Math.floor((32 - n.length * 7) / 2) + 1, 160, 5, LC.K, "L", aud ? LC.G75 : LC.G35); } else { P.frame(cx, 158, 32, 11, LC.G35); P.text(n, cx + Math.floor((32 - n.length * 7) / 2) + 1, 160, 5, LC.G50); } }); }
         else { P.rect(x + 1, 158, W - 2, 11, LC.G75); P.text("ON", x + Math.floor((W - 14) / 2) + 1, 160, 5, LC.K, "L", LC.G75); }
         // 3. knobs
-        [18, 55].forEach((ox, i) => { const cx = x + ox; knob(cx, 189, k[i], aud ? LC.G75 : LC.G35); P.text(kn[i], cx - Math.floor(kn[i].length * 7 / 2) + 1, 203, 5, LC.G75); const v = k[i] + "%"; P.text(v, cx - Math.floor(v.length * 7 / 2) + 1, 213, 5, aud ? LC.W : LC.G50); });
+        [16, 51].forEach((ox, i) => { const cx = x + ox; knob(cx, 189, k[i], aud ? LC.G75 : LC.G35); P.text(kn[i], cx - Math.floor(kn[i].length * 7 / 2) + 1, 203, 5, LC.G75); const v = k[i] + "%"; P.text(v, cx - Math.floor(v.length * 7 / 2) + 1, 213, 5, aud ? LC.W : LC.G50); });
         // 4. pan bar
-        if (!ret) {
-          P.frame(x + 1, 228, 41, 7, pn_heard ? LC.G50 : LC.G35); P.rect(x + 1 + 20, 226, 1, 11, pn_heard ? LC.G50 : LC.G35);
-          P.rect(x + 2 + Math.floor(pn * 36 / 40), 229, 3, 5, pn_heard ? c : LC.G35);
+        if (!ret && !line) {
+          P.frame(x + 1, 228, 33, 7, pn_heard ? LC.G50 : LC.G35); P.rect(x + 1 + 16, 226, 1, 11, pn_heard ? LC.G50 : LC.G35);
+          P.rect(x + 2 + Math.floor(pn * 29 / 40), 229, 3, 5, pn_heard ? c : LC.G35);
           const lbl = pn === 20 ? "C" : pn < 20 ? "L" + String(20 - pn).padStart(2) : "R" + String(pn - 20).padStart(2);
-          P.text(lbl, x + 46, 228, 5, pn_heard ? LC.W : LC.G50);
+          P.text(lbl, x + 38, 228, 5, pn_heard ? LC.W : LC.G50);
         }
         // 5. fader
         P.text("10", x + 2, FY - 3, 5, LC.G50); P.text("5", x + 9, FY + 61, 5, LC.G50); P.text("0", x + 9, FY + FH - 5, 5, LC.G50);
-        for (let t = 0; t <= 10; t++) { const ty = FY + 5 + Math.floor(t * (FH - CAP) / 10); P.rect(x + 19 + (t % 5 ? 3 : 0), ty, t % 5 ? 4 : 7, 1, LC.G50); }
-        P.rect(x + 30, FY, 2, FH, LC.G35);
+        for (let t = 0; t <= 10; t++) { const ty = FY + 5 + Math.floor(t * (FH - CAP) / 10); P.rect(x + 17 + (t % 5 ? 3 : 0), ty, t % 5 ? 4 : 7, 1, LC.G50); }
+        P.rect(x + 27, FY, 2, FH, LC.G35);
         const cy = FY + Math.floor((100 - level) * (FH - CAP) / 100);
-        P.rect(x + 20, cy, 21, CAP, c); P.rect(x + 20, cy + 5, 21, 1, LC.K);
+        P.rect(x + 17, cy, 21, CAP, c); P.rect(x + 17, cy + 5, 21, 1, LC.K);
         ladder(x, !ret && aud ? Math.ceil(met[col] * 13 / 100) : 0, true);
-        const lv = String(level); P.text(lv, x + 30 - Math.floor(lv.length * 7 / 2), 379, 5, aud && on ? LC.W : LC.G50);
+        const lv = String(level); P.text(lv, x + 27 - Math.floor(lv.length * 7 / 2), 379, 5, aud && on ? LC.W : LC.G50);
         // 6. foot plate
         P.frame(x + 1, 394, W - 2, 38, LC.G50);
-        P.text(ret ? (col === 10 ? "E" : "V") : String(col + 1).padStart(2, "0"), x + (ret ? 14 : 8), 400, 10, c);
-        P.rect(x + 46, 400, 18, 14, lamp ? (ret ? LC.GN : LC.RE) : LC.G25);
-        P.text(ret ? "ON" : "MUTE", x + 46 + (ret ? 3 : -2), 418, 5, LC.G50);
+        P.text(line ? "IN" : ret ? (col === 10 ? "E" : "V") : String(col + 1).padStart(2, "0"), x + (ret ? 14 : 8), 400, 10, c);
+        P.rect(x + 40, 400, 18, 14, lamp ? (ret ? LC.GN : LC.RE) : LC.G25);
+        P.text(ret ? "ON" : "MUTE", x + 40 + (ret ? 3 : -2), 418, 5, LC.G50);
       };
-      for (let col = 0; col < 12; col++) column(col);
+      for (let col = 0; col < 13; col++) column(col);
     } },
   { id: "editor", group: 0, name: "Step edit", item: "45", size: "L", today: false, built: "V1.15",
     note: ["",
@@ -1163,6 +1172,60 @@ const IDEAS = [
         if (ch < 100) P.frame(x + 3, 425 - chh, 14, chh, c); else P.rect(x + 3, 425 - chh, 14, chh, LC.G75);
       });
       P.text("127", 74, 216, 5, LC.G50, "R", null); P.text("100", 74, 362, 5, LC.G50, "R", null);
+    } },
+  { id: "perform", group: 0, name: "Performance", item: "45", size: "M", today: false,
+    note: ["",
+           "Proposal (not built): a page for playing live. While it is open the lane area shows what a performer needs at arm's length. At the top, the bar and beat as big digits, the tempo, and the chain: the playing step lit and filled up to the loop, with what comes next. Below, one tile per layer: its number, name and state in big letters (MUTE red, SOLO yellow, a layer silenced by a solo grey), its 16-step pattern with the playhead, and a live level bar. The big digits need one new routine, the firmware's 10x14 glyphs drawn with every pixel as a 3x3 block (a few lines, no new font). Same pattern as the other screens: the numbers in a hardware-free header with a host test, the drawing in a header-only template with a test on a pixel buffer. Nothing new is computed in the audio code: it reads the mute and solo flags, the playhead, the chain state and the layer meters that already exist. Where the page lives is open (a second step of the SONG key, or after DUB in the MIXER cycle)."],
+    draw() {
+      mMenu("PF", 6);
+      mField(0, "TEMPO", "120.0"); mField(1, "BANK", "2");
+      mField(4, "STEP", "   2 OF  4"); mField(5, "REPEATS", "2"); mField(6, "FILL", "OFF"); mField(7, "UNDO", "3");
+      mBig();
+      // --- the top band: bar, tempo, chain
+      P.text("BAR", 30, 138, 7, LC.G75); P.big("03", 30, 150, 3, LC.W);
+      P.text("BEAT 2 OF 4", 30, 196, 5, LC.G75);
+      P.rect(178, 140, 1, 62, LC.G25);
+      P.text("TEMPO", 194, 138, 7, LC.G75); P.big("120", 194, 150, 3, LC.W); P.text("BPM", 194, 196, 5, LC.G75);
+      P.rect(376, 140, 1, 62, LC.G25);
+      P.text("CHAIN", 392, 138, 7, LC.G75); P.text("STEP 2 OF 4   LOOP 1 OF 2", 462, 138, 7, LC.CY);
+      const steps = [[1, 4], [2, 2], [1, 4], [3, 2]], unit = 40;
+      let cx = 392;
+      steps.forEach(([bank, rep], k) => {
+        const w = rep * unit - 4, c = k === 1 ? LC.CY : LC.G75;
+        if (k === 1) P.rect(cx, 156, unit - 3, 34, LC.G35);
+        P.frame(cx, 156, w, 34, c);
+        for (let j = 1; j < rep; j++) for (let y = 160; y < 188; y += 3) P.rect(cx + j * unit - 3, y, 1, 1, c);
+        P.text(String(bank), cx + 6, 163, 10, c, "L", null);
+        cx += rep * unit;
+      });
+      P.rect(392, 198, 540 - 140, 1, LC.G50);
+      P.text("NEXT: STEP 3  BANK 1", 392, 204, 5, LC.G50);
+      P.rect(21, 214, 918, 1, LC.G25);
+      // --- one tile per layer
+      const muted = [3, 6], solo = [], pos = 6, hits = EUC.map(([n, k, r]) => euclidHits(n, k, r));
+      const peak = [78, 60, 44, 0, 52, 30, 0, 38, 22, 66];
+      for (let i = 0; i < 10; i++) {
+        const x = 24 + i * 92, w = 88, isMute = muted.includes(i), isSolo = solo.includes(i);
+        const state = isMute ? "MUTE" : isSolo ? "SOLO" : "ON", sc = isMute ? LC.RE : isSolo ? LC.YE : LC.GN;
+        const dim = isMute;
+        P.frame(x, 220, w, 214, dim ? LC.G25 : LC.G50);
+        P.big(String(i + 1).padStart(2, "0"), x + 6, 226, 2, dim ? LC.G35 : LC.W);
+        P.text(LAYER_NAMES[i].slice(0, 9), x + 6, 258, 7, dim ? LC.G35 : LC.G75);
+        P.rect(x + 6, 274, w - 12, 30, isMute || isSolo ? sc : LC.K);
+        if (!isMute && !isSolo) P.frame(x + 6, 274, w - 12, 30, LC.G35);
+        P.text(state, x + w / 2, 282, 10, isMute || isSolo ? LC.K : LC.GN, "C", isMute || isSolo ? sc : LC.K);
+        // pattern: 16 steps, hits filled, the playhead outlined
+        const n = EUC[i][0];
+        for (let s = 0; s < 16; s++) {
+          const on = hits[i].includes(s % n), sx = x + 6 + s * 5, here = s === pos;
+          P.rect(sx, 312, 4, 6, on ? (dim ? LC.G35 : LC.CY) : LC.G25);
+          if (here) P.rect(sx, 320, 4, 2, LC.YE);
+        }
+        // level bar
+        const bh = isMute ? 0 : Math.round(peak[i] * 100 / 100);
+        P.rect(x + w / 2 - 10, 330, 20, 100, LC.G25);
+        for (let k = 0; k < 13; k++) { const lit = k < Math.ceil(bh * 13 / 100); P.rect(x + w / 2 - 10, 430 - (k + 1) * 7.6, 20, 5, lit ? (k < 9 ? LC.GN : k < 12 ? LC.YE : LC.RE) : LC.G25); }
+      }
     } },
 ];
 // --- Full-area views: the lane area (920x310) shows one feature while its page is open ---

@@ -22,7 +22,7 @@ const uint16_t kDeskMonitorY = 433;  // the last MIDI controller message (5x7 te
 const uint16_t kDeskMarkY = 131;  // the strips of the MIDI controller are marked above the plates (MidiCc.h)
 const uint16_t kDeskBusY = 158, kDeskBusHeight = 11, kDeskBusCell = 32;
 const uint16_t kDeskKnobY = 189, kDeskKnobRadius = 11;             // centre of the knobs
-const uint16_t kDeskKnobX[2] = {18, 49};                           // knob centres from the column's x
+const uint16_t kDeskKnobX[2] = {16, 51};                           // knob centres from the column's x
 const uint16_t kDeskKnobLabelY = 203, kDeskKnobValueY = 213;
 const uint16_t kDeskPanY = 228, kDeskPanHeight = 7;
 const uint16_t kDeskFaderY = 246, kDeskFaderHeight = 128, kDeskCapHeight = 11;

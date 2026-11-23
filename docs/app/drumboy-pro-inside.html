@@ -1082,7 +1082,7 @@ const IDEAS = [
     } },
   { id: "mix", group: 0, name: "Dub mixer", item: "45, 46, 47, 49", size: "L, in phases", today: false, built: "V1.15",
     note: ["",
-           "Built in V1.15 (waiting for the hardware test), in the style of an old mixing console: thirteen columns fill the whole lane area, the ten layers, the ECHO and VERB returns. Each column has a scribble plate (amber and filled for the selected strip), the bus switch (FILT or DIR), two knobs with their values (the ECHO and VERB sends; FDBK and DAMP on the echo, DECAY and SIZE on the reverb), a pan bar, a shorter fader with its scale and an LED ladder meter, and a foot plate with the channel number and a lamp (MUTE red, the returns ON green). Not built yet: the filter knob per strip, the line-in strip, the DUB FILTER dial, master meters, throws. Design: docs/dub-mixer-design.md."],
+           "Built in V1.15 (waiting for the hardware test), in the style of an old mixing console: thirteen columns fill the whole lane area: the ten layers, the ECHO and VERB returns and (V1.21) the LINE IN channel. Each column has a scribble plate (amber and filled for the selected strip), the bus switch (FILT or DIR), two knobs with their values (the ECHO and VERB sends; FDBK and DAMP on the echo, DECAY and SIZE on the reverb), a pan bar, a shorter fader with its scale and an LED ladder meter, and a foot plate with the channel number and a lamp (MUTE red, the returns ON green). Not built yet: the filter knob per strip, the line-in strip, the DUB FILTER dial, master meters, throws. Design: docs/dub-mixer-design.md."],
     draw() {
       mMenu("DB", 2);
       mField(0, "LEVEL", "74"); mField(1, "BUS", "FILT"); mField(2, "ECHO", "35", "  %"); mField(3, "VERB", "62", "  %");

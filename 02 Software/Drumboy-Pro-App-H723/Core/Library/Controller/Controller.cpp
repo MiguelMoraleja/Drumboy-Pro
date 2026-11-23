@@ -11479,6 +11479,19 @@ void Controller::lcd_drawFilter_FrequencyData(uint8_t filterNum_) {
     // Draw HZ/KHZ sign according to current frequency magnitude.
     lcd_setMenuSignState(CYAN);
 
+    // While the LFO moves it (playing), the field shows the frequency it gives now, in yellow (like the layer's LFO values).
+    const uint32_t liveKey = filter_liveKey(filterNum_, false);
+    filterLiveDrawn[filterNum_][0] = liveKey;
+    if (liveKey != 0) {
+        char text[16];
+        const bool khz = lfoFreqLabel(filter[filterNum_].modHz, text, sizeof text);
+        lcd.drawText(khz ? "KHZ" : " HZ", kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]);
+        lcd_setMenuDataState(YELLOW);
+        lcd.drawText(text, kMenuDataTextSize, kMenuDataX[3], kMenuDataY[3]);
+        lcd_drawFilter_LfoBox(filterNum_, 3);
+        return;
+    }
+
     // Draw frequency unit (HZ or KHZ)
     (kFilterFrequencyDataLibrary[filter[filterNum_].frequency].data < 1000) ? lcd.drawText(" HZ", kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]) : lcd.drawText("KHZ", kMenuSignTextSize, kMenuSignBoxX[3], kMenuSignBoxY[3]);
     // 2. VALUE DRAW
@@ -11498,9 +11511,25 @@ void Controller::lcd_drawFilter_ResonanceData(uint8_t filterNum_) {
     lcd_setMenuDataState(WHITE);
 
     // 2. VALUE DRAW
-    // Draw resonance text.
+    // Draw resonance text (in yellow with what the LFO gives, while it moves the resonance).
+    const uint32_t liveKey = filter_liveKey(filterNum_, true);
+    filterLiveDrawn[filterNum_][1] = liveKey;
+    if (liveKey != 0) {
+        lcd_setMenuDataState(YELLOW);
+        lcd.drawText(kNumberDataLibrary[filter[filterNum_].modRes].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
+        lcd_drawFilter_LfoBox(filterNum_, 4);
+        return;
+    }
     lcd.drawText(kNumberDataLibrary[filter[filterNum_].resonance].nameLongR, kMenuDataTextSize, kMenuDataX[4], kMenuDataY[4]);
     lcd_drawFilter_LfoBox(filterNum_, 4);
+}
+
+uint32_t Controller::filter_liveKey(uint8_t filterNum_, bool reson_) const {
+    /// @brief 0 when the field shows its set value; else a number that changes with what the LFO gives (the field's text).
+    const Filter& f = filter[filterNum_];
+    if (!f.modActive) return 0;
+    if (reson_) return (f.lfoReson != 0) ? (1u + f.modRes) : 0u;
+    return (f.lfoFreq != 0) ? lfoFreqLabelKey(f.modHz) : 0u;
 }
 
 void Controller::lcd_drawFilter_LfoBox(uint8_t filterNum_, uint8_t tab_) {
@@ -24911,6 +24940,18 @@ void Controller::lfo_updateModules() {
             f.modHz = hz;
             f.modRes = res;
             f.modActive = true;
+        }
+    }
+    // The open FILTER page shows what the LFO gives (25 times a second at most), and the set values again when it stops.
+    const bool page0 = (menu == FILTER_0_MENU), page1 = (menu == FILTER_1_MENU);
+    if ((page0 || page1) && ((HAL_GetTick() - filterLiveTick) >= 40)) {
+        const uint8_t n = page1 ? 1 : 0;
+        const bool freqChanged = (filter_liveKey(n, false) != filterLiveDrawn[n][0]);
+        const bool resChanged = (filter_liveKey(n, true) != filterLiveDrawn[n][1]);
+        if (freqChanged || resChanged) {
+            filterLiveTick = HAL_GetTick();
+            if (freqChanged) lcd_drawFilter_FrequencyData(n);
+            if (resChanged) lcd_drawFilter_ResonanceData(n);
         }
     }
 }

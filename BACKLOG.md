@@ -1128,7 +1128,9 @@ First slice of item 3: the four continuous destinations FREQ and RESONANCE of fi
 - **File:** an `LFD` block (marker, version 1, four numbers) after the `QNT` block, read back only when that block was whole; a song without it, NEW and a load of an older song have no LFO on a filter; the autosave CRC includes it. Not in drumkit files.
 - **Not yet:** the layer's PAN, the effects' parameters and wet, the reverb, the EQ bands (the same `lfoModIndex` pattern fits them; each needs its UI slot and its smoothing); an LFO that restarts at each hit (backlog 25); the LFO value shown moving on the filter page.
 
-**Status: built in V1.21 (test build, not released). Done when** (on the unit): a sine LFO (rate about 1 bar, depth 100 %) on filter 1 FREQ sweeps the sound smoothly and audibly while playing, with no clicks, and the cutoff comes back to the set value when stopped; RESONANCE moves the peak; two filters with different LFOs work together; the assignments save and load with the song; `UDR` and `OVR` stay clear.
+**Live values (owner's report 2026-11-23, "the applied values do not show"):** while the LFO moves a filter, its FREQ field (with the HZ or KHZ unit) and its RESONANCE field show the value the LFO gives now, in yellow, like the layer's LFO values (item 1); 25 redraws a second at most, only when the shown text changes; the set value comes back in white when the sequencer stops or the LFO is taken off (`lfoFreqLabel`, `filter_liveKey`, `test_lfomod`).
+
+**Status: built in V1.21 (test build, not released); the owner tested the LFOs on the frequency: they work. Done when** (on the unit): a sine LFO (rate about 1 bar, depth 100 %) on filter 1 FREQ sweeps the sound smoothly and audibly while playing, with no clicks, and the cutoff comes back to the set value when stopped; RESONANCE moves the peak; two filters with different LFOs work together; the assignments save and load with the song; `UDR` and `OVR` stay clear.
 
 
 ## 70. DUB desk: LINE IN channel and harder returns (V1.21 test build)

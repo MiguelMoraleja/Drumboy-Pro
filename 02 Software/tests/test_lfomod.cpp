@@ -1,6 +1,7 @@
 // Host-side tests for the LFOs on the filters (Global/LfoMod.h): the frequency sweep, the resonance offset,
 // the hysteresis and the song block.
 
+#include <string.h>
 #include <cmath>
 #include <cstdio>
 
@@ -111,6 +112,17 @@ int main() {
     testIndex();
     testHysteresis();
     testBlock();
+    {  // the label of a frequency the LFO moved: the format of the set values
+        char t[16];
+        CHECK(!lfoFreqLabel(440.4f, t, sizeof t) && strcmp(t, "       440") == 0, "440 Hz: '%s'", t);
+        CHECK(!lfoFreqLabel(10.0f, t, sizeof t) && strcmp(t, "        10") == 0, "10 Hz");
+        CHECK(!lfoFreqLabel(999.4f, t, sizeof t) && strcmp(t, "       999") == 0, "999 Hz");
+        CHECK(lfoFreqLabel(999.5f, t, sizeof t) && strcmp(t, "       1.0") == 0, "1.0 kHz: '%s'", t);
+        CHECK(lfoFreqLabel(12345.0f, t, sizeof t) && strcmp(t, "      12.3") == 0, "12.3 kHz: '%s'", t);
+        CHECK(!lfoFreqLabel(-5.0f, t, sizeof t) && strcmp(t, "         0") == 0, "negative is 0");
+        CHECK(lfoFreqLabelKey(440.4f) == lfoFreqLabelKey(440.2f) && lfoFreqLabelKey(440.4f) != lfoFreqLabelKey(441.0f), "key follows the shown Hz");
+        CHECK(lfoFreqLabelKey(5000.0f) == lfoFreqLabelKey(5030.0f) && lfoFreqLabelKey(5000.0f) != lfoFreqLabelKey(5100.0f) && lfoFreqLabelKey(999.0f) != lfoFreqLabelKey(1000.0f), "key follows the shown kHz");
+    }
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

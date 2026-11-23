@@ -304,6 +304,8 @@ class Controller {
     bool ccPendingSet[2][kCcStrips];            // a value the setter refused (its mix transition was running) is tried again each pass
     uint8_t ccPendingValue[2][kCcStrips];       // [0] faders, [1] knobs
     uint32_t lfoModTick = 0;
+    uint32_t filterLiveDrawn[2][2] = {{0, 0}, {0, 0}};      // what the FREQ and RESONANCE fields of each filter show now: 0 = the set value, else the LFO's (a key)
+    uint32_t filterLiveTick = 0;
     volatile uint8_t dubThrow[kDubStrips];      // the throws held on the controller's S and R buttons (THROW_ECHO, THROW_VERB), per layer
     float dubThrowEnv[kDubStrips][2];           // their smoothed envelopes, stepped once per audio block
     int16_t ccJogPending = 0;                   // jog clicks not yet applied to the echo time (the setter refuses while a transition runs)
@@ -324,6 +326,7 @@ class Controller {
     void lfo_updateModules();                   // main loop: the LFOs on the filters (LfoMod.h), while the sequencer plays
     void filter_setLfo(uint8_t filterNum_, bool reson_, uint8_t lfo_);
     void lcd_drawFilter_LfoBox(uint8_t filterNum_, uint8_t tab_);
+    uint32_t filter_liveKey(uint8_t filterNum_, bool reson_) const;
     void midi_serviceCc();                      // main loop: applies the controller's latest values once per pass
     uint8_t cc_current(CcKind kind_, uint8_t column_) const;
     bool cc_apply(CcKind kind_, uint8_t column_, uint8_t percent_);  // true when the parameter reached the value

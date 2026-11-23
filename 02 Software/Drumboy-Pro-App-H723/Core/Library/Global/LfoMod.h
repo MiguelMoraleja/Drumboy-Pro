@@ -15,6 +15,8 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <math.h>
 
 #include "DspMath.h"  // isFiniteBits: a float compare does not catch NaN in the firmware build
 
@@ -70,6 +72,24 @@ inline bool lfoModReadBlock(uint8_t* assign_, const uint8_t* in_, uint16_t size_
     if ((size_ < kLfoModFileSize) || (in_[0] != 'L') || (in_[1] != 'F') || (in_[2] != 'D') || (in_[3] != 1)) return false;
     for (uint8_t i = 0; i < kLfoModDests; i++) assign_[i] = (in_[4 + i] > kLfoMaxNumber) ? 0 : in_[4 + i];
     return true;
+}
+
+// What the FREQ field shows for a frequency the LFO moved (the same format as the table of set values:
+// 10 characters, whole Hz below 1000, kHz with one decimal above). Returns true for the KHZ unit.
+inline bool lfoFreqLabel(float hz_, char* out_, size_t size_) {
+    if (!(hz_ > 0.0f)) hz_ = 0.0f;
+    if (hz_ < 999.5f) {
+        snprintf(out_, size_, "%10ld", lroundf(hz_));
+        return false;
+    }
+    snprintf(out_, size_, "%10.1f", static_cast<double>(hz_) / 1000.0);
+    return true;
+}
+// A number that changes exactly when the label above does (to redraw the field only then).
+inline uint32_t lfoFreqLabelKey(float hz_) {
+    if (!(hz_ > 0.0f)) return 1;
+    if (hz_ < 999.5f) return 1u + static_cast<uint32_t>(lroundf(hz_));
+    return 100000u + static_cast<uint32_t>(lroundf(hz_ / 100.0f));
 }
 
 #endif

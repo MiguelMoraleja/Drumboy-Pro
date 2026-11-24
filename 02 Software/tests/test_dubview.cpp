@@ -20,8 +20,8 @@ static int failures = 0, checks = 0;
 
 int main() {
     // Twelve columns fill the lane area (x 20..940): ten layers and the two returns.
-    CHECK(deskX(0) == 24 && deskX(11) + kDeskWidth <= 936 && deskX(11) + kDeskWidth >= 930, "columns end at %u", deskX(11) + kDeskWidth);
-    CHECK(kDeskWidth + 3 == kDeskStep && kDeskColumns == 12, "a 3 px gap between columns");
+    CHECK(deskX(0) == 24 && deskX(12) + kDeskWidth <= 936 && deskX(12) + kDeskWidth >= 930, "columns end at %u", deskX(12) + kDeskWidth);
+    CHECK(kDeskWidth + 3 == kDeskStep && kDeskColumns == 13, "a 3 px gap between columns");
     // Rows from the top, none overlapping, all inside y 131..440.
     CHECK(kDeskPlateY >= 133 && kDeskBusY >= kDeskPlateY + kDeskPlateHeight + 2, "plate then bus");
     CHECK(kDeskKnobY - kDeskKnobRadius - 3 >= kDeskBusY + kDeskBusHeight + 2, "knobs below the bus switch");

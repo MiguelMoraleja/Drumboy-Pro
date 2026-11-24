@@ -28,6 +28,10 @@ const uint16_t kDubFileSizeV2 = kDubFileSizeV1 + kDubStrips;  // 55: version 2, 
 const uint16_t kDubFileSize = kDubFileSizeV2 + 1;             // 56: and the echo width (older firmware reads the first 55 bytes and ignores the last)
 const uint8_t kDubMaxWidth = 100;
 
+// The desk: columns 0-9 the layers, 10 ECHO, 11 VERB, 12 LINE IN.
+const uint8_t kDubLineColumn = 12;
+const uint8_t kDubColumns = 13;
+
 enum DubBus : uint8_t { DUB_BUS_FILT = 0, DUB_BUS_DIR = 1 };
 
 struct DubStrip {
@@ -40,6 +44,8 @@ struct DubStrip {
 struct DubMix {
     bool on = false;
     DubStrip strip[kDubStrips];
+    DubStrip line;          // the LINE IN channel (column 12): bus and sends; its fader is the line-in volume (mixer.liVolume)
+    bool lineMute = false;
     uint8_t echoWidth = 0;  // 0 = the centred echo of today, 100 = full ping-pong (the repeats alternate left and right)
     uint8_t pan[kDubStrips] = {kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre, kPanCentre};  // Pan.h, in CHAIN and in DUB
 };
@@ -57,8 +63,63 @@ inline void dubNodeGains(const DubStrip& s_, uint8_t throws_, float gains_[kRout
     gains_[NODE_FX2] = static_cast<float>(s_.fx > kDubMaxSend ? kDubMaxSend : s_.fx) * inv;
 }
 
+// A throw is smoothed so it does not click: a one-pole envelope stepped once per audio block (32 samples, 0.7 ms).
+// Held, it rises with a time constant of about 2.5 ms (95 % open after 11 blocks, about 8 ms); let go, it falls
+// with about 18 ms (95 % closed after 74 blocks, about 54 ms). The strip's send is then
+// send + (1 - send) x envelope, i.e. the send opens fully with the envelope.
+const float kThrowAttack = 0.25f, kThrowRelease = 0.04f;
+inline void dubThrowStep(float& env_, bool held_) {
+    env_ += ((held_ ? 1.0f : 0.0f) - env_) * (held_ ? kThrowAttack : kThrowRelease);
+    if (env_ < 1.0e-4f) env_ = 0.0f;
+    if (env_ > 0.9999f) env_ = 1.0f;
+}
+inline float dubSendWithThrow(float send_, float env_) { return send_ + (1.0f - send_) * env_; }
+
+// The returns must hit hard (V1.21): in CHAIN the echo's input level (LEVEL, default 50 %) and the reverb's
+// small output (the comb inputs are scaled by 0.015: a drum hit comes back at about -11 dB at WET 100 %) are
+// a balance against the dry signal. In DUB the dry is off and the strip's send is the level, so the echo takes
+// its input at full level and the reverb's output gets +12 dB (the gain Freeverb's own wet scaling gives).
+const float kDubEchoLevel = 1.0f, kDubReverbGain = 4.0f;
+inline float dubEchoLevel(bool dubMode_, float level_) { return dubMode_ ? kDubEchoLevel : level_; }
+inline float dubReverbGain(bool dubMode_) { return dubMode_ ? kDubReverbGain : 1.0f; }
+
 // Dry of the effects and the reverb: off in DUB mode (their input is only the sends).
 inline float dubDryScale(bool dubMode_) { return dubMode_ ? 0.0f : 1.0f; }
+
+// The LINE IN channel's gains to each node (its mute closes every one of them).
+inline void dubLineGains(const DubMix& d_, float gains_[kRouteNodeCount]) {
+    dubNodeGains(d_.line, 0, gains_);
+    if (d_.lineMute) {
+        for (uint8_t n = 0; n < kRouteNodeCount; n++) gains_[n] = 0.0f;
+    }
+}
+
+// The line-in volume (index 0-20, 1 dB steps) on a fader of 0..100 and back.
+inline uint8_t dubLineFader(uint8_t volume_) { return static_cast<uint8_t>((volume_ > 20 ? 20 : volume_) * 5u); }
+inline uint8_t dubLineVolume(uint8_t fader_) { return static_cast<uint8_t>(((fader_ > 100 ? 100 : fader_) + 2u) / 5u); }
+
+// The LINE IN block, written after the LFD block of a song (older firmware never reads that far):
+//   "LIN" | 1 | bus | echo | verb | mute
+const uint16_t kDubLineFileSize = 8;
+inline void dubLineWrite(const DubMix& d_, uint8_t* out_) {
+    memcpy(out_, "LIN", 3);
+    out_[3] = 1;
+    out_[4] = d_.line.bus;
+    out_[5] = d_.line.echo;
+    out_[6] = d_.line.verb;
+    out_[7] = d_.lineMute ? 1 : 0;
+}
+// Returns false (the channel keeps its defaults) when the block is missing or not valid.
+inline bool dubLineRead(DubMix& d_, const uint8_t* in_, uint16_t size_) {
+    if ((size_ < kDubLineFileSize) || (memcmp(in_, "LIN", 3) != 0) || (in_[3] != 1)) return false;
+    if ((in_[4] > DUB_BUS_DIR) || (in_[5] > kDubMaxSend) || (in_[6] > kDubMaxSend) || (in_[7] > 1)) return false;
+    d_.line.bus = in_[4];
+    d_.line.echo = in_[5];
+    d_.line.verb = in_[6];
+    d_.line.fx = 0;
+    d_.lineMute = in_[7] != 0;
+    return true;
+}
 
 inline void dubClear(DubMix& d_) { d_ = DubMix(); }
 

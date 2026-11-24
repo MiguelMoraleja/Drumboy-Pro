@@ -2,10 +2,10 @@
 // across the whole width, laid out like an old mixing console. Geometry only, hardware-free so it
 // can be tested on a PC (see 02 Software/tests).
 //
-// Strip (76 px, twelve of them from x 24 to 936). From the top: the scribble plate (number and
+// Strip (70 px, thirteen of them from x 24 to 934). From the top: the scribble plate (number and
 // name), the bus switch (FILT | DIR), two knobs (ECHO and VERB sends, each with its value), the pan
 // bar, the fader with its scale and an LED ladder meter, the level, and the foot plate with the
-// channel number and a mute lamp. The returns use the same layout: ECHO (FEEDBACK and DAMP knobs)
+// channel number and a mute lamp. The returns and the LINE IN channel use the same layout: ECHO (FEEDBACK and DAMP knobs)
 // and VERB (DECAY and SIZE knobs), a fader for the WET.
 #ifndef __DUBVIEW_H
 #define __DUBVIEW_H
@@ -13,14 +13,16 @@
 #include <math.h>
 #include <stdint.h>
 
-const uint16_t kDeskX = 24, kDeskStep = 76, kDeskWidth = 73;       // twelve columns: ten layers, ECHO, VERB
-const uint8_t kDeskColumns = 12;
+const uint16_t kDeskX = 24, kDeskStep = 70, kDeskWidth = 67;       // thirteen columns: ten layers, ECHO, VERB, LINE IN
+const uint8_t kDeskColumns = 13;
 
 // Rows (y).
 const uint16_t kDeskPlateY = 134, kDeskPlateHeight = 20;
-const uint16_t kDeskBusY = 158, kDeskBusHeight = 11, kDeskBusCell = 35;
+const uint16_t kDeskMonitorY = 433;  // the last MIDI controller message (5x7 text) under the foot plates
+const uint16_t kDeskMarkY = 131;  // the strips of the MIDI controller are marked above the plates (MidiCc.h)
+const uint16_t kDeskBusY = 158, kDeskBusHeight = 11, kDeskBusCell = 32;
 const uint16_t kDeskKnobY = 189, kDeskKnobRadius = 11;             // centre of the knobs
-const uint16_t kDeskKnobX[2] = {18, 55};                           // knob centres from the column's x
+const uint16_t kDeskKnobX[2] = {16, 51};                           // knob centres from the column's x
 const uint16_t kDeskKnobLabelY = 203, kDeskKnobValueY = 213;
 const uint16_t kDeskPanY = 228, kDeskPanHeight = 7;
 const uint16_t kDeskFaderY = 246, kDeskFaderHeight = 128, kDeskCapHeight = 11;
@@ -28,8 +30,8 @@ const uint16_t kDeskLevelY = 379;
 const uint16_t kDeskFootY = 394, kDeskFootHeight = 38;
 
 // The fader: scale numbers, ticks, rail, cap, meter (x offsets from the column's x).
-const uint16_t kDeskScaleX = 2, kDeskTickX = 19, kDeskRailX = 30, kDeskCapX = 20, kDeskCapWidth = 21;
-const uint16_t kDeskMeterX = 50, kDeskMeterWidth = 7;
+const uint16_t kDeskScaleX = 2, kDeskTickX = 17, kDeskRailX = 27, kDeskCapX = 17, kDeskCapWidth = 21;
+const uint16_t kDeskMeterX = 46, kDeskMeterWidth = 7;
 const uint8_t kDeskMeterSegments = 13, kDeskMeterGreen = 9, kDeskMeterYellow = 12;  // segments 0-8 green, 9-11 yellow, 12 red
 
 inline uint16_t deskX(uint8_t column_) { return static_cast<uint16_t>(kDeskX + column_ * kDeskStep); }

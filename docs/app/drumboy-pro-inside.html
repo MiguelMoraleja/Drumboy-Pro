@@ -296,7 +296,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.19 (testing)</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.21 (testing)</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -333,6 +333,7 @@ table.rel td.new { min-width: 280px; }
       <p class="muted" style="font-size:.85rem"><b>Diagram</b> (V1.14): while the ROUTING page is open, the lanes give way to the patch as a picture. The six modules and the master are boxes along the top, joined as patched: a route to the next module is a line between the boxes, a longer one goes over them. Modules that get no signal are dimmed. Below, one row per source (ten layers, metronome, line-in) with a mark under the module it enters. A picture is in Screen ideas.</p>
       <p class="muted" style="font-size:.85rem"><b>Filter curve</b> (V1.14): while a FILTER page is open, the lanes give way to that filter's response from 20 Hz to 20 kHz, drawn from the same numbers the audio uses. The page's filter is cyan (gray while it is off) with its cutoff as a dotted line; the other filter is gray behind it when it is on. TYPE, SLOPE, FREQ, RESONANCE, DRY and WET all change the curve; DRIVE does not, because it is a gain with a soft clip before the filter.</p>
       <p class="muted" style="font-size:.85rem"><b>Slopes</b> (V1.14): SLOPE is now 06, 12 or 24 dB per octave. <b>24</b> is new: two filter sections in a row, flat up to the cutoff at the lowest RESONANCE and with one peak as you turn it up. <b>06</b> used to be the 12 dB filter mixed half and half with the unfiltered sound, which only ever took 6 dB off; it is now a real gentle filter that keeps falling 6 dB per octave (RESONANCE has no effect on it). A song that used 06 will sound different. 12 is unchanged.</p>
+      <p class="muted" style="font-size:.85rem"><b>LFOs on the filters</b> (V1.21): on a FILTER page, hold SHIFT and turn FREQ or RESONANCE to pick the LFO (-- none, 01 to 10) that modulates it; the LFO's number shows in yellow under the field. Unlike a layer field, which an LFO changes once per hit, a filter follows its LFO continuously while the sequencer plays: FREQ sweeps up to 3 octaves each way at full LFO depth (an octave is a doubling, kept inside the filter's range), RESONANCE up to half its range each way. The filter is designed again 200 times a second whenever the cutoff moved by even about 0.14 % or the resonance step changed, so the sweep follows the LFO almost continuously; when the sequencer stops, or the LFO is taken off, the set values come back. The LFO's type, rate, phase, invert and depth are set on the LFO page as for the layers. The assignments are saved in the song (an LFD block after the QNT block; older firmware never reads it) and not in the drumkit.</p>
       <p class="muted" style="font-size:.85rem"><b>EQ curve</b> (V1.14): while the EQ page is open, the lanes give way to the six bands together as one curve, with a small square for each band at its frequency and gain and its name above (LO, 1 to 4, HI). The curve is gray while the EQ is off.</p>
     </div>
 
@@ -523,7 +524,7 @@ table.rel td.new { min-width: 280px; }
         </div>
         <div class="panel keys">
           <h3>On the device</h3>
-          <div class="k"><span class="keycap">⁘</span><div><b>Tap the SONG key</b> on its own (bottom right, the one you hold with the pads to pick a bank): the SONG page. Tap it there to turn the chain on or off (CHAIN).</div></div>
+          <div class="k"><span class="keycap">⁘</span><div><b>Tap the SONG key</b> on its own (bottom right, the one you hold with the pads to pick a bank): the SONG page. Turn the CHAIN field to switch the chain on or off. <b>Tap SONG again</b> (V1.21): the PERFORM page, for playing live: the bar and beat, the tempo, the chain, and a tile for each layer with its state (MUTE, SOLO), its pattern and its level. A layer pad mutes and unmutes its layer. Fields: TEMPO, BANK, STEP, REPEATS, FILL (the FILL condition held while the page is open) and UNDO (turn left to undo, right to redo). Tap SONG once more to go back to the chain.</div></div>
           <div class="k"><span class="keycap">↻</span><div><b>Fields:</b> STEP picks the step to edit, BANK and REPEATS set it, LENGTH adds or removes steps at the end (a new step copies the last one), END is LOOP or STOP, CHAIN ON/OFF.</div></div>
           <div class="k"><span class="keycap">⁘+</span><div><b>Picking a bank by hand</b> (SONG + pads) never turns the chain off. A bank the chain uses: the chain jumps to its step (from the loop end while playing). Any other bank plays one loop as a detour, then the chain goes on from where it was; the detour doesn't count as a repeat. Picked while stopped, it plays first. (V1.14; before, a bank outside the chain turned it off.)</div></div>
           <div class="k"><span class="keycap">⧉</span><div><b>Copy a whole bank:</b> on the SONG page hold COPY (all 10 layers of the active bank, beats and fills), pick another bank with SONG + pads, hold PASTE. Works while playing; the per-layer copy on the song page is unchanged.</div></div>
@@ -624,6 +625,13 @@ table.rel td.new { min-width: 280px; }
           <div class="k"><span class="keycap">✓</span><div><b>Safe SAVE</b> (V1.18): a song or drumkit is written to File_001.tmp, checked (written in full, read back and compared) and only then replaces the slot, so a failed or interrupted SAVE leaves the old file. After a power cut during a SAVE you may find File_001.tmp or File_001.new on the card: the next start deletes the unfinished one and finishes the checked one.</div></div>
           <div class="k"><span class="keycap">◌</span><div><b>SAVE on screen</b> (V1.14): while an autosave writes, the status area shows SAVE; keys, the screen and incoming MIDI notes wait for that moment. SDERR in red means the write failed. The Metronome page shows under AUTOSAVE how many milliseconds the last one took.</div></div>
           <div class="k"><span class="keycap">✓</span><div><b>Two files</b> (<span class="mono">System/File/Autosave_A.rwf</span> and <span class="mono">_B</span>) are written in turn and sealed with a checksum, so pulling the power in the middle of a write still leaves the previous copy. Your numbered slots are never touched.</div></div>
+        </div>
+        <div class="panel keys">
+          <h3>nanoKONTROL Studio on the DUB desk (V1.20)</h3>
+          <div class="k"><span class="keycap">CC</span><div><b>Control changes, any channel.</b> The Drumboy reads CC messages on any MIDI channel while MIDI IN is on, on every page, with the Studio's own numbers (no editor needed): faders 1 to 8 = CC 2, 3, 4, 5, 6, 8, 9, 12, knobs 1 to 8 = CC 13 to 20, M buttons = CC 21 to 28, TRACK &#9664; = CC 60 and TRACK &#9654; = CC 61. The Studio reaches the Drumboy through the iPad's Loopy Pro and the Scarlett's MIDI out (or a USB host to DIN box). The full guide is <span class="mono">docs/nanokontrol-studio.md</span>.</div></div>
+          <div class="k"><span class="keycap">&#9618;</span><div><b>Eight strips, thirteen columns.</b> The desk has ten layers, the ECHO and VERB returns and the LINE IN channel (fader = line-in volume, knob = its echo send, M = mute). TRACK &#9664; and &#9654; slide the Studio's eight strips along them, one column at a time; a cyan bar above the plates marks the eight columns it is on. <b>Fader</b>: a layer's LEVEL, the echo's WET, the reverb's WET. <b>Knob</b>: a layer's ECHO send, the echo's FEEDBACK, the reverb's DECAY. <b>M button</b>: a press mutes or unmutes the layer.</div></div>
+          <div class="k"><span class="keycap">&#8646;</span><div><b>Take-over.</b> After the strips slid, after a song loaded or at power-on, a fader does not match the screen. It takes hold only when it reaches the value shown (or crosses it), so a level never jumps; when the value is changed another way (the encoder, a loaded song, undo) it lets go again until it reaches the new value. A fader that sends hundreds of messages a second costs one change per pass: only the latest value is kept.</div></div>
+          <div class="k"><span class="keycap">S R</span><div><b>Throws and jog wheel</b> (V1.21). <b>S</b> = an echo throw and <b>R</b> = a reverb throw on the strip: its send opens fully while the button is held (smoothly, about 8 ms to open and 54 ms to close; DUB mode). The <b>jog wheel</b> steps the echo TIME (1/8 to 1/1). S is CC 29 30 31 33 to 37, R is CC 38 to 45, the wheel is CC 86 (read from the unit). The DUB desk shows the last controller message in its bottom-left corner (<span class="mono">CC 86 = 1</span>) for 3 seconds.</div></div>
         </div>
       </div>
     </div>
@@ -865,6 +873,14 @@ const P = {
     }
   },
 };
+// Scaled text (the proposal for the Performance view): the firmware's own 10x14 glyphs, every pixel drawn as k x k.
+P.big = function (str, x, y, k, c) {
+  const F = LCD_FONTS["10"], cw = (F.w + F.s) * k;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i), gl = F.g[code < 128 ? LCD_FONTMAP[code] : 52];
+    for (let r = 0; r < F.h; r++) for (let b = 0; b < F.w; b++) if ((gl[r] >> (F.w - 1 - b)) & 1) P.rect(x + i * cw + b * k, y + r * k, k, k, c);
+  }
+};
 const stepX = s => SONG_X + Math.floor(s * SONG_W / STEPS);
 function mMenu(code, num) {
   P.rect(60, 46, 32, 24, LC.K);
@@ -1074,14 +1090,14 @@ const IDEAS = [
     } },
   { id: "mix", group: 0, name: "Dub mixer", item: "45, 46, 47, 49", size: "L, in phases", today: false, built: "V1.15",
     note: ["",
-           "Built in V1.15 (waiting for the hardware test), in the style of an old mixing console: twelve columns fill the whole lane area, the ten layers and the ECHO and VERB returns. Each column has a scribble plate (amber and filled for the selected strip), the bus switch (FILT or DIR), two knobs with their values (the ECHO and VERB sends; FDBK and DAMP on the echo, DECAY and SIZE on the reverb), a pan bar, a shorter fader with its scale and an LED ladder meter, and a foot plate with the channel number and a lamp (MUTE red, the returns ON green). Not built yet: the filter knob per strip, the line-in strip, the DUB FILTER dial, master meters, throws. Design: docs/dub-mixer-design.md."],
+           "Built in V1.15 (waiting for the hardware test), in the style of an old mixing console: thirteen columns fill the whole lane area: the ten layers, the ECHO and VERB returns and (V1.21) the LINE IN channel. Each column has a scribble plate (amber and filled for the selected strip), the bus switch (FILT or DIR), two knobs with their values (the ECHO and VERB sends; FDBK and DAMP on the echo, DECAY and SIZE on the reverb), a pan bar, a shorter fader with its scale and an LED ladder meter, and a foot plate with the channel number and a lamp (MUTE red, the returns ON green). Not built yet: the filter knob per strip, the line-in strip, the DUB FILTER dial, master meters, throws. Design: docs/dub-mixer-design.md."],
     draw() {
       mMenu("DB", 2);
       mField(0, "LEVEL", "74"); mField(1, "BUS", "FILT"); mField(2, "ECHO", "35", "  %"); mField(3, "VERB", "62", "  %");
       mField(4, "MODE", "DUB"); mField(5, "FEEDBACK", "55", "  %"); mField(6, "ECHO RTN", "80", "  %"); mField(7, "VERB RTN", "70", "  %");
       mBig();
-      // Same numbers as the firmware (DubView.h, lcd_drawDeskColumn).
-      const AMB = "#ffa600", X0 = 24, STEP = 76, W = 73;
+      // Same numbers as the firmware (DubView.h, lcd_drawDeskColumn), 13 columns of 70 px since V1.21.
+      const AMB = "#ffa600", X0 = 24, STEP = 70, W = 67;
       const lev = [82, 74, 60, 55, 70, 45, 66, 40, 50, 58], ech = [0, 35, 0, 20, 100, 45, 30, 10, 60, 20], vrb = [5, 62, 8, 20, 55, 10, 30, 0, 15, 70];
       const bus = [1, 0, 0, 1, 0, 0, 0, 0, 0, 0], pan = [20, 20, 6, 31, 20, 20, 20, 12, 20, 20], met = [70, 58, 40, 12, 50, 20, 0, 30, 8, 66];
       const sel = 1, muted = 6, FY = 246, FH = 128, CAP = 11;
@@ -1091,11 +1107,12 @@ const IDEAS = [
         P.disc(cx, cy, 10, LC.G25); P.ring(cx, cy, 11, c);
         const [px, py] = pt(9, pc); P.line(cx, cy, px, py, AMB); P.line(cx + 1, cy, px + 1, py, AMB);
       };
-      const ladder = (x, lit, on) => { for (let k = 0; k < 13; k++) { const y = FY + FH - (k + 1) * 9, c = on && k < lit ? (k < 9 ? LC.GN : k < 12 ? LC.YE : LC.RE) : LC.G25; P.rect(x + 50, y, 7, 7, c); } };
+      const ladder = (x, lit, on) => { for (let k = 0; k < 13; k++) { const y = FY + FH - (k + 1) * 9, c = on && k < lit ? (k < 9 ? LC.GN : k < 12 ? LC.YE : LC.RE) : LC.G25; P.rect(x + 46, y, 7, 7, c); } };
       const column = (col) => {
-        const x = X0 + col * STEP, ret = col >= 10, isSel = col === sel;
+        const x = X0 + col * STEP, line = col === 12, ret = col >= 10 && !line, isSel = col === sel;
         let l1, l2, level, k, kn, on = true, aud = true, bs = 0, pn = 20, lamp, pn_heard = false;
-        if (!ret) { l1 = String(col + 1).padStart(2, "0"); l2 = LAYER_NAMES[col].slice(0, 9); level = lev[col]; k = [ech[col], vrb[col]]; kn = ["ECHO", "VERB"]; bs = bus[col]; pn = pan[col]; aud = col !== muted; lamp = col === muted; pn_heard = bs === 1; }
+        if (line) { l1 = "IN"; l2 = "LINE"; level = 75; k = [40, 25]; kn = ["ECHO", "VERB"]; bs = 0; lamp = false; }
+        else if (!ret) { l1 = String(col + 1).padStart(2, "0"); l2 = LAYER_NAMES[col].slice(0, 8); level = lev[col]; k = [ech[col], vrb[col]]; kn = ["ECHO", "VERB"]; bs = bus[col]; pn = pan[col]; aud = col !== muted; lamp = col === muted; pn_heard = bs === 1; }
         else if (col === 10) { l1 = "ECHO"; l2 = "DELAY"; level = 80; k = [69, 30]; kn = ["FDBK", "DAMP"]; lamp = true; }
         else { l1 = "VERB"; l2 = "REVERB"; level = 70; k = [60, 40]; kn = ["DECAY", "SIZE"]; lamp = true; }
         const c = !aud || !on ? LC.G35 : (isSel ? AMB : (col % 2 ? LC.G75 : LC.W));
@@ -1104,32 +1121,32 @@ const IDEAS = [
         if (isSel) { P.rect(x + 1, 134, W - 2, 20, AMB); P.text(l1, x + 5, 137, 5, LC.K, "L", AMB); P.text(l2, x + 5, 145, 5, LC.K, "L", AMB); }
         else { P.frame(x + 1, 134, W - 2, 20, LC.G50); P.text(l1, x + 5, 137, 5, c); P.text(l2, x + 5, 145, 5, c); }
         // 2. bus switch / ON
-        if (!ret) { [["FILT", 0], ["DIR", 1]].forEach(([n, v], i) => { const cx = x + 1 + i * 36, lit = bs === v; if (lit) { P.rect(cx, 158, 35, 11, aud ? LC.G75 : LC.G35); P.text(n, cx + Math.floor((35 - n.length * 7) / 2) + 1, 160, 5, LC.K, "L", aud ? LC.G75 : LC.G35); } else { P.frame(cx, 158, 35, 11, LC.G35); P.text(n, cx + Math.floor((35 - n.length * 7) / 2) + 1, 160, 5, LC.G50); } }); }
+        if (!ret) { [["FILT", 0], ["DIR", 1]].forEach(([n, v], i) => { const cx = x + 1 + i * 33, lit = bs === v; if (lit) { P.rect(cx, 158, 32, 11, aud ? LC.G75 : LC.G35); P.text(n, cx + Math.floor((32 - n.length * 7) / 2) + 1, 160, 5, LC.K, "L", aud ? LC.G75 : LC.G35); } else { P.frame(cx, 158, 32, 11, LC.G35); P.text(n, cx + Math.floor((32 - n.length * 7) / 2) + 1, 160, 5, LC.G50); } }); }
         else { P.rect(x + 1, 158, W - 2, 11, LC.G75); P.text("ON", x + Math.floor((W - 14) / 2) + 1, 160, 5, LC.K, "L", LC.G75); }
         // 3. knobs
-        [18, 55].forEach((ox, i) => { const cx = x + ox; knob(cx, 189, k[i], aud ? LC.G75 : LC.G35); P.text(kn[i], cx - Math.floor(kn[i].length * 7 / 2) + 1, 203, 5, LC.G75); const v = k[i] + "%"; P.text(v, cx - Math.floor(v.length * 7 / 2) + 1, 213, 5, aud ? LC.W : LC.G50); });
+        [16, 51].forEach((ox, i) => { const cx = x + ox; knob(cx, 189, k[i], aud ? LC.G75 : LC.G35); P.text(kn[i], cx - Math.floor(kn[i].length * 7 / 2) + 1, 203, 5, LC.G75); const v = k[i] + "%"; P.text(v, cx - Math.floor(v.length * 7 / 2) + 1, 213, 5, aud ? LC.W : LC.G50); });
         // 4. pan bar
-        if (!ret) {
-          P.frame(x + 1, 228, 41, 7, pn_heard ? LC.G50 : LC.G35); P.rect(x + 1 + 20, 226, 1, 11, pn_heard ? LC.G50 : LC.G35);
-          P.rect(x + 2 + Math.floor(pn * 36 / 40), 229, 3, 5, pn_heard ? c : LC.G35);
+        if (!ret && !line) {
+          P.frame(x + 1, 228, 33, 7, pn_heard ? LC.G50 : LC.G35); P.rect(x + 1 + 16, 226, 1, 11, pn_heard ? LC.G50 : LC.G35);
+          P.rect(x + 2 + Math.floor(pn * 29 / 40), 229, 3, 5, pn_heard ? c : LC.G35);
           const lbl = pn === 20 ? "C" : pn < 20 ? "L" + String(20 - pn).padStart(2) : "R" + String(pn - 20).padStart(2);
-          P.text(lbl, x + 46, 228, 5, pn_heard ? LC.W : LC.G50);
+          P.text(lbl, x + 38, 228, 5, pn_heard ? LC.W : LC.G50);
         }
         // 5. fader
         P.text("10", x + 2, FY - 3, 5, LC.G50); P.text("5", x + 9, FY + 61, 5, LC.G50); P.text("0", x + 9, FY + FH - 5, 5, LC.G50);
-        for (let t = 0; t <= 10; t++) { const ty = FY + 5 + Math.floor(t * (FH - CAP) / 10); P.rect(x + 19 + (t % 5 ? 3 : 0), ty, t % 5 ? 4 : 7, 1, LC.G50); }
-        P.rect(x + 30, FY, 2, FH, LC.G35);
+        for (let t = 0; t <= 10; t++) { const ty = FY + 5 + Math.floor(t * (FH - CAP) / 10); P.rect(x + 17 + (t % 5 ? 3 : 0), ty, t % 5 ? 4 : 7, 1, LC.G50); }
+        P.rect(x + 27, FY, 2, FH, LC.G35);
         const cy = FY + Math.floor((100 - level) * (FH - CAP) / 100);
-        P.rect(x + 20, cy, 21, CAP, c); P.rect(x + 20, cy + 5, 21, 1, LC.K);
+        P.rect(x + 17, cy, 21, CAP, c); P.rect(x + 17, cy + 5, 21, 1, LC.K);
         ladder(x, !ret && aud ? Math.ceil(met[col] * 13 / 100) : 0, true);
-        const lv = String(level); P.text(lv, x + 30 - Math.floor(lv.length * 7 / 2), 379, 5, aud && on ? LC.W : LC.G50);
+        const lv = String(level); P.text(lv, x + 27 - Math.floor(lv.length * 7 / 2), 379, 5, aud && on ? LC.W : LC.G50);
         // 6. foot plate
         P.frame(x + 1, 394, W - 2, 38, LC.G50);
-        P.text(ret ? (col === 10 ? "E" : "V") : String(col + 1).padStart(2, "0"), x + (ret ? 14 : 8), 400, 10, c);
-        P.rect(x + 46, 400, 18, 14, lamp ? (ret ? LC.GN : LC.RE) : LC.G25);
-        P.text(ret ? "ON" : "MUTE", x + 46 + (ret ? 3 : -2), 418, 5, LC.G50);
+        P.text(line ? "IN" : ret ? (col === 10 ? "E" : "V") : String(col + 1).padStart(2, "0"), x + (ret ? 14 : 8), 400, 10, c);
+        P.rect(x + 40, 400, 18, 14, lamp ? (ret ? LC.GN : LC.RE) : LC.G25);
+        P.text(ret ? "ON" : "MUTE", x + 40 + (ret ? 3 : -2), 418, 5, LC.G50);
       };
-      for (let col = 0; col < 12; col++) column(col);
+      for (let col = 0; col < 13; col++) column(col);
     } },
   { id: "editor", group: 0, name: "Step edit", item: "45", size: "L", today: false, built: "V1.15",
     note: ["",
@@ -1155,6 +1172,232 @@ const IDEAS = [
         if (ch < 100) P.frame(x + 3, 425 - chh, 14, chh, c); else P.rect(x + 3, 425 - chh, 14, chh, LC.G75);
       });
       P.text("127", 74, 216, 5, LC.G50, "R", null); P.text("100", 74, 362, 5, LC.G50, "R", null);
+    } },
+  { id: "perform", group: 0, name: "Performance", item: "45", size: "M", today: false, built: "V1.21",
+    note: ["",
+           "Built in V1.21 (waiting for the hardware test), as the second step of the SONG key: tap SONG for the chain page, tap it again for this page, again to go back (the chain is turned on and off by the CHAIN field of the chain page). The lane area shows what a performer needs at arm's length. At the top, the bar and the beat and the tempo as big seven-segment digits, and the chain: the playing step lit and filled up to the loop, with what comes next. Below, one tile per layer: its number and name, its state in big letters (MUTE red, SOLO yellow, a layer silenced by a solo grey), its 16-step pattern with the playhead, and a live level bar. A layer pad mutes and unmutes its layer (it does not play the sound). Fields: TEMPO, BANK (as SONG with a pad), STEP and REPEATS of the chain, FILL (turn right: the FILL condition holds as if the F key were held, until you turn it left or leave the page) and UNDO (turn left to undo, right to redo; it shows how many steps can be undone). Reads only flags and meters that already exist: nothing changed in the audio code."],
+    draw() {
+      mMenu("SG", 6);
+      mField(0, "TEMPO", "120"); mField(1, "BANK", "2");
+      mField(4, "STEP", "   2 OF  4"); mField(5, "REPEATS", "2X".padStart(10)); mField(6, "FILL", "OFF".padStart(10)); mField(7, "UNDO", "3");
+      P.rect(493, 30, 325, 60, LC.K);
+      P.text("PAD: MUTE", 494, 32, 7, LC.G75); P.text("SONG: CHAIN PAGE", 494, 43, 7, LC.G75);
+      mBig();
+      // Same numbers as the firmware (PerformView.h, PerformScreens.h).
+      const RED = "#ff0000";
+      const seg7 = (n, x, y, c, off = "#101010") => {
+        const T = 6, W = 28, H = 46, M = y + (H - T) / 2, S = [0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F][n];
+        const seg = [[x + T, y, W - 2 * T, T], [x + W - T, y + T, T, (H - 3 * T) / 2 | 0], [x + W - T, M + T, T, (H - 3 * T) / 2 | 0], [x + T, y + H - T, W - 2 * T, T], [x, M + T, T, (H - 3 * T) / 2 | 0], [x, y + T, T, (H - 3 * T) / 2 | 0], [x + T, M, W - 2 * T, T]];
+        seg.forEach((s, k) => P.rect(s[0], s[1], s[2], s[3], S & (1 << k) ? c : off));
+      };
+      const num = (v, x, y, d, c) => { for (let k = 0; k < d; k++) seg7(Math.floor(v / Math.pow(10, d - 1 - k)) % 10, x + k * 36, y, c); };
+      P.text("BAR", 30, 136, 7, LC.G75); num(3, 30, 150, 2, LC.W); P.text("BEAT 2 OF 4  BAR 4", 30, 202, 5, LC.G75);
+      P.rect(162, 138, 1, 68, LC.G25);
+      P.text("TEMPO", 176, 136, 7, LC.G75); num(120, 176, 150, 3, LC.W); P.text("BPM", 176 + 3 * 36 + 4, 189, 5, LC.G75);
+      P.rect(332, 138, 1, 68, LC.G25);
+      P.text("CHAIN", 346, 136, 7, LC.G75); P.text("STEP 2 OF 4   LOOP 1 OF 2", 416, 136, 7, LC.CY);
+      const steps = [[1, 4], [2, 2], [1, 4], [3, 2]], unit = 40;
+      let cx = 346;
+      steps.forEach(([bank, rep], k) => {
+        const w = rep * unit - 3, c = k === 1 ? LC.CY : LC.G75;
+        if (k === 1) P.rect(cx, 156, unit - 3, 34, LC.G25);
+        P.frame(cx, 156, w, 34, c);
+        P.text(String(bank), cx + 6, 166, 10, c, "L", null);
+        cx += rep * unit;
+      });
+      P.text("NEXT: STEP 3  BANK 1", 346, 202, 5, LC.G50);
+      P.rect(24, 212, 912, 1, LC.G25);
+      // --- one tile per layer
+      const muted = [3, 6], pos = 6, hits = EUC.map(([n, k, r]) => euclidHits(n, k, r));
+      const peak = [78, 60, 44, 0, 52, 30, 0, 38, 22, 66];
+      for (let i = 0; i < 10; i++) {
+        const x = 24 + i * 92, w = 88, isMute = muted.includes(i), dim = isMute;
+        P.frame(x, 218, w, 216, dim ? LC.G25 : LC.G50);
+        P.text(String(i + 1).padStart(2, "0"), x + 6, 224, 10, dim ? LC.G50 : LC.W);
+        P.text(LAYER_NAMES[i].slice(0, 9), x + 6, 244, 7, dim ? LC.G50 : LC.G75);
+        if (isMute) { P.rect(x + 6, 262, w - 12, 30, RED); P.text("MUTE", x + w / 2, 270, 10, LC.W, "C", RED); }
+        else { P.frame(x + 6, 262, w - 12, 30, LC.G25); P.text("ON", x + w / 2, 270, 10, LC.GN, "C"); }
+        const n = EUC[i][0];
+        for (let s = 0; s < 16; s++) {
+          const on = hits[i].includes(s % n), sx = x + 4 + s * 5;
+          P.rect(sx, 302, 4, 6, on ? (dim ? LC.G50 : LC.CY) : LC.G25);
+          if (s === pos) P.rect(sx, 310, 4, 2, LC.YE);
+        }
+        const lit = isMute ? 0 : Math.ceil(peak[i] * 13 / 100);
+        for (let k = 0; k < 13; k++) P.rect(x + (w - 20) / 2, 322 + (12 - k) * 8, 20, 6, k < lit ? (k < 9 ? LC.GN : k < 12 ? LC.YE : LC.RE) : LC.G25);
+      }
+    } },
+  { id: "lfopage", group: 0, name: "LFO overview", item: "3, 35, 45", size: "M", today: false, built: "V1.21",
+    note: ["",
+           "Built in V1.21 (waiting for the hardware test): while the LFO page is open the lane area shows all ten LFOs at once and, for the selected one, where it is used. On the left, one row per LFO: its number, a small picture of its wave (dim when switched off) and how many things it moves (X3). On the right, the selected LFO as a big wave over two cycles with a yellow dot at its phase now (it moves while the song plays, 25 times a second), and a line with its type, rate, phase, depth and invert. Below, the USED BY list: every layer field (LEVEL, PITCH, START, PROBABILITY and so on) and every filter field (F1 FREQ, F2 RESON) that follows this LFO; the first ten, then how many more. It reads the LFO tables and the assignment fields that exist and changes nothing in them: assign with SHIFT + turn on the field, as before. The small graph with the rate and the period in seconds stays in the top corner."],
+    draw() {
+      mMenu("LF", 3);
+      mField(0, "ACTIVE", "ON".padStart(10)); mField(1, "TYPE", "SAW".padStart(10));
+      mField(4, "RATE", "1/4".padStart(10)); mField(5, "PHASE", "0".padStart(10)); mField(6, "INVERT", "OFF".padStart(10)); mField(7, "DEPTH", "60", "  %");
+      P.rect(493, 30, 325, 60, LC.K);
+      mBig();
+      const wave = (t, k) => { const x = t - Math.floor(t); return [Math.sin(2 * Math.PI * x), 1 - 4 * Math.abs(x - 0.5), 1 - 2 * x, x < 0.5 ? 1 : -1, Math.sin(Math.floor(t * 4) * 12.9898) * 0.9][k]; };
+      const types = [0, 1, 2, 3, 4, 0, 1, 2, 3, 0], names = ["SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM"];
+      const uses = [2, 1, 5, 0, 1, 3, 0, 0, 0, 1], on = [1, 1, 1, 0, 1, 1, 1, 0, 0, 1], sel = 2;
+      // left: the ten LFOs
+      for (let n = 0; n < 10; n++) {
+        const y = 138 + n * 30, isSel = n === sel, c = on[n] ? (isSel ? LC.CY : LC.G75) : LC.G35;
+        if (isSel) P.rect(24, y - 1, 236, 28, LC.G25);
+        P.frame(24, y - 1, 236, 28, isSel ? LC.CY : LC.G25);
+        P.text(String(n + 1).padStart(2, "0"), 32, y + 5, 10, c);
+        for (let x = 0; x < 120; x++) { const v = on[n] ? wave(x / 60, types[n]) : 0; P.rect(76 + x, y + 12 - Math.round(v * 8), 1, 1, c); }
+        P.text(uses[n] ? "X" + uses[n] : "--", 252, y + 8, 7, on[n] && uses[n] ? LC.YE : LC.G50, "R", null);
+      }
+      // right: the selected LFO
+      P.text("LFO 03   SAWTOOTH   RATE 1/4   PHASE 045   DEPTH 60   INVERT OFF", 278, 138, 7, LC.CY);
+      const PX = 278, PY = 160, PW = 650, PH = 130, mid = PY + PH / 2, ph = 0.37;
+      P.frame(PX - 1, PY - 1, PW + 2, PH + 2, LC.G25);
+      for (let x = 0; x < PW; x += 4) P.rect(PX + x, mid, 2, 1, LC.G35);
+      for (let k = 1; k < 4; k++) for (let y = PY; y < PY + PH; y += 4) P.rect(PX + k * PW / 4, y, 1, 1, LC.G25);
+      for (let x = 0; x < PW; x++) { const v = wave(x / (PW / 2) , types[sel]) * 0.6, y = mid - v * (PH / 2 - 6); P.rect(PX + x, y, 1, 2, LC.CY); }
+      const dx = PX + ph * PW / 2 * 1, dv = wave(ph, types[sel]) * 0.6;
+      P.rect(dx, PY, 1, PH, LC.G50); P.disc(Math.round(dx), Math.round(mid - dv * (PH / 2 - 6)), 5, LC.YE);
+      P.text("TWO CYCLES", PX, 295, 5, LC.G50); P.text("THE DOT FOLLOWS THE SONG", PX + PW, 295, 5, LC.G50, "R");
+      // below: USED BY
+      P.text("USED BY", 278, 308, 7, LC.G75);
+      const used = [["L1 KICK 808", "LEVEL"], ["L3 HAT CLOSED", "PITCH"], ["L3 HAT CLOSED", "PROBABILITY"], ["L7 TOM LOW", "START"], ["F1", "FREQ"]];
+      used.forEach(([who, what], k) => {
+        const col = k % 2, row = Math.floor(k / 2), x = 278 + col * 334, y = 322 + row * 22;
+        P.frame(x, y, 316, 20, LC.G25);
+        P.text(who, x + 8, y + 6, 7, LC.W); P.text(what, x + 316 - 8, y + 7, 5, LC.G75, "R");
+      });
+      
+    } },
+  { id: "qnow", group: 0, name: "Quantize now", item: "59", size: "M", today: false, built: "V1.21",
+    note: ["",
+           "Built in V1.21 (tested on hardware: it works), on the RHYTHM page: after TEMPO, MEASURE, BAR, QUANTIZE and STRENGTH come three more fields, NOW GRID, NOW SCOPE and NOW APPLY (move to them with the page's tab keys, and the lanes give way to this screen). It quantizes notes that are already recorded, with a look first. NOW GRID is the grid it snaps to (it starts as the page's QUANTIZE and changing it here does not touch the song, whatever the QUANTIZE lock says); the strength is the page's STRENGTH (100 snaps fully, 50 moves a note half way). NOW SCOPE: THIS LAYER (the selected layer, the active bank), THIS BANK (every layer, the active bank) or ALL LAYERS (every layer and bank). The picture shows the selected layer over the first two beats: the notes as they are (yellow), the grid points, and where each would land (cyan, green when it lands on a point) with a line between; under it a bar for each note says how far it moves (yellow: earlier, cyan: later). The numbers count the notes of the scope: how many move, how many are already on the grid, the largest move, and how many are joined (two notes landing on the same point become one). NOW APPLY: turn right once and it says SURE?, turn right again and it applies; turn left, wait five seconds or change a choice and it disarms. Nothing changes before that. It is one undo step for all banks it touched (MUTE + LEFT) and is safe while playing."],
+    draw() {
+      mMenu("QN", 4);
+      mField(0, "TEMPO", "120"); mField(1, "MEASURE", "4"); mField(2, "BAR", "4"); mField(3, "QUANTIZE", "1:16".padStart(10));
+      mField(4, "STRENGTH", "075"); mField(5, "NOW GRID", "1:16".padStart(10)); mField(6, "NOW SCOPE", "LAYER".padStart(10)); mField(7, "NOW APPLY", "READY".padStart(10));
+      P.rect(493, 30, 325, 60, LC.K);
+      mBig();
+      P.text("QUANTIZE NOW   LAYER 3  HAT CLOSED   BANK 2", 30, 138, 7, LC.CY);
+      // left panel
+      const notes = [0, 212, 395, 610, 805, 1003, 1190, 1385, 1590, 760];
+      notes.sort((a, b) => a - b);
+      const grid = 200, strength = 0.75;
+      const snap = n => Math.round(n / grid) * grid, land = n => Math.round(n + (snap(n) - n) * strength);
+      const moved = notes.filter(n => land(n) !== n).length, onGrid = notes.filter(n => snap(n) === n).length, far = Math.max(...notes.map(n => Math.abs(land(n) - n)));
+      P.text("SCOPE", 30, 170, 7, LC.G75);
+      [["THIS LAYER", 1], ["THIS BANK", 0], ["ALL LAYERS", 0]].forEach(([t, on], k) => {
+        const y = 186 + k * 26;
+        P.frame(30, y, 236, 22, on ? LC.CY : LC.G25); if (on) P.rect(31, y + 1, 234, 20, LC.G25);
+        P.text(t, 42, y + 6, 7, on ? LC.CY : LC.G75, "L", on ? LC.G25 : LC.K);
+      });
+      P.text("NOTES", 30, 276, 7, LC.G75); P.text(String(notes.length), 266, 276, 7, LC.W, "R");
+      P.text("MOVE", 30, 292, 7, LC.G75); P.text(String(moved), 266, 292, 7, LC.YE, "R");
+      P.text("ON GRID", 30, 308, 7, LC.G75); P.text(String(onGrid), 266, 308, 7, LC.GN, "R");
+      P.text("LARGEST MOVE", 30, 324, 7, LC.G75); P.text(String(far), 266, 324, 7, LC.W, "R");
+      P.frame(30, 366, 236, 44, LC.GN); P.text("APPLY", 148, 380, 10, LC.GN, "C");
+      P.text("TURN APPLY RIGHT TWICE", 30, 416, 5, LC.G50); P.text("UNDO: MUTE + LEFT", 30, 426, 5, LC.G50);
+      // right: before and after over two beats
+      const X0 = 300, W = 620, span = 1600, X = n => X0 + Math.round(n * W / span);
+      const strip = (y, label) => {
+        P.text(label, X0, y - 14, 7, LC.G75);
+        P.rect(X0, y + 22, W, 1, LC.G35);
+        for (let g = 0; g <= span; g += grid) { P.rect(X(g), y + 6, 1, 34, g % 800 === 0 ? LC.G75 : LC.G35); }
+      };
+      strip(180, "NOW"); strip(280, "AFTER");
+      notes.forEach(n => {
+        P.rect(X(n) - 2, 188, 5, 28, LC.YE);
+        const l = land(n);
+        P.rect(X(l) - 2, 288, 5, 28, l === snap(n) ? LC.GN : LC.CY);
+        P.line(X(n), 217, X(l), 287, l === n ? LC.G35 : LC.G50);
+      });
+      P.text("GRID 1:16  STRENGTH 75", X0, 330, 5, LC.G50);
+      // how far each note moves
+      P.text("HOW FAR EACH NOTE MOVES", X0, 350, 7, LC.G75);
+      notes.forEach((n, k) => {
+        const d = land(n) - n, x = X0 + k * 62, hgt = Math.min(48, Math.abs(d) * 48 / 60);
+        P.rect(x, 372, 50, 1, LC.G35);
+        if (d !== 0) P.rect(x + 8, d > 0 ? 373 : 372 - hgt, 34, hgt, d > 0 ? LC.CY : LC.YE);
+        P.text((d > 0 ? "+" : d < 0 ? "-" : "") + Math.abs(d), x + 25, 428, 5, d === 0 ? LC.GN : LC.W, "C");
+      });
+    } },
+  { id: "chstrip", group: 0, name: "Channel strip", item: "47", size: "L", today: false,
+    note: ["",
+           "Proposal (not built): a new instrument page for one layer's own sound chain, before the layer goes to the mixer (Filter 1 and 2 stay as they are). On the left the layer's sample (choose it here), on the right the chain as six boxes in the order the sound runs: ENV (attack and decay of the tail), DRIVE (a soft saturation), FILTER (LP, HP, BP or notch with resonance, a 6, 12 or 24 dB slope and an extra high-pass), EQ (one band) COMP (with a sidechain from another layer) and IMAGE (spread a mono layer into a pair, width from mono to double, bass mono: the side high-passed, so the lows are mono). Each box has its own on lamp and a small picture of what it does; the selected one (cyan) gets the eight encoders and a big picture below: here the filter's response with its cutoff marked. A block that is off costs nothing. Settings are saved with the layer in kits and songs. Open: the page's place in the instrument key cycle (I proposed a fourth page), and the cost, which is measured with the CPU bar before and after."],
+    draw() {
+      mMenu("CH", 3);
+      mField(0, "BLOCK", "FILTER".padStart(10)); mField(1, "ACTIVE", "ON".padStart(10)); mField(2, "TYPE", "LP".padStart(10)); mField(3, "CUTOFF", "2.4".padStart(10), "KHZ");
+      mField(4, "RESON", "1.60".padStart(10)); mField(5, "SLOPE", "12".padStart(10), " DB"); mField(6, "HP", "40".padStart(10), " HZ"); mField(7, "LFO", "--".padStart(10));
+      mBig();
+      // left: the sample
+      P.text("LAYER 03", 30, 138, 10, LC.CY);
+      P.frame(24, 164, 232, 44, LC.G50); P.text("HAT CLOSED 01", 34, 168, 7, LC.W);
+      for (let x = 0; x < 212; x++) { const e = Math.exp(-x / 45) * (0.5 + 0.5 * Math.sin(x * 2.3) * Math.sin(x * 0.7)); const hh = Math.round(9 * Math.abs(e)); P.rect(34 + x, 193 - hh, 1, hh * 2 + 1, LC.CY); }
+      P.text("SAMPLES", 30, 216, 7, LC.G75);
+      ["HAT CLOSED 01", "HAT CLOSED 02", "HAT CLOSED 03", "HAT PEDAL", "HAT OPEN 01", "HAT OPEN 02"].forEach((n, k) => {
+        const y = 232 + k * 22, on = k === 0;
+        P.frame(24, y, 232, 20, on ? LC.CY : LC.G25); if (on) P.rect(25, y + 1, 230, 18, LC.G25);
+        P.text(n, 34, y + 6, 7, on ? LC.CY : LC.G75, "L", on ? LC.G25 : LC.K);
+      });
+      P.text("TURN THE SAMPLE FIELD OR PRESS", 30, 372, 5, LC.G50); P.text("A PAD TO HEAR IT", 30, 382, 5, LC.G50);
+      // right: the chain
+      const blocks = ["ENV", "DRIVE", "FILTER", "EQ", "COMP", "IMAGE"], on = [1, 0, 1, 1, 1, 1], selB = 2, BX = 280, BW = 100, BG = 10, BY = 138, BH = 78;
+      const mini = (k, x, y, c, W = 100) => {
+        if (k === 5) { P.rect(x, y + 14, W, 1, LC.G25); P.rect(x + W / 2, y + 4, 1, 22, LC.G50); P.rect(x + 12, y + 8, W - 24, 5, c); P.rect(x + 20, y + 16, W - 40, 5, c); P.rect(x + W / 2 - 3, y + 24, 6, 5, LC.YE); return; }
+        if (k === 0) { for (let t = 0; t < W; t++) { const a = Math.min(1, t / (W * 0.06)) * Math.exp(-t / (W * 0.28)); P.rect(x + t, y + 30 - Math.round(a * 28), 1, 2, c); } }
+        if (k === 1) { for (let t = 0; t < W; t++) { const xx = (t - W / 2) / (W * 0.28), v = Math.tanh(xx * 1.6); P.rect(x + t, y + 15 - Math.round(v * 14), 1, 2, c); } P.rect(x, y + 15, W, 1, LC.G25); }
+        if (k === 2) { for (let t = 0; t < W; t++) { const f = t / (W - 1) * 3 - 1.3, r = Math.pow(10, f), d = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(r / 1.6, 2)), v = Math.max(-30, 20 * Math.log10(d)); P.rect(x + t, y + 30 - Math.round((v + 30) / 40 * 28), 1, 2, c); } }
+        if (k === 3) { for (let t = 0; t < W; t++) { const v = 10 * Math.exp(-Math.pow((t - W * 0.55) / (W * 0.14), 2)); P.rect(x + t, y + 24 - Math.round(v * 1.4), 1, 2, c); } P.rect(x, y + 24, W, 1, LC.G25); }
+        if (k === 4) { for (let t = 0; t < W; t++) { const inn = t / 99, o = inn < 0.5 ? inn : 0.5 + (inn - 0.5) / 4; P.rect(x + t, y + 30 - Math.round(o * 56), 1, 2, c); } P.rect(x, y + 30, W, 1, LC.G25); }
+      };
+      blocks.forEach((n, k) => {
+        const x = BX + k * (BW + BG), isSel = k === selB, c = on[k] ? (isSel ? LC.CY : LC.G75) : LC.G35;
+        P.frame(x, BY, BW, BH, isSel ? LC.CY : LC.G25); if (isSel) P.frame(x + 1, BY + 1, BW - 2, BH - 2, LC.CY);
+        P.text(n, x + 8, BY + 8, 7, c); P.rect(x + BW - 18, BY + 8, 9, 9, on[k] ? LC.GN : LC.G25);
+        mini(k, x + 10, BY + 30, c, 80);
+        if (k < 5) { P.rect(x + BW, BY + BH / 2, BG, 1, LC.G50); }
+      });
+      P.text("SAMPLE", BX, BY - 10 + 0, 5, LC.G50, "L", null);
+      P.text("TO PAN AND THE MIXER", BX + 6 * (BW + BG) - BG, BY + BH + 4, 5, LC.G50, "R");
+      // the selected block, big: the filter response
+      const PX = 280, PY = 250, PW = 650, PH = 150;
+      P.text("FILTER   LP 12 DB   CUTOFF 2.4 KHZ   RESON 1.60   HP 40 HZ", PX, 232, 7, LC.CY);
+      P.frame(PX - 1, PY - 1, PW + 2, PH + 2, LC.G25);
+      [100, 1000, 10000].forEach(f => { const x = PX + Math.round(Math.log10(f / 20) / 3 * PW); for (let y = PY; y < PY + PH; y += 4) P.rect(x, y, 1, 1, LC.G25); P.text(f >= 1000 ? (f / 1000) + "K" : String(f), x + 3, PY + PH - 9, 5, LC.G50, "L", null); });
+      for (let g = 1; g < 4; g++) for (let x = 0; x < PW; x += 4) P.rect(PX + x, PY + Math.round(g * PH / 4), 1, 1, LC.G25);
+      const fc = 2400, qq = 1.6;
+      for (let x = 0; x < PW; x++) {
+        const f = 20 * Math.pow(10, x / PW * 3), r = f / fc, d = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(r / qq, 2));
+        const hp = 1 / Math.sqrt(1 + Math.pow(40 / f, 4)), db = 20 * Math.log10(d * hp), y = PY + PH * (18 - db) / 66;
+        P.rect(PX + x, Math.max(PY, Math.min(PY + PH - 2, Math.round(y))), 1, 2, LC.CY);
+      }
+      const cx = PX + Math.round(Math.log10(fc / 20) / 3 * PW); for (let y = PY; y < PY + PH; y += 3) P.rect(cx, y, 1, 1, LC.YE);
+      P.text("TURN BLOCK TO PICK ENV, DRIVE, FILTER, EQ, COMP OR IMAGE", PX, PY + PH + 8, 5, LC.G50);
+    } },
+  { id: "stage", group: 0, name: "Stereo stage", item: "71", size: "M", today: false,
+    note: ["",
+           "Proposal (not built): the fifth instrument page, a picture of the whole stereo mix. Every layer is a bar on one stage: centred at its pan, as wide as its width (the IMAGE block of the channel strip), the bass mono corner marked in yellow at the centre, and at the right the layer's correlation (green near +1, yellow around 0, red below 0: where a widened layer starts to cancel when the mix is summed to mono). The selected layer's fields are the four below: PAN (the same value as on instrument page 3), WIDTH, BASS (mono below, in Hz) and SPREAD. It reads settings and one correlation number per layer from the audio; nothing is drawn per sample."],
+    draw() {
+      mMenu("ST", 3);
+      mField(0, "PAN", "L 12".padStart(10)); mField(1, "WIDTH", "120", "  %"); mField(2, "BASS MONO", "120".padStart(10), " HZ"); mField(3, "SPREAD", "0".padStart(10), "  %");
+      mBig();
+      const SX = 150, SW = 640, mid = SX + SW / 2;
+      P.text("LEFT", SX, 138, 7, LC.G75); P.text("CENTRE", mid, 138, 7, LC.G75, "C"); P.text("RIGHT", SX + SW, 138, 7, LC.G75, "R");
+      for (let y = 156; y < 436; y += 4) P.rect(mid, y, 1, 1, LC.G50);
+      [-1, -0.5, 0.5, 1].forEach(q => { for (let y = 156; y < 436; y += 6) P.rect(Math.round(mid + q * SW / 2), y, 1, 1, LC.G25); });
+      const pan = [0, -14, -12, 8, 0, 22, -26, 30, 16, 0], wid = [40, 10, 120, 80, 100, 60, 40, 90, 70, 150], bass = [1, 0, 1, 0, 1, 0, 0, 0, 0, 1], cor = [0.95, 1, 0.55, 0.7, 0.9, 0.8, 0.9, 0.3, 0.6, -0.2], lev = [82, 74, 60, 55, 70, 45, 66, 40, 50, 58];
+      LAYER_NAMES.forEach((n, i) => {
+        const y = 156 + i * 28, sel = i === 2, c = sel ? LC.CY : LC.G75;
+        P.text(String(i + 1).padStart(2, "0") + " " + n.slice(0, 7), 30, y + 8, 7, sel ? LC.CY : LC.G75);
+        const cx = mid + pan[i] / 40 * SW / 2, half = Math.max(2, wid[i] / 200 * SW / 4 * 1.6);
+        P.rect(Math.round(cx - half), y + 4, Math.round(half * 2), 14, sel ? LC.CY : LC.G50);
+        P.rect(Math.round(cx - half), y + 4, Math.round(half * 2), 1, LC.G75); P.rect(Math.round(cx - half), y + 17, Math.round(half * 2), 1, LC.G75);
+        P.rect(Math.round(cx - 1), y + 8, 3, 6, sel ? LC.K : LC.G25);
+        if (bass[i]) P.rect(Math.round(cx - 3), y + 20, 7, 3, LC.YE);
+        if (sel) P.frame(24, y, 902, 26, LC.CY);
+        const cc = cor[i] > 0.6 ? LC.GN : cor[i] > 0.1 ? LC.YE : LC.RE;
+        P.text((cor[i] >= 0 ? "+" : "-") + Math.abs(cor[i]).toFixed(2), 892, y + 8, 7, cc, "R");
+      });
+      P.text("CORRELATION", 892, 138, 5, LC.G50, "R");
     } },
 ];
 // --- Full-area views: the lane area (920x310) shows one feature while its page is open ---
@@ -2400,7 +2643,24 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
-  { v: "V1.19", date: "2026-11-21", status: "Testing, not published", pub: false,
+  { v: "V1.21", date: "2026-11-22", status: "Testing, not published", pub: false,
+    nw: ["DUB desk, LINE IN channel (backlog 70): a thirteenth column after VERB. Its fader is the line-in volume (20 steps of 1 dB), its two knobs the BUS (FILT or DIR) and the ECHO and VERB sends of the line-in, with a mute and a signal light of its own. The DUB page 2 has STRIP (turn to the L strip) and LINE MUTE; the nanoKONTROL moves along 13 columns (fader = volume, knob = echo send, M = mute). Saved in a new LIN block after the LFD block; older songs have the line-in on FILT with no sends, as before. The columns are 70 px wide now to make room.",
+         "Quantize now (backlog 59), on the RHYTHM page: three new fields NOW GRID, NOW SCOPE and NOW APPLY quantize notes already recorded (this layer, this bank or all layers) with a picture of every note before and after and how far each moves; APPLY needs two turns to the right and is one undo step.",
+         "The LFO overview (backlog 3, 35, 45): while the LFO page is open, the lane area shows the ten LFOs as rows (number, small wave, how many things each moves), the selected one as a big wave with a yellow phase dot that moves with the song, and the USED BY list: every layer field and filter field that follows it.",
+         "INVERT on an LFO now turns the wave upside down in the sound, as the page says (before, it only turned the picture; an old song with INVERT on will sound different).",
+         "The channel strip (backlog 71), first version: a fourth instrument page (the instrument key and a layer pad, then the same pad again through pages 1, 2 and 3) with a sound chain for that layer, before the mixer: ENV (attack and decay of the tail), DRIVE (a soft saturation at twice the sample rate), FILTER (LP, HP, BP or notch at 6, 12 or 24 dB, plus an extra high-pass), EQ (one band), COMP (with a sidechain from another layer) and IMAGE (spread a mono layer, width, bass mono). BLOCK picks the block, ACTIVE switches it, the other fields are its parameters; a block that is off costs nothing. Saved with the song (a CHN block); old songs have every block off. The lane area shows the layer, the list of the blocks, six boxes with a small picture each and the selected block big: the filter's and the EQ's response (the real coefficients), the compressor's transfer curve, the envelope over time, the drive's curve and the mid and side of IMAGE. Under the list a panel gives every value of the selected block (attack, decay, cutoff and so on), and the big picture carries the main ones where they belong: the cutoff and the band on their frequency, the threshold on its level, the bass mono corner, the envelope's attack and decay at their moments. No kits yet.",
+         "The stereo stage (backlog 71): the fifth instrument page (the instrument key again on the chain page): a picture of the whole mix on one stage. Each layer is a bar centred at its pan and as wide as its stereo image (a mono layer is a point, SPREAD widens it, a stereo sample is 100 %, WIDTH scales it), a yellow mark where the bass is mono, and the layer's correlation at the right, measured while the page is open (green near +1, yellow in between, red below +0.10: it cancels when summed to mono). The fields: PAN, WIDTH, BASS MONO, SPREAD; a pad picks the layer.",
+         "The PERFORM page (backlog 45): tap SONG on the SONG page for a live page: the bar and beat and the tempo as big seven-segment digits, the chain, and a tile for each layer with MUTE and SOLO in big letters, its 16-step pattern with the playhead and a level bar. A pad mutes its layer. Fields TEMPO, BANK, STEP, REPEATS, FILL (the FILL condition held while the page is open) and UNDO. Note: the tap that used to turn the chain on or off on the SONG page now opens this page; the CHAIN field does the on and off.",
+         "The LFO on a filter shows its work: while it moves FREQ or RESONANCE, the field (and its HZ or KHZ unit) shows the value the LFO gives now, in yellow, like the layer's LFO values; the set value comes back in white when the sequencer stops or the LFO is taken off.",
+         "The signal lights of the ECHO and VERB returns work (they read the output of the echo and the reverb).",
+         "Hard-hitting returns: in DUB mode the echo takes its input at full level (the hidden LEVEL of 50 % was 6 dB of loss) and the reverb output gets +12 dB (a drum hit came back at only -11 dB at WET 100 %). Only DUB mode; CHAIN sounds as before.",
+         "LFOs on the filters (backlog 3): hold SHIFT and turn FREQ or RESONANCE on a FILTER page to pick an LFO (-- or 01 to 10) for it; its number shows in yellow under the field. The filter follows the LFO continuously while the sequencer plays (FREQ up to 3 octaves each way at full depth, RESONANCE up to half its range each way), designed again up to 200 times a second as the cutoff moves, and returns to its set values when the sequencer stops or the LFO is taken off. Both filters, both fields. Saved in the song (an LFD block after the QNT block), not in the drumkit",
+         "The rest of the nanoKONTROL Studio (backlog 68): S and R buttons are echo and reverb throws on a strip while held, the jog wheel steps the echo TIME (S 29 30 31 33 to 37, R 38 to 45, wheel 86, read from the unit; the unit has no X-Y pad). The DUB desk shows the last controller message in its bottom-left corner"],
+    fix: [] },
+  { v: "V1.20", date: "2026-11-22", status: "Testing, not published", pub: false,
+    nw: ["nanoKONTROL Studio on the DUB desk (backlog 68): the Drumboy reads MIDI control changes on any channel while MIDI IN is on, with the Studio's own CC numbers (faders 2 3 4 5 6 8 9 12, knobs 13 to 20, M buttons 21 to 28, TRACK 60 and 61). Faders set a layer's LEVEL (the echo's WET and the reverb's WET on the ECHO and VERB columns), knobs the layer's ECHO send (the echo's FEEDBACK, the reverb's DECAY), the M buttons mute a layer, and TRACK < and > slide the Studio's eight strips along the desk's twelve columns (a cyan bar above the plates marks them). A fader takes over only when it reaches the value shown, so a level never jumps. No Korg editor is needed; the CC list and the connection are in docs/nanokontrol-studio.md"],
+    fix: [] },
+  { v: "V1.19", date: "2026-11-21", status: "GitHub release v1.19 · tested", pub: true,
     nw: ["Quantize modes (backlog 59): the RHYTHM page's QUANTIZE field adds the triplet grids 1:32T, 1:16T, 1:8T and 1:4T, the mixed grids 1:16+T and 1:8+T (a hit snaps to the nearer point of the straight and the triplet grid) and OFF (no snap), after the seven straight grids of before (same order, same behaviour). A triplet step is rounded to a whole interval, but three of them are exactly one beat (no drift)",
          "A screen for QUANTIZE and STRENGTH: while either field of the RHYTHM page is selected the lanes give way to every grid as a row of points over two beats (the chosen one lit), what the grid is, and what STRENGTH does to a hit played late and where it lands (see the picture in the Euclid tab)",
          "STRENGTH, the fifth field of the RHYTHM page: how far a recorded hit moves to its grid point, 0 to 100 % in steps of 5 (100 snaps as always, 50 goes halfway, 0 keeps the playing). It is saved with the song (a QNT block after the GEN block, which older firmware never reads); a new song and a song without the block start at 100",

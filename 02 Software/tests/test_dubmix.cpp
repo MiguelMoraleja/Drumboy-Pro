@@ -41,6 +41,34 @@ static void run(Rig& r, RouteSource* sources, uint8_t count, const RoutePatch& p
     });
 }
 
+// A throw opens the send smoothly: the envelope rises in a few blocks, falls over more, and never leaves 0..1.
+static void testThrowEnvelope() {
+    float env = 0.0f;
+    float previous = 0.0f;
+    int blocksToOpen = 0;
+    for (int i = 0; i < 200; i++) {
+        dubThrowStep(env, true);
+        CHECK(env >= previous && env <= 1.0f, "rising and bounded at %d", i);
+        previous = env;
+        if (env >= 0.95f && blocksToOpen == 0) blocksToOpen = i + 1;
+    }
+    CHECK(env == 1.0f && blocksToOpen >= 9 && blocksToOpen <= 13, "95 %% open in %d blocks (11: about 8 ms of 0.7 ms blocks)", blocksToOpen);
+    int blocksToClose = 0;
+    for (int i = 0; i < 2000; i++) {
+        dubThrowStep(env, false);
+        CHECK(env <= previous && env >= 0.0f, "falling and bounded at %d", i);
+        previous = env;
+        if (env <= 0.05f && blocksToClose == 0) blocksToClose = i + 1;
+    }
+    CHECK(env == 0.0f && blocksToClose > 60 && blocksToClose < 90, "95 %% closed in %d blocks (74: about 54 ms, slower than the attack)", blocksToClose);
+    // The send: the strip's own send with the throw on top.
+    CHECK(dubSendWithThrow(0.3f, 0.0f) == 0.3f && dubSendWithThrow(0.3f, 1.0f) == 1.0f && std::fabs(dubSendWithThrow(0.3f, 0.5f) - 0.65f) < 1e-6f && dubSendWithThrow(1.0f, 0.5f) == 1.0f, "send with a throw");
+    // A short tap (held for 3 blocks) opens only part of the way and closes again.
+    env = 0.0f;
+    for (int i = 0; i < 3; i++) dubThrowStep(env, true);
+    CHECK(env > 0.3f && env < 0.8f, "a tap opens part of the way (%f)", env);
+}
+
 int main() {
     // --- Patch ---
     CHECK(routePatchValid(kDubRoutePatch), "the DUB patch is valid");
@@ -342,6 +370,34 @@ int main() {
         CHECK(r.outL[3] == 0.5f && r.outR[3] == 0.5f, "mono source: the same on both sides");
     }
 
+    testThrowEnvelope();
+    CHECK(dubEchoLevel(true, 0.5f) == 1.0f && dubEchoLevel(false, 0.5f) == 0.5f, "echo input: full level in DUB, LEVEL in CHAIN");
+    {  // the LINE IN channel
+        DubMix d;
+        d.line.bus = DUB_BUS_DIR; d.line.echo = 40; d.line.verb = 25;
+        float g[kRouteNodeCount];
+        dubLineGains(d, g);
+        CHECK(g[NODE_MASTER] == 1.0f && g[NODE_EQ] == 0.0f && std::fabs(g[NODE_F2] - 0.4f) < 1e-6f && std::fabs(g[NODE_REV] - 0.25f) < 1e-6f && g[NODE_FX2] == 0.0f, "line gains");
+        d.lineMute = true;
+        dubLineGains(d, g);
+        bool allZero = true;
+        for (uint8_t n = 0; n < kRouteNodeCount; n++) allZero = allZero && (g[n] == 0.0f);
+        CHECK(allZero, "a muted line sends nowhere");
+        uint8_t blob[kDubLineFileSize];
+        dubLineWrite(d, blob);
+        DubMix back;
+        CHECK(dubLineRead(back, blob, kDubLineFileSize) && back.line.bus == DUB_BUS_DIR && back.line.echo == 40 && back.line.verb == 25 && back.lineMute, "line block round trip");
+        CHECK(!dubLineRead(back, blob, kDubLineFileSize - 1), "too short");
+        blob[5] = 101;
+        CHECK(!dubLineRead(back, blob, kDubLineFileSize), "a send over 100 rejects the block");
+        dubLineWrite(d, blob);
+        blob[0] = 'X';
+        CHECK(!dubLineRead(back, blob, kDubLineFileSize), "wrong marker");
+        bool inverse = true;
+        for (uint8_t v = 0; v <= 20; v++) inverse = inverse && (dubLineVolume(dubLineFader(v)) == v);
+        CHECK(inverse && dubLineFader(20) == 100 && dubLineVolume(100) == 20 && dubLineVolume(0) == 0 && dubLineVolume(255) == 20, "line volume <-> fader");
+    }
+    CHECK(dubReverbGain(true) == 4.0f && dubReverbGain(false) == 1.0f, "reverb return gain: +12 dB in DUB only");
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

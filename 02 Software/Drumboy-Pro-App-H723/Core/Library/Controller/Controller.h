@@ -111,6 +111,10 @@ class Controller {
     RouteFade metroFade;                                                // metronome route fade (audio interrupt only)
     // CPU and MEM monitor (LoadMeter.h): the audio engine's load, measured in every build.
     // Layer meters and the status line (StatusLine.h).
+    volatile float linePeak = 0.0f;                                     // the line-in channel's peak since the last readout (audio interrupt)
+    uint16_t lineShown = 0;
+    volatile float returnPeak[2] = {0, 0};                              // echo and reverb return peaks since the last readout (audio interrupt)
+    uint16_t returnShown[2] = {0, 0};                                   // their meter heights as shown
     volatile float layerPeak[kLayerLibrarySize] = {0};                  // peak since the last readout (audio interrupt)
     uint16_t meterShown[kLayerLibrarySize] = {0};                       // level on the bar, in pixels
     uint32_t meterClipUntil[kLayerLibrarySize] = {0};                   // the clip square stays until then
@@ -294,12 +298,62 @@ class Controller {
     int16_t fsDrawnSlot = -1;                   // the cursor as drawn (-1 = the screen is not drawn)
     uint32_t fileViewKey = 0;                   // what the grid was drawn from, without the cursor (0 = nothing)
     uint32_t fileViewStateDrawn = 0;
+    CcTakeover ccFaderTake[kCcStrips];          // a fader of the controller takes over only when it reaches the shown value (MidiCc.h)
+    CcTakeover ccKnobTake[kCcStrips];
+    uint8_t ccWindow = 0;                       // the controller's eight strips control the desk's columns ccWindow .. ccWindow + 7
+    bool ccPendingSet[2][kCcStrips];            // a value the setter refused (its mix transition was running) is tried again each pass
+    uint8_t ccPendingValue[2][kCcStrips];       // [0] faders, [1] knobs
+    uint32_t lfoModTick = 0;
+    uint32_t filterLiveDrawn[2][2] = {{0, 0}, {0, 0}};      // what the FREQ and RESONANCE fields of each filter show now: 0 = the set value, else the LFO's (a key)
+    uint32_t filterLiveTick = 0;
+    volatile uint8_t dubThrow[kDubStrips];      // the throws held on the controller's S and R buttons (THROW_ECHO, THROW_VERB), per layer
+    float dubThrowEnv[kDubStrips][2];           // their smoothed envelopes, stepped once per audio block
+    int16_t ccJogPending = 0;                   // jog clicks not yet applied to the echo time (the setter refuses while a transition runs)
+    uint16_t ccMonitorSeen[128];                // the last controller message shown on the desk (every CC, mapped or not)
+    uint8_t ccLastCc = 0, ccLastValue = 0;
+    uint32_t ccLastMs = 0;
+    uint32_t ccMonitorDrawnKey = 0;
+    bool ccSeen = false;                        // the controller has sent something: the desk marks its eight strips
+    int8_t ccWindowDrawn = -1;                  // the window the desk's marker shows (-1 = nothing drawn, -2 = no marker)
+    bool ccUiDirty = false;                     // something changed through the controller: the DUB page redraws soon
+    uint32_t ccUiMs = 0;
+    uint32_t lfoViewKey = 0;                    // 0 = the LFO overview is not drawn
+    uint32_t lfoViewStateDrawn = 0;
+    int16_t lfoDotDrawn = -1;                   // the phase dot's plot column as drawn (-1 = none)
+    ChSettings chSettings[kLayerLibrarySize];   // the channel strip of each layer (ChannelStrip.h), saved in the song's CHN block
+    uint32_t chainViewStateDrawn = 0;           // what the chain page's pictures were drawn from
+    uint32_t stageViewStateDrawn = 0;           // what the stage page was drawn from
+    int8_t stageCorr[kLayerLibrarySize];        // each layer's correlation as shown (StageView.h), kStNoCorr = none
+    int8_t stageCorrDrawn[kLayerLibrarySize];
+    uint8_t stageSilent[kLayerLibrarySize];     // readings without signal in a row
+    uint32_t stageTick = 0;
+    uint8_t chBlockSel = 0;                     // the block the chain page edits
+    uint8_t songPage = 0;                       // the SONG key's pages: 0 the chain, 1 PERFORM (PerformView.h)
+    bool perfFillLatch = false;                 // PERFORM's FILL field: the FILL condition holds as if the F key were held
+    uint32_t perfViewKey = 0;                   // 0 = the PERFORM view is not drawn
+    uint32_t perfViewStateDrawn = 0;
+    uint32_t perfChainKey = 0, perfTileKey[kLayerLibrarySize] = {0};
+    uint16_t perfTempoDrawn = 0xFFFF, perfBarKey = 0xFFFF;
+    int8_t perfCellDrawn[kLayerLibrarySize];
+    uint8_t perfMeterDrawn[kLayerLibrarySize];
     uint32_t quantizeViewKey = 0;               // what the quantize screen was drawn from (0 = nothing)
     uint32_t quantizeViewStateDrawn = 0;
+    uint8_t qnGrid = kQuantizeGridDefault;      // QUANTIZE NOW: the grid it snaps to (set to the page's own grid when the page opens)
+    uint8_t qnScope = 0;
+    uint8_t qnLayer = 0;                        // THIS LAYER: the layer a pad was pressed on while a NOW field is showing (the RHYTHM page has no selected layer)                        // THIS LAYER, THIS BANK, ALL LAYERS
+    QnApplyState qnApply = QN_READY;
+    uint32_t qnArmKey = 0, qnArmMs = 0;         // what APPLY was armed for, and when
     uint8_t slotRepeat = 0;                     // consecutive repeats of a held UP or DOWN: after 8 the step is ten slots
     uint8_t slotStep(bool repeat_);
     uint32_t fileViewState() const;
     uint32_t quantizeViewState() const;
+    void lfo_updateModules();                   // main loop: the LFOs on the filters (LfoMod.h), while the sequencer plays
+    void filter_setLfo(uint8_t filterNum_, bool reson_, uint8_t lfo_);
+    void lcd_drawFilter_LfoBox(uint8_t filterNum_, uint8_t tab_);
+    uint32_t filter_liveKey(uint8_t filterNum_, bool reson_) const;
+    void midi_serviceCc();                      // main loop: applies the controller's latest values once per pass
+    uint8_t cc_current(CcKind kind_, uint8_t column_) const;
+    bool cc_apply(CcKind kind_, uint8_t column_, uint8_t percent_);  // true when the parameter reached the value
     void lcd_drawQuantizeViewData();
     void lcd_drawFileViewData();
     bool sd_readSlotSummary(FsKind kind_, uint8_t slot_, FsSummary& out_);
@@ -394,6 +448,34 @@ class Controller {
     uint32_t songThumbState(uint8_t bank_, uint8_t color_) const;
     void lcd_drawSongViewData();
     void lcd_drawSongViewPlay();
+    void song_togglePage();
+    void chInitSettings();
+    void chain_select(uint8_t layerNum_);
+    void chain_step(EncoderFunc function_, bool up_);
+    void lcd_drawChainMenu();
+    void lcd_drawChain_Slot(uint8_t slot_);
+    uint32_t chainViewState() const;
+    void lcd_drawChainViewData();
+    void stage_select(uint8_t layerNum_);
+    void stage_step(EncoderFunc function_, bool up_);
+    void lcd_drawStageMenu();
+    void lcd_drawStage_Slot(uint8_t slot_);
+    uint32_t stageViewState() const;
+    void lcd_drawStageViewData();
+    StRow stageRowOfLayer(uint8_t layerNum_, int8_t corr_) const;
+    void lcd_drawStageViewPlay();
+    void processAudioChannelStrips();
+    uint32_t lfoViewState() const;
+    void lcd_drawLfoViewData();
+    void lcd_drawLfoViewPlay();
+    void perf_step(EncoderFunc function_, bool up_);
+    void lcd_drawPerformMenu();
+    void lcd_drawPerform_Data();
+    uint32_t perfViewState() const;
+    uint16_t perfPatternOf(uint8_t layerNum_) const;
+    void lcd_drawPerformViewData();
+    void lcd_drawPerformPlay();
+    void lcd_drawPerformMeters();
     void lcd_drawRoutingViewData();
     bool filterViewDrawn = false;           // curves are on screen (and stored in the view scratch)
     bool filterViewOther = false;           // the other filter's curve is among them
@@ -431,8 +513,8 @@ class Controller {
     uint8_t dubPage = 0;                                    // 0: the first DUB page, 1: the second (pan, FX send, echo width), 2: HISS (the bed, GeneratorView.h)
     uint8_t dubStripSel = 0;                                // the strip the DUB page edits (a pad press selects it)
     uint32_t dubStripDrawn[kDubStrips] = {0};               // the desk: what each strip shows (a fingerprint), 0 = nothing
-    uint32_t dubReturnDrawn[2] = {0, 0};
-    uint16_t dubMeterDrawn[kDubStrips];                     // the desk's meter heights as drawn (0xFFFF = nothing)
+    uint32_t dubReturnDrawn[3] = {0, 0, 0};                 // ECHO, VERB and LINE IN
+    uint16_t dubMeterDrawn[kDubColumns];                     // the desk's meter heights as drawn (0xFFFF = nothing)
     uint32_t dubViewStateDrawn = 0;
     uint32_t dubViewState() const;
     void lcd_drawDubViewData();
@@ -864,6 +946,12 @@ class Controller {
     void lcd_drawRhythm_BarData();
     void lcd_drawRhythm_QuantizeData();
     void lcd_drawRhythm_StrengthData();
+    void lcd_drawRhythm_NowData();
+    void quantizeNow_step(EncoderFunc function_, bool up_);
+    void quantizeNow_apply();
+    uint32_t quantizeNow_key() const;
+    uint32_t quantizeNow_viewState() const;
+    void lcd_drawQuantizeNowData();
     // Metronome menu functions
     void lcd_drawMetroMenu();
     void lcd_drawMetro_ActiveData();

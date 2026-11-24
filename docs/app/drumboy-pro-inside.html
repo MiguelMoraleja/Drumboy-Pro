@@ -296,7 +296,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.21 (testing)</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.21</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -2643,7 +2643,7 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
-  { v: "V1.21", date: "2026-11-22", status: "Testing, not published", pub: false,
+  { v: "V1.21", date: "2026-11-24", status: "GitHub release v1.21 · partly tested", pub: true,
     nw: ["DUB desk, LINE IN channel (backlog 70): a thirteenth column after VERB. Its fader is the line-in volume (20 steps of 1 dB), its two knobs the BUS (FILT or DIR) and the ECHO and VERB sends of the line-in, with a mute and a signal light of its own. The DUB page 2 has STRIP (turn to the L strip) and LINE MUTE; the nanoKONTROL moves along 13 columns (fader = volume, knob = echo send, M = mute). Saved in a new LIN block after the LFD block; older songs have the line-in on FILT with no sends, as before. The columns are 70 px wide now to make room.",
          "Quantize now (backlog 59), on the RHYTHM page: three new fields NOW GRID, NOW SCOPE and NOW APPLY quantize notes already recorded (this layer, this bank or all layers) with a picture of every note before and after and how far each moves; APPLY needs two turns to the right and is one undo step.",
          "The LFO overview (backlog 3, 35, 45): while the LFO page is open, the lane area shows the ten LFOs as rows (number, small wave, how many things each moves), the selected one as a big wave with a yellow phase dot that moves with the song, and the USED BY list: every layer field and filter field that follows it.",
@@ -2657,7 +2657,7 @@ const RELEASES = [
          "LFOs on the filters (backlog 3): hold SHIFT and turn FREQ or RESONANCE on a FILTER page to pick an LFO (-- or 01 to 10) for it; its number shows in yellow under the field. The filter follows the LFO continuously while the sequencer plays (FREQ up to 3 octaves each way at full depth, RESONANCE up to half its range each way), designed again up to 200 times a second as the cutoff moves, and returns to its set values when the sequencer stops or the LFO is taken off. Both filters, both fields. Saved in the song (an LFD block after the QNT block), not in the drumkit",
          "The rest of the nanoKONTROL Studio (backlog 68): S and R buttons are echo and reverb throws on a strip while held, the jog wheel steps the echo TIME (S 29 30 31 33 to 37, R 38 to 45, wheel 86, read from the unit; the unit has no X-Y pad). The DUB desk shows the last controller message in its bottom-left corner"],
     fix: [] },
-  { v: "V1.20", date: "2026-11-22", status: "Testing, not published", pub: false,
+  { v: "V1.20", date: "2026-11-24", status: "Released with v1.21 · tested", pub: true,
     nw: ["nanoKONTROL Studio on the DUB desk (backlog 68): the Drumboy reads MIDI control changes on any channel while MIDI IN is on, with the Studio's own CC numbers (faders 2 3 4 5 6 8 9 12, knobs 13 to 20, M buttons 21 to 28, TRACK 60 and 61). Faders set a layer's LEVEL (the echo's WET and the reverb's WET on the ECHO and VERB columns), knobs the layer's ECHO send (the echo's FEEDBACK, the reverb's DECAY), the M buttons mute a layer, and TRACK < and > slide the Studio's eight strips along the desk's twelve columns (a cyan bar above the plates marks them). A fader takes over only when it reaches the value shown, so a level never jumps. No Korg editor is needed; the CC list and the connection are in docs/nanokontrol-studio.md"],
     fix: [] },
   { v: "V1.19", date: "2026-11-21", status: "GitHub release v1.19 · tested", pub: true,

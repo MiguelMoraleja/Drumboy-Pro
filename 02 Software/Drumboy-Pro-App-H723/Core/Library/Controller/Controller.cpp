@@ -23189,7 +23189,7 @@ bool Controller::laneViewHidden() const {
     /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG, ROUTING,
     /// FILTER, EQ and instrument page 2 pages). Everything that draws into a lane checks it, and asks for the view to be
     /// refreshed instead.
-    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == LFO_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU) ||
+    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == LFO_MENU) || (menu == CHAIN_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU) ||
            (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (menuTab > 0)) ||  // the load, save and clear tabs show the slots
            ((menu == RHYTHM_MENU) && (menuTab >= 3));                              // the QUANTIZE and STRENGTH fields show the grids
 }
@@ -23234,6 +23234,9 @@ void Controller::lcd_drawLaneViewData() {
             break;
         case LFO_MENU:
             lcd_drawLfoViewData();
+            break;
+        case CHAIN_MENU:
+            lcd_drawChainViewData();
             break;
         case ROUTING_MENU:
             lcd_drawRoutingViewData();
@@ -23385,6 +23388,7 @@ void Controller::lcd_updateLaneView() {
     if ((menu == RHYTHM_MENU) && (quantizeViewState() != quantizeViewStateDrawn)) viewDirty = true;
     if ((menu == SONG_MENU) && (songPage == 1) && (perfViewState() != perfViewStateDrawn)) viewDirty = true;
     if ((menu == LFO_MENU) && (lfoViewState() != lfoViewStateDrawn)) viewDirty = true;
+    if ((menu == CHAIN_MENU) && (chainViewState() != chainViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -24898,6 +24902,37 @@ void Controller::lcd_drawChainMenu() {
     lcd_setMenuHeaderState(CYAN);
     if (selectedLayerNum >= 0) lcd.drawText(kDataMenuNum + selectedLayerNum, 1, kMenuNumX, kMenuNumY);
     for (uint8_t f = 0; f < 8; f++) lcd_drawChain_Slot(f);
+}
+
+uint32_t Controller::chainViewState() const {
+    /// @brief A fingerprint of what the chain page's pictures show: the layer, the selected block and every setting of the strip. Never 0.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(static_cast<uint32_t>(selectedLayerNum + 2));
+    mix(chBlockSel);
+    if (selectedLayerNum >= 0) {
+        const uint8_t* b = reinterpret_cast<const uint8_t*>(&chSettings[selectedLayerNum]);
+        for (uint8_t i = 0; i < sizeof(ChSettings); i++) mix(b[i]);
+        for (const char* ch = layerLibrary[selectedLayerNum].instLoadedData.nameShortL; *ch; ch++) mix(static_cast<uint8_t>(*ch));
+        mix(genMix.type[selectedLayerNum]);
+    }
+    return h | 1u;
+}
+
+void Controller::lcd_drawChainViewData() {
+    /// @brief The chain page's pictures: the layer, the list of the blocks, the six boxes and the selected block big. Drawn
+    /// again whenever a setting, the block or the layer changes.
+    chainViewStateDrawn = chainViewState();
+    if (selectedLayerNum < 0) return;
+    GsLcd g{lcd};
+    char name[16];
+    layerShortName(static_cast<uint8_t>(selectedLayerNum), name, sizeof name);
+    const ChSettings& s = chSettings[selectedLayerNum];
+    const uint8_t sel = (chBlockSel < CH_BLOCKS) ? chBlockSel : static_cast<uint8_t>(0);
+    chvDrawHeader(g, static_cast<uint8_t>(selectedLayerNum), name);
+    chvDrawList(g, s, sel);
+    chvDrawBoxes(g, s, sel);
+    chvDrawBig(g, static_cast<ChBlock>(sel), s);
 }
 
 void Controller::chain_step(EncoderFunc function_, bool up_) {

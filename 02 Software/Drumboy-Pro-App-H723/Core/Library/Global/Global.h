@@ -31,6 +31,7 @@
 #include "LfoScreens.h"
 #include "QuantizeNowScreens.h"
 #include "ChannelStrip.h"
+#include "ChainScreens.h"
 #include "NoteView.h"
 #include "Pan.h"
 #include "UndoLog.h"

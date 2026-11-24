@@ -321,6 +321,7 @@ class Controller {
     uint32_t lfoViewStateDrawn = 0;
     int16_t lfoDotDrawn = -1;                   // the phase dot's plot column as drawn (-1 = none)
     ChSettings chSettings[kLayerLibrarySize];   // the channel strip of each layer (ChannelStrip.h), saved in the song's CHN block
+    uint32_t chainViewStateDrawn = 0;           // what the chain page's pictures were drawn from
     uint8_t chBlockSel = 0;                     // the block the chain page edits
     uint8_t songPage = 0;                       // the SONG key's pages: 0 the chain, 1 PERFORM (PerformView.h)
     bool perfFillLatch = false;                 // PERFORM's FILL field: the FILL condition holds as if the F key were held
@@ -448,6 +449,8 @@ class Controller {
     void chain_step(EncoderFunc function_, bool up_);
     void lcd_drawChainMenu();
     void lcd_drawChain_Slot(uint8_t slot_);
+    uint32_t chainViewState() const;
+    void lcd_drawChainViewData();
     void processAudioChannelStrips();
     uint32_t lfoViewState() const;
     void lcd_drawLfoViewData();

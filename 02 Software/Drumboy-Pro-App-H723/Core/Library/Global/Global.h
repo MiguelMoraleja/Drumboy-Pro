@@ -1,6 +1,7 @@
 #ifndef __GLOBAL_H
 #define __GLOBAL_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <cmath>
@@ -250,13 +251,13 @@ const float atanTable[TRIG_TABLE_SIZE] = {0.000000f, 0.000977f, 0.001953f, 0.002
 
 // Fast sine
 static inline float sinFast(float phaseNorm) {
-    // Wrap phase to 0.0 - 1.0
-    while (phaseNorm >= 1.0f) phaseNorm -= 1.0f;
-    while (phaseNorm < 0.0f) phaseNorm += 1.0f;
+    // Wrap phase to 0.0 - 1.0 in constant time (wrapRange: the loops that did this never ended for an infinity, and a phase
+    // just below zero plus one gave 1.0, which indexed past the table)
+    phaseNorm = wrapRange(phaseNorm, 1.0f);
 
     // Calc exact index
     float pos = phaseNorm * (float)TRIG_TABLE_SIZE;
-    int indexA = (int)pos;
+    int indexA = (int)pos & TRIG_TABLE_MASK;
     int indexB = (indexA + 1) & TRIG_TABLE_MASK;
     float frac = pos - (float)indexA;
 
@@ -2966,6 +2967,7 @@ struct FilterState {
     float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
     float u1 = 0.0f, u2 = 0.0f, v1 = 0.0f, v2 = 0.0f;
 };
+static_assert(sizeof(FilterState) == 8 * sizeof(float), "historySanitize walks the eight history values in a row");
 
 struct Filter {
     uint8_t num;
@@ -3260,6 +3262,8 @@ struct EqGenTransition {
 struct EqState {
     float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
 };
+static_assert(sizeof(EqState) == 4 * sizeof(float), "historySanitize walks the four history values in a row");
+static_assert(offsetof(EqFilter, y2) - offsetof(EqFilter, x1) == 3 * sizeof(float), "an EQ band keeps its history in a row (x1, x2, y1, y2)");
 
 struct Eq {
     bool active                                     = kInitialEqActive;

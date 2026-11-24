@@ -113,6 +113,43 @@ int main() {
     for (float x = -1.0f; x <= 1.0f; x += 0.01f) CHECK(std::fabs(overdriveShape(x, 1.0f) - (x - x * x * x / 3.0f)) < 1e-6f, "the old curve at threshold 1");
     CHECK(std::fabs(overdriveShape(0.01f, 0.5f) - 0.01f) < 1e-4f, "unity slope for small signals");
 
+    // wrapRange: constant time, never outside [0, size), a value already inside is untouched.
+    for (float size : {1.0f, 3200.0f, 96000.0f}) {
+        for (float x : {0.0f, 0.25f * size, 0.999f * size, size, 1.0001f * size, 2.5f * size, -0.25f * size, -1e-9f, -size, -7.3f * size, 1e30f, -1e30f, 3.4e38f}) {
+            const float y = wrapRange(x, size);
+            CHECK(y >= 0.0f && y < size, "wrapRange(%g, %g) = %g is inside", x, size, y);
+        }
+        CHECK(wrapRange(0.3f * size, size) == 0.3f * size && wrapRange(0.0f, size) == 0.0f, "inside: untouched");
+        CHECK(std::fabs(wrapRange(1.25f * size, size) - 0.25f * size) < 1e-3f * size && std::fabs(wrapRange(-0.25f * size, size) - 0.75f * size) < 1e-3f * size, "the loops' results");
+        CHECK(wrapRange(infValue, size) == 0.0f && wrapRange(-infValue, size) == 0.0f && wrapRange(nanValue, size) == 0.0f, "inf and NaN give 0, they cannot hang");
+    }
+    {   // the same as the old loops over the ordinary range (a delay line's read position, a phase)
+        for (float x = -3.0f; x < 3.0f; x += 0.0137f) {
+            float loop = x;
+            while (loop >= 1.0f) loop -= 1.0f;
+            while (loop < 0.0f) loop += 1.0f;
+            if (loop >= 1.0f) continue;  // the edge the loops got wrong
+            CHECK(std::fabs(wrapRange(x, 1.0f) - loop) < 1e-5f, "the same as the loops at %f: %f vs %f", x, wrapRange(x, 1.0f), loop);
+        }
+        // sinFast's table index: phase * 1024 never reaches 1024 for any wrapped phase
+        for (float x : {-1e-9f, -1e-12f, -1e-30f, 0.9999999f, 1.0f, 2.0f, -1.0f, 123456.789f}) CHECK(static_cast<int>(wrapRange(x, 1.0f) * 1024.0f) < 1024, "table index for %g", x);
+    }
+    // historySanitize: bad values are cleared, good ones left alone.
+    {
+        float h[8] = {0.1f, -0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f};
+        CHECK(!historySanitize(h, 8) && h[0] == 0.1f && h[7] == 0.8f, "good history stays");
+        h[5] = nanValue;
+        CHECK(historySanitize(h, 8), "NaN found");
+        bool allZero = true;
+        for (float v : h) allZero = allZero && (v == 0.0f);
+        CHECK(allZero, "all cleared");
+        float g[4] = {1.0f, 2.0f, infValue, 4.0f};
+        CHECK(historySanitize(g, 4) && g[0] == 0.0f && g[3] == 0.0f, "infinity found, four values");
+        float k[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        k[4] = -infValue;
+        CHECK(historySanitize(k, 4) == false && k[4] == -infValue, "only the first n values are looked at");
+    }
+
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

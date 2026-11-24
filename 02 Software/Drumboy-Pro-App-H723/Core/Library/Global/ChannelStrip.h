@@ -227,7 +227,9 @@ inline bool chProcess(const ChSettings& s_, ChState& st_, float* l_, float* r_, 
         const float atkMs = chAttackMs(s_.envAttack), decMs = chDecayMs(s_.envDecay);
         const float atkStep = (atkMs > 0.0f) ? 1000.0f / (atkMs * rate_) : 1.0f;
         const float decMul = (decMs > 0.0f) ? expf(-6.9077553f * 1000.0f / (decMs * rate_)) : 1.0f;
-        float ramp = st_.envAttackRamp, gain = st_.envGain;
+        // ATTACK 0 means no ramp: the first sample of a note comes through at full level (the ramp used to start at 0 and so
+        // muted it, which cuts the front of a hard transient)
+        float ramp = (atkMs > 0.0f) ? st_.envAttackRamp : 1.0f, gain = st_.envGain;
         for (uint16_t i = 0; i < n_; i++) {
             const float g = ramp * gain;
             for (uint8_t c = 0; c < chans; c++) buf[c][i] *= g;

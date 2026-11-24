@@ -3,21 +3,20 @@
 //
 // The numbers are the nanoKONTROL Studio's own (read from the unit, no editor needed) and the channel does not
 // matter: a control change on any channel counts (notes keep the channel set on the MIDI page).
-// Eight strips of the Studio control eight of the twelve columns of the dub desk: the ten layers, then the
-// ECHO and the VERB return. TRACK < and > slide the eight strips along the twelve columns.
+// Eight strips of the Studio control eight of the thirteen columns of the dub desk: the ten layers, then the
+// ECHO and the VERB return and the LINE IN. TRACK < and > slide the eight strips along the thirteen columns.
 //
 //   control            CC                  on a layer column          on the ECHO column   on the VERB column
 //   fader 1..8         2 3 4 5 6 8 9 12    LEVEL                      echo WET             reverb WET
 //   knob 1..8          13..20              ECHO send                  echo FEEDBACK        reverb DECAY
 //   M button 1..8      21..28              mute (a press toggles)     -                    -
 //   TRACK <  and  >    60, 61              the strips move one column
-//   S button 1..8      29..36 (see below)  ECHO throw while held   -                    -
-//   R button 1..8      37..44 (see below)  VERB throw while held   -                    -
-//   X-Y pad X, Y       45, 46 (see below)  Filter 1 FREQ (X), echo FEEDBACK (Y, past 100 % at the top)
-//   jog wheel          47 (see below)      echo TIME, a step per click
-// The S, R, X-Y and jog numbers (29 to 47) are a first guess that continues the Studio's own run (the owner reads
-// them on the unit and the numbers are corrected at one place, here); the DUB desk shows the last controller
-// message ("CC 37 127") for a few seconds so they can be read off the Drumboy itself.
+//   S button 1..8      29 30 31 33..37     ECHO throw while held      -                    -
+//   R button 1..8      38..45              VERB throw while held      -                    -
+//   jog wheel          86                  echo TIME, a step per click
+// The S, R and wheel numbers were read from the owner's unit (V1.21); the SELECT buttons (46..53) are not used and the
+// unit has no X-Y pad. The numbers are corrected at one place, here; the DUB desk shows the last controller message
+// ("CC 37 127") for a few seconds so they can be read off the Drumboy itself.
 //
 // A moving fader sends hundreds of messages a second, and the receive interrupt only keeps the latest
 // value of each controller (CcTable); the main loop applies it once per pass. After the strips moved, or at

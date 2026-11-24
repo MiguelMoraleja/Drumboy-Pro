@@ -296,7 +296,7 @@ table.rel td.new { min-width: 280px; }
 
 <div class="wrap">
   <header class="top">
-    <h1><small>Drumboy Pro · firmware V1.21</small>How it sounds inside</h1>
+    <h1><small>Drumboy Pro · firmware V1.22 (testing)</small>How it sounds inside</h1>
     <nav class="tabs" role="tablist" aria-label="Views">
       <a href="#signal" id="tab-signal" role="tab" aria-selected="true" aria-controls="view-signal">Signal path</a>
       <a href="#fills" id="tab-fills" role="tab" aria-selected="false" aria-controls="view-fills">Fills &amp; volume</a>
@@ -2643,6 +2643,9 @@ function sgSetup() {
 
 /* ---------- Releases (kept in step with the firmware, newest first) ---------- */
 const RELEASES = [
+  { v: "V1.22", date: "2026-11-24", status: "Testing, not published", pub: false,
+    nw: ["A review of the whole code (backlog 72) and the fixes it led to, none of which should change how anything sounds. The LFO PHASE field could leave an LFO's counter a hair below zero and read far outside its wave table; it is wrapped properly now and every table read is held inside the table. The phaser, the chorus and the flanger wrapped their positions with loops that never ended for an infinity, which would freeze the audio and make the watchdog restart the unit; they wrap in constant time now (the result is the same for every ordinary value). The two filters and the EQ clear their memory when one value in it is not a number, instead of staying silent until the filter was switched off and on. Loading a song or NEW while playing starts the channel strips cleanly. The ENV block with ATTACK 0 no longer mutes the first sample of a note. The tools check_drumkit.py and package_firmware.py report a broken file instead of crashing."],
+    fix: [] },
   { v: "V1.21", date: "2026-11-24", status: "GitHub release v1.21 · partly tested", pub: true,
     nw: ["DUB desk, LINE IN channel (backlog 70): a thirteenth column after VERB. Its fader is the line-in volume (20 steps of 1 dB), its two knobs the BUS (FILT or DIR) and the ECHO and VERB sends of the line-in, with a mute and a signal light of its own. The DUB page 2 has STRIP (turn to the L strip) and LINE MUTE; the nanoKONTROL moves along 13 columns (fader = volume, knob = echo send, M = mute). Saved in a new LIN block after the LFD block; older songs have the line-in on FILT with no sends, as before. The columns are 70 px wide now to make room.",
          "Quantize now (backlog 59), on the RHYTHM page: three new fields NOW GRID, NOW SCOPE and NOW APPLY quantize notes already recorded (this layer, this bank or all layers) with a picture of every note before and after and how far each moves; APPLY needs two turns to the right and is one undo step.",

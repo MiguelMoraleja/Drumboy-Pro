@@ -6,7 +6,7 @@
 // An LFO's value now, 0..1 with 0.5 in the middle, as every reader of the LFOs takes it. INVERT turns the wave upside down
 // (it only turned the picture on the LFO page before; the sound did not follow).
 static inline float lfoTableValue(const Lfo& lfo_) {
-    const float v = kLfoDataLibrary[lfo_.type][(uint16_t)floor(lfo_.sampleCounter)];
+    const float v = kLfoDataLibrary[lfo_.type][lfoTableIndex(lfo_.sampleCounter)];  // always inside the table, whatever moment the counter is read at
     return lfo_.invert ? 1.0f - v : v;
 }
 
@@ -31,6 +31,7 @@ struct ChDsp {
     uint16_t idle[kLayerLibrarySize];               // blocks of silence since the layer last sounded
     bool trig[kLayerLibrarySize];                   // a new note started in this layer: the envelope starts again
     volatile bool meterOn;                          // the stereo stage page is open: measure each stereo layer's correlation
+    volatile bool resetAll;                         // the main loop asks the audio interrupt to start every chain again (NEW, a song without a CHN block)
     float sumLL[kLayerLibrarySize], sumRR[kLayerLibrarySize], sumLR[kLayerLibrarySize];  // read and reset by the main loop
 };
 static ChDsp chDsp __attribute__((section(".dtcm")));
@@ -7215,7 +7216,9 @@ void Controller::file_readNotes(const char* fileName_) {
                                         if (linGot == kDubLineFileSize) {
                                             uint8_t chnData[kChFileSize];
                                             UINT chnGot = 0;
-                                            if ((f_read(&sd.file, chnData, kChFileSize, &chnGot) != FR_OK) || !chReadBlock(chSettings, chnData, static_cast<uint16_t>(chnGot))) chInitSettings();
+                                            ChSettings chnLoaded[kLayerLibrarySize];  // read aside, then published at once: the audio interrupt never sees half a song's strips
+                                            if ((f_read(&sd.file, chnData, kChFileSize, &chnGot) != FR_OK) || !chReadBlock(chnLoaded, chnData, static_cast<uint16_t>(chnGot))) chInitSettings();
+                                            else chPublishSettings(chnLoaded);
                                         }
                                     }
                                 }
@@ -20262,12 +20265,11 @@ void Controller::lfo_setPhase(uint8_t lfoNum_, uint8_t phase_) {
     int32_t postPhaseStart = kLfoPhaseDataLibrary[phase_].sampleStart;
     int32_t phaseShift = postPhaseStart - prePhaseStart;
     lfoLibrary[lfoNum_].sampleStart = postPhaseStart;
-    lfoLibrary[lfoNum_].sampleCounter += phaseShift;
 
     // 2. COUNTER NORMALIZATION
-    // Keep sample counter inside valid wavetable bounds.
-    if (lfoLibrary[lfoNum_].sampleCounter < 0) lfoLibrary[lfoNum_].sampleCounter = kLfoSampleSize + lfoLibrary[lfoNum_].sampleCounter;  // wrap below zero: size minus the overshoot (it added it)
-    if (lfoLibrary[lfoNum_].sampleCounter > (kLfoSampleSize - 1)) lfoLibrary[lfoNum_].sampleCounter = lfoLibrary[lfoNum_].sampleCounter - kLfoSampleSize;
+    // Keep sample counter inside valid wavetable bounds, [0, 3200) (LfoMod.h: a counter between 3199 and 3200 used to become
+    // a small negative number here). One float store, which the sequencer interrupt cannot tear.
+    lfoLibrary[lfoNum_].sampleCounter = lfoShiftCounter(lfoLibrary[lfoNum_].sampleCounter, phaseShift);
 
     // 3. UI REFRESH
     // Refresh LFO tab data only when edited slot is currently selected.
@@ -25879,8 +25881,7 @@ void Controller::lfo_updateModules() {
     auto lfoOf = [this](uint8_t slot_, float& d_, float& dep_) -> bool {
         if ((slot_ == 0) || !lfoLibrary[slot_ - 1].active) return false;
         const Lfo& lfo = lfoLibrary[slot_ - 1];
-        uint16_t at = static_cast<uint16_t>(floorf(lfo.sampleCounter));
-        if (at >= kLfoTableSize) at = kLfoTableSize - 1;  // the counter may be read between the interrupt's increment and its wrap
+        const uint16_t at = lfoTableIndex(lfo.sampleCounter);  // the counter may be read between the interrupt's increment and its wrap
         d_ = lfo.invert ? 1.0f - kLfoDataLibrary[lfo.type][at] : kLfoDataLibrary[lfo.type][at];
         dep_ = kNumberDataLibrary[lfo.depth].stdMultiplier;
         return true;
@@ -28797,14 +28798,20 @@ StereoDsp stereoDsp __attribute__((section(".dtcm")));
 // Generator voices and the hiss bed: DTCM RAM, zeroed in main().
 GenDsp genDsp __attribute__((section(".dtcm")));
 
+void Controller::chPublishSettings(const ChSettings* src_) {
+    /// @brief Makes ten layers' channel strip settings the live ones. The audio interrupt takes a layer's settings in one copy, so
+    /// the stores are made with it held off (plain stores, nothing else inside).
+    IrqGuard guard;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) chSettings[i] = src_[i];
+}
+
 void Controller::chInitSettings() {
-    /// @brief Every layer's channel strip at its defaults, every block off (a song without a CHN block, NEW).
-    for (uint8_t i = 0; i < kLayerLibrarySize; i++) chSettings[i] = chDefaults();
-    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {  // the states start again too
-        chDsp.trig[i] = false;
-        chDsp.idle[i] = 0;
-        chReset(chDsp.state[i]);
-    }
+    /// @brief Every layer's channel strip at its defaults, every block off (a song without a CHN block, NEW). The states start again
+    /// too, but in the audio interrupt (resetAll): a state is about 400 bytes the interrupt may be in the middle of using.
+    ChSettings fresh[kLayerLibrarySize];
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) fresh[i] = chDefaults();
+    chPublishSettings(fresh);
+    chDsp.resetAll = true;
 }
 
 void Controller::processAudioChannelStrips() {
@@ -28813,6 +28820,14 @@ void Controller::processAudioChannelStrips() {
     /// nothing. A layer that is silent (its block is all zeros) keeps its chain running for 3000 blocks (2 s) so that a
     /// tail (a filter ringing, a compressor releasing) is not cut, then the chain sleeps until the next sound.
     const uint16_t kIdleBlocks = 3000;
+    if (chDsp.resetAll) {  // NEW or a song without a CHN block: every chain starts again, here, where nothing else touches its state
+        chDsp.resetAll = false;
+        for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+            chDsp.trig[i] = false;
+            chDsp.idle[i] = 0;
+            chReset(chDsp.state[i]);
+        }
+    }
     // The sidechains read the layers as they came out of the sample: copy the ones a COMP listens to first.
     uint16_t wanted = 0;
     for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
@@ -29038,6 +29053,13 @@ void Controller::processAudioEq() {
         processedR = processEqBiquadRight(eq.filterPeak[3], eq.right[5], processedR, activeP3);
         stereoDsp.nodeR[0][i] = eq.genTransition.active ? ((processedR * eq.genTransition.activeWet) + (inputR * eq.genTransition.activeDry)) : processedR;
     }
+
+    // 4. HISTORY CHECK
+    // One NaN or infinity in a band's history is fed back for good and the route stays silent: clear what is bad (once per block).
+    historySanitize(&eq.filterLowShelf.x1, 4);
+    historySanitize(&eq.filterHighShelf.x1, 4);
+    for (uint8_t k = 0; k < 4; k++) historySanitize(&eq.filterPeak[k].x1, 4);
+    for (uint8_t k = 0; k < 6; k++) historySanitize(&eq.right[k].x1, 4);
 }
 
 void Controller::processAudioFilter(uint8_t filterNum_) {
@@ -29051,6 +29073,9 @@ void Controller::processAudioFilter(uint8_t filterNum_) {
             buffer[i] = processAudioFilterHelper(filterNum_, 0, buffer[i]);
             bufferR[i] = processAudioFilterHelper(filterNum_, 1, bufferR[i]);
         }
+        // One NaN or infinity in the history is fed back for good and the route stays silent: clear what is bad (once per block).
+        historySanitize(&filter_.state[0].x1, 8);
+        historySanitize(&filter_.state[1].x1, 8);
     }
 }
 
@@ -29443,9 +29468,8 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                     // --- Fractional Delay Calculation ---
                     float readPos = (float)cD.playInterval + cD.shiftInterval;
 
-                    // Circular Wrap
-                    while (readPos < 0.0f) readPos += bufSizeFloat;
-                    while (readPos >= bufSizeFloat) readPos -= bufSizeFloat;
+                    // Circular Wrap (constant time: a loop here never ended for an infinity)
+                    readPos = wrapRange(readPos, bufSizeFloat);
 
                     // Linear Interpolation
                     int32_t indexA = (int32_t)readPos;
@@ -29516,9 +29540,8 @@ float Controller::processAudioEffectHelper(uint8_t effectNum_, float audio_) {
                 // Compute the modulated read head position based on triangle LFO.
                 float readPos = (float)pIdx - shiftInt;  // Subtracting moves the read head "further" back
 
-                // Circular Wrap for the fractional read position
-                while (readPos < 0.0f) readPos += bufSizeF;
-                while (readPos >= bufSizeF) readPos -= bufSizeF;
+                // Circular Wrap for the fractional read position (constant time: a loop here never ended for an infinity)
+                readPos = wrapRange(readPos, bufSizeF);
 
                 // Calculate Interpolation Indices
                 int32_t indexA = (int32_t)readPos;

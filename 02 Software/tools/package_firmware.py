@@ -43,6 +43,8 @@ def check_payload(payload):
         raise ValueError(f"payload size {len(payload)} outside 1..{MAX_SIZE - 1}")
     if len(payload) % 4:
         raise ValueError("payload size must be a multiple of 4 (bootloader writes 32-bit words)")
+    if len(payload) < 8:
+        raise ValueError("payload shorter than the start of the vector table (8 bytes)")
     sp, reset = struct.unpack_from("<II", payload)
     if not (APP_BASE <= reset < APP_BASE + len(payload)) or not reset & 1:
         raise ValueError(f"reset vector 0x{reset:08x} is not a Thumb address inside the application")

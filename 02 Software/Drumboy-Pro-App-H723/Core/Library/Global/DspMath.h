@@ -39,6 +39,30 @@ DSPINLINE bool isFiniteBits(float x) {
 }
 DSPINLINE float finiteOrZero(float x) { return isFiniteBits(x) ? x : 0.0f; }
 
+// A value wrapped into [0, size) in constant time. The loops this replaces (while (x >= size) x -= size, and the
+// same upwards) ran as long as the value was far out, and for an infinity they never ended: in the audio interrupt
+// that stalls the whole unit. A value that is not a number gives 0; one already inside comes back untouched.
+DSPINLINE float wrapRange(float x, float size) {
+    if (!isFiniteBits(x)) return 0.0f;
+    if ((x >= 0.0f) && (x < size)) return x;
+    x -= size * floorf(x / size);
+    if (!(x >= 0.0f) || !(x < size)) x = 0.0f;  // a tiny negative value plus the size rounds up to the size itself
+    return x;
+}
+
+// The history of a filter (the last inputs and outputs, n values in a row): a NaN or an infinity in it is fed back for good, so
+// every output after it is NaN and the route stays silent. Looked at once per block; when one value is bad all are cleared (a
+// click at worst). Returns true when it cleared them.
+DSPINLINE bool historySanitize(float* h, uint8_t n) {
+    for (uint8_t i = 0; i < n; i++) {
+        if (!isFiniteBits(h[i])) {
+            for (uint8_t k = 0; k < n; k++) h[k] = 0.0f;
+            return true;
+        }
+    }
+    return false;
+}
+
 // Bit depth reduction of a sample in [-1, 1] to the kept bits of a 24-bit offset-binary code (mask = the kept
 // bits, 0x00FFFFFF for all). It rounds to the nearest step, so the centre code stays the centre: digital
 // silence stays silence. Truncating (the old way) turned 0.0 into the step below the middle, a DC offset of

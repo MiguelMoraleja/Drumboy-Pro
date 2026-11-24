@@ -25,6 +25,21 @@ const float kLfoFreqStepOctaves = 1.0f / 512.0f;
 const uint16_t kLfoTableSize = 3200;          // the entries of an LFO table (kLfoDataLibrary)
 const uint8_t kLfoModUpdateMs = 5;            // the main loop looks at the LFOs this often
 
+// The entry of an LFO table that the counter points at, always inside the table. The counter is a float that the
+// sequencer interrupt advances and wraps and the main loop shifts (PHASE), so it can be read between those two: it may
+// be a hair below zero or at the size itself, and a negative float turned into an unsigned index is 65535.
+inline uint16_t lfoTableIndex(float counter_) {
+    if (!isFiniteBits(counter_) || !(counter_ >= 0.0f)) return 0;
+    const float at = floorf(counter_);
+    return (at >= static_cast<float>(kLfoTableSize)) ? static_cast<uint16_t>(kLfoTableSize - 1) : static_cast<uint16_t>(at);
+}
+
+// The counter after a PHASE change moved it by shift_ entries, wrapped into [0, size). (It used to be wrapped with
+// "greater than size - 1", so a counter between 3199 and 3200 became a small negative number.)
+inline float lfoShiftCounter(float counter_, int32_t shift_) {
+    return wrapRange(counter_ + static_cast<float>(shift_), static_cast<float>(kLfoTableSize));
+}
+
 // The filter's cutoff with an LFO on it.
 inline float lfoModFreq(float baseHz_, float d_, float dep_, float minHz_, float maxHz_) {
     if (!isFiniteBits(baseHz_) || !(baseHz_ > 0.0f)) return minHz_;

@@ -38,6 +38,8 @@ def read_wav(path):
             cid, size = struct.unpack("<4sI", chunk)
             if cid == b"fmt ":
                 data = f.read(size)
+                if len(data) < 16:
+                    raise ValueError("fmt chunk shorter than 16 bytes")
                 fmt = struct.unpack("<HHIIHH", data[:16])
                 if size % 2:
                     f.read(1)
@@ -91,7 +93,7 @@ def check_samples(root, max_seconds, strict):
                 continue
             # The length that counts is the playback length: the frames after the loader's repeat or skip, at 44.1 kHz.
             playback = frames * PLAYBACK_FACTOR[rate]
-            limit = (max_seconds if max_seconds else MAX_SECONDS) * 44100.0
+            limit = (max_seconds if max_seconds is not None else MAX_SECONDS) * 44100.0
             if playback > limit:
                 text = f"{playback / 44100.0:.2f} s of playback is over the limit ({limit / 44100.0:.2f} s); V1.17 ignores it, V1.16 and older cut it"
                 if strict:

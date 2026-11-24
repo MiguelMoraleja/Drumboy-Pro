@@ -450,6 +450,7 @@ class Controller {
     void lcd_drawSongViewPlay();
     void song_togglePage();
     void chInitSettings();
+    void chPublishSettings(const ChSettings* src_);
     void chain_select(uint8_t layerNum_);
     void chain_step(EncoderFunc function_, bool up_);
     void lcd_drawChainMenu();

@@ -172,6 +172,34 @@ int main() {
         std::vector<float> y(4410, 1.0f);
         run(s, st2, y);
         CHECK(std::fabs(y[4000] - 1.0f) < 1e-5f, "no decay: the level holds");
+        // ATTACK 0 is no ramp: the first sample of a note comes through whole (it used to be muted).
+        {
+            ChSettings a = chDefaults();
+            a.on = 1u << CH_ENV;
+            a.envAttack = 0;
+            a.envDecay = 38;
+            ChState sa;
+            chTrigger(sa);
+            std::vector<float> z(1024, 1.0f);
+            run(a, sa, z);
+            CHECK(std::fabs(z[0] - 1.0f) < 1e-6f, "attack 0: the first sample is at full level: %f", z[0]);
+            CHECK(z[1] <= z[0] && z[1] > 0.99f, "attack 0: the tail starts at once: %f", z[1]);
+            // The same note a second time, and attack 0 after a ramp that had not finished.
+            chTrigger(sa);
+            std::vector<float> z2(1024, 1.0f);
+            run(a, sa, z2);
+            CHECK(std::fabs(z2[0] - 1.0f) < 1e-6f, "attack 0 again: %f", z2[0]);
+            ChSettings b = a;
+            b.envAttack = 100;  // 50 ms ramp, only started
+            ChState sb;
+            chTrigger(sb);
+            std::vector<float> w(64, 1.0f);
+            run(b, sb, w);
+            CHECK(w[0] < 0.01f, "attack 50 ms: still ramps from 0: %f", w[0]);
+            std::vector<float> w2(64, 1.0f);
+            run(a, sb, w2);
+            CHECK(w2[0] > 0.5f, "turned to attack 0 in the middle of a ramp: the level is whole at once: %f", w2[0]);
+        }
         // Triggered again: the envelope starts over.
         chTrigger(st2);
         std::vector<float> z(320, 1.0f);

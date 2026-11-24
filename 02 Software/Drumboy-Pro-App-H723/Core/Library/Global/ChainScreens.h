@@ -108,6 +108,134 @@ inline void chvDrawBoxes(G& g, const ChSettings& s_, uint8_t sel_) {
     }
 }
 
+// The values panel under the list: every parameter of the selected block, its name on the left and its value with the unit on the right
+// (the numbers the eight fields show, here next to the pictures). Gray while the block is off.
+template <class G>
+inline void chvDrawValues(G& g, ChBlock b_, const ChSettings& s_) {
+    const bool on = chOn(s_, b_);
+    g.setBackColor(kGsBlack);
+    g.setForeColor(kGsBlack);
+    g.fillRect(kChvListX, kChvValuesY - 4, kChvListW, kChvValuesStep * 6 + 4);
+    g.setFont(GS_FONT_07x09);
+    for (uint8_t i = 0; i < chParamCount(b_); i++) {
+        const uint16_t y = static_cast<uint16_t>(kChvValuesY + i * kChvValuesStep);
+        char name[16], value[32];
+        snprintf(name, sizeof name, "%.10s", chParam(b_, i).name);
+        for (int k = static_cast<int>(strlen(name)) - 1; (k >= 0) && (name[k] == ' '); k--) name[k] = '\0';
+        chvValue(b_, i, s_, value, sizeof value);
+        g.setAlignment(GS_LEFT);
+        g.setForeColor(on ? kGsGray75 : kChvGray35);
+        gsDraw(g, name, static_cast<uint16_t>(kChvListX + 4), y);
+        g.setAlignment(GS_RIGHT);
+        g.setForeColor(on ? kGsWhite : kGsGray50);
+        gsDraw(g, value, static_cast<uint16_t>(kChvListX + kChvListW - 4), y);
+    }
+    g.setAlignment(GS_LEFT);
+}
+
+// A label on the plot at a place along its x axis (0..1): to the right of that place, or to its left where it would run out of the plot.
+// Its background is black, so it stays readable over the curve.
+template <class G>
+inline void chvPlotLabel(G& g, const char* text_, float x01_, uint16_t y_, uint16_t color_) {
+    const uint16_t w = static_cast<uint16_t>(strlen(text_) * 7u);  // the 5x7 font: 5 and 2 of spacing
+    const uint16_t x = static_cast<uint16_t>(kChvPlotX + static_cast<uint32_t>(chvClamp01(x01_) * (kChvPlotW - 1)));
+    g.setFont(GS_FONT_05x07);
+    g.setBackColor(kGsBlack);
+    g.setForeColor(color_);
+    if (x + 4 + w <= kChvPlotX + kChvPlotW) {
+        g.setAlignment(GS_LEFT);
+        gsDraw(g, text_, static_cast<uint16_t>(x + 4), y_);
+    } else {
+        const uint16_t right = (x >= kChvPlotX + w + 3) ? static_cast<uint16_t>(x - 3) : static_cast<uint16_t>(kChvPlotX + w);
+        g.setAlignment(GS_RIGHT);
+        gsDraw(g, text_, right, y_);
+    }
+    g.setAlignment(GS_LEFT);
+}
+
+// A dotted vertical line across the plot at a place along its x axis (0..1).
+template <class G>
+inline void chvPlotLine(G& g, float x01_, uint16_t color_) {
+    const uint16_t x = static_cast<uint16_t>(kChvPlotX + static_cast<uint32_t>(chvClamp01(x01_) * (kChvPlotW - 1)));
+    g.setForeColor(color_);
+    for (uint16_t y = kChvPlotY; y < kChvPlotY + kChvPlotH; y += 3) g.drawPixel(x, y);
+}
+
+// The values written on the plot, where they belong: the cutoff and the band on their frequency, the threshold on its level, the bass corner,
+// the envelope's attack and decay times at their moments. (The panel under the list has all of them.)
+template <class G>
+inline void chvDrawPlotValues(G& g, ChBlock b_, const ChSettings& s_, bool on_) {
+    char t[96], v[32], w[32];
+    const uint16_t top = static_cast<uint16_t>(kChvPlotY + 4), second = static_cast<uint16_t>(kChvPlotY + 14);
+    const uint16_t c = on_ ? kGsWhite : kGsGray50;
+    switch (b_) {
+        case CH_ENV: {
+            const float span = chvEnvSpanMs(s_), atk = chAttackMs(s_.envAttack), dec = chDecayMs(s_.envDecay);
+            const float xa = (atk > 0.0f) ? chvClamp01(atk / span) : 0.0f, xd = (dec > 0.0f) ? chvClamp01(dec / span) : 0.8f;
+            if (atk > 0.0f) chvPlotLine(g, xa, kGsYellow);
+            if (dec > 0.0f) chvPlotLine(g, xd, kGsGray75);
+            chvValue(CH_ENV, 0, s_, v, sizeof v);
+            snprintf(t, sizeof t, "ATTACK %s", v);
+            chvPlotLabel(g, t, xa, static_cast<uint16_t>(kChvPlotY + kChvPlotH - 34), kGsYellow);
+            chvValue(CH_ENV, 1, s_, v, sizeof v);
+            snprintf(t, sizeof t, "DECAY %s", v);
+            chvPlotLabel(g, t, xd, static_cast<uint16_t>(kChvPlotY + kChvPlotH - 22), c);
+            break;
+        }
+        case CH_DRIVE: {
+            const float gain = 20.0f * log10f(chDriveGain(s_.driveAmount));
+            chvValue(CH_DRIVE, 0, s_, v, sizeof v);
+            snprintf(t, sizeof t, "AMOUNT %s  GAIN IN %+.1f DB", v, static_cast<double>(gain));
+            chvPlotLabel(g, t, 1.0f, static_cast<uint16_t>(kChvPlotY + kChvPlotH - 12), c);
+            break;
+        }
+        case CH_FILTER: {
+            chvValue(CH_FILTER, 1, s_, v, sizeof v);
+            snprintf(t, sizeof t, "CUTOFF %s", v);
+            chvPlotLabel(g, t, chvMarker(b_, s_), top, kGsYellow);
+            if (s_.filterHp > 0) {
+                chvValue(CH_FILTER, 4, s_, v, sizeof v);
+                snprintf(t, sizeof t, "HIGH PASS %s", v);
+                const float xh = log10f(chHz(s_.filterHp) / 20.0f) / 3.0f;
+                chvPlotLine(g, xh, kGsGray50);
+                chvPlotLabel(g, t, xh, second, c);
+            }
+            break;
+        }
+        case CH_EQ: {
+            chvValue(CH_EQ, 1, s_, v, sizeof v);
+            chvValue(CH_EQ, 2, s_, w, sizeof w);
+            snprintf(t, sizeof t, "FREQUENCY %s", v);
+            chvPlotLabel(g, t, chvMarker(b_, s_), top, kGsYellow);
+            snprintf(t, sizeof t, "GAIN %s", w);
+            chvPlotLabel(g, t, chvMarker(b_, s_), second, c);
+            break;
+        }
+        case CH_COMP: {
+            chvValue(CH_COMP, 0, s_, v, sizeof v);
+            snprintf(t, sizeof t, "THRESHOLD %s", v);
+            chvPlotLabel(g, t, chvMarker(b_, s_), top, kGsYellow);
+            chvValue(CH_COMP, 1, s_, v, sizeof v);
+            snprintf(t, sizeof t, "RATIO %s", v);
+            chvPlotLabel(g, t, chvMarker(b_, s_), second, c);
+            break;
+        }
+        default: {  // IMAGE
+            chvValue(CH_IMAGE, 0, s_, v, sizeof v);
+            chvValue(CH_IMAGE, 1, s_, w, sizeof w);
+            snprintf(t, sizeof t, "WIDTH %s", v);
+            chvPlotLabel(g, t, 1.0f, top, c);
+            if (s_.imgBass > 0) {
+                snprintf(t, sizeof t, "BASS MONO BELOW %s", w);
+                chvPlotLabel(g, t, chvMarker(b_, s_), second, kGsYellow);
+            } else {
+                chvPlotLabel(g, "BASS MONO OFF", 1.0f, second, c);
+            }
+            break;
+        }
+    }
+}
+
 // The selected block, big: title, plot with its grid, the curve(s), the marker, the axis texts.
 template <class G>
 inline void chvDrawBig(G& g, ChBlock b_, const ChSettings& s_) {
@@ -162,6 +290,7 @@ inline void chvDrawBig(G& g, ChBlock b_, const ChSettings& s_) {
         g.setForeColor(kGsYellow);
         for (uint16_t y = kChvPlotY; y < kChvPlotY + kChvPlotH; y += 3) g.drawPixel(x, y);
     }
+    chvDrawPlotValues(g, b_, s_, on);
     // The axis texts under the plot.
     g.setFont(GS_FONT_05x07);
     g.setAlignment(GS_LEFT);

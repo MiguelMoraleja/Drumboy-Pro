@@ -21,6 +21,7 @@ const uint16_t kChvListX = 24, kChvListW = 232, kChvListY = 184, kChvListStep = 
 const uint16_t kChvBoxX = 280, kChvBoxW = 100, kChvBoxGap = 10, kChvBoxY = 138, kChvBoxH = 78;
 const uint16_t kChvMiniX = 10, kChvMiniY = 30, kChvMiniW = 80, kChvMiniH = 40;  // inside a box
 const uint16_t kChvTitleY = 232, kChvPlotX = 280, kChvPlotY = 250, kChvPlotW = 650, kChvPlotH = 150, kChvCaptionY = 408;
+const uint16_t kChvValuesY = 368, kChvValuesStep = 12;  // the values panel under the list: up to six rows
 const float kChvSampleRate = 44100.0f;
 
 inline uint16_t chvBoxX(uint8_t block_) { return static_cast<uint16_t>(kChvBoxX + block_ * (kChvBoxW + kChvBoxGap)); }
@@ -45,9 +46,12 @@ inline void chvDbRange(ChBlock b_, float& top_, float& bottom_) {
         default: top_ = 12.0f, bottom_ = -48.0f; break;  // IMAGE
     }
 }
-// The length of the time axis of the envelope picture (ms).
+// The length of the time axis of the envelope picture (ms): the decay (to -60 dB) with a fifth to spare, and always long enough
+// to show the whole attack.
 inline float chvEnvSpanMs(const ChSettings& s_) {
-    const float dec = chDecayMs(s_.envDecay), span = (dec > 0.0f) ? dec * 1.25f : 1000.0f;
+    const float dec = chDecayMs(s_.envDecay), atk = chAttackMs(s_.envAttack);
+    float span = (dec > 0.0f) ? dec * 1.25f : 1000.0f;
+    if (span < atk * 2.0f) span = atk * 2.0f;
     return (span < 20.0f) ? 20.0f : span;
 }
 
@@ -148,6 +152,22 @@ inline void chvSummary(ChBlock b_, const ChSettings& s_, char* out_, size_t size
         default: snprintf(t, sizeof t, "W%u B%.0f", static_cast<unsigned>(s_.imgWidth * 2u), static_cast<double>(s_.imgBass > 0 ? chBassHz(s_.imgBass) : 0.0f)); break;
     }
     snprintf(out_, size_, "%.14s", t);
+}
+
+// The value of one parameter as a short text with its unit, for the values panel and the labels on the plot: "12.5 MS", "3.6 KHZ", "-18.0 DB",
+// "4.0:1", "HOLD". The font has no percent sign, so that unit is written out; a unit follows only a number.
+inline void chvValue(ChBlock b_, uint8_t i_, const ChSettings& s_, char* out_, size_t size_) {
+    char v[24], u[8];
+    chParamText(b_, i_, s_, v, sizeof v);
+    chParamSign(b_, i_, s_, u, sizeof u);
+    const char* pv = v;
+    while (*pv == ' ') pv++;
+    const char* pu = u;
+    while (*pu == ' ') pu++;
+    if (strcmp(pu, "%") == 0) pu = "PCT";
+    const bool number = ((pv[0] >= '0') && (pv[0] <= '9')) || (pv[0] == '-') || (pv[0] == '+');
+    if (number && *pu) snprintf(out_, size_, "%.20s %.6s", pv, pu);  // at most 27 characters
+    else snprintf(out_, size_, "%.20s", pv);
 }
 
 // What the big picture is, for its title.

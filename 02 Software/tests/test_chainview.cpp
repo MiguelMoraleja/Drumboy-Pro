@@ -138,10 +138,51 @@ int main() {
         }
         CHECK(chvAxis(CH_FILTER) == CHV_FREQ && chvAxis(CH_ENV) == CHV_TIME && chvAxis(CH_COMP) == CHV_LEVEL_IN && chvAxis(CH_DRIVE) == CHV_SIGNAL, "axes");
     }
+    // The value texts of the panel and the plot: a number with its unit, no percent sign, words stay words.
+    {
+        ChSettings v = chDefaults();
+        v.envAttack = 24;
+        v.envDecay = 60;
+        v.filterCutoff = 70;
+        v.compThresh = 70;
+        v.imgWidth = 80;
+        v.imgBass = 30;
+        char t[32];
+        chvValue(CH_ENV, 0, v, t, sizeof t);
+        CHECK(strcmp(t, "12 MS") == 0, "attack text: '%s'", t);
+        ChSettings f = chDefaults();
+        f.envAttack = 5;
+        chvValue(CH_ENV, 0, f, t, sizeof t);
+        CHECK(strcmp(t, "2.5 MS") == 0, "attack text below 10 ms: '%s'", t);
+        chvValue(CH_ENV, 1, v, t, sizeof t);
+        CHECK(strcmp(t, "378 MS") == 0, "decay text: '%s'", t);
+        v.envDecay = 100;
+        chvValue(CH_ENV, 1, v, t, sizeof t);
+        CHECK(strcmp(t, "HOLD") == 0, "hold has no unit: '%s'", t);
+        chvValue(CH_FILTER, 1, v, t, sizeof t);
+        CHECK(strstr(t, "KHZ") != nullptr, "cutoff text: '%s'", t);
+        v.filterCutoff = 20;
+        chvValue(CH_FILTER, 1, v, t, sizeof t);
+        CHECK(strstr(t, " HZ") != nullptr && strstr(t, "KHZ") == nullptr, "cutoff text below 1 kHz: '%s'", t);
+        chvValue(CH_FILTER, 4, v, t, sizeof t);
+        CHECK(strcmp(t, "OFF") == 0, "high pass off: '%s'", t);
+        chvValue(CH_COMP, 0, v, t, sizeof t);
+        CHECK(strcmp(t, "-18.0 DB") == 0, "threshold text: '%s'", t);
+        chvValue(CH_IMAGE, 0, v, t, sizeof t);
+        CHECK(strcmp(t, "160 PCT") == 0 && strchr(t, '%') == nullptr, "width text: '%s'", t);
+        chvValue(CH_COMP, 5, v, t, sizeof t);
+        CHECK(strcmp(t, "SELF") == 0, "sidechain text: '%s'", t);
+        // The envelope axis always holds the whole attack.
+        ChSettings e = chDefaults();
+        e.envAttack = 100;  // 50 ms
+        e.envDecay = 0;     // 10 ms
+        CHECK(chvEnvSpanMs(e) >= 100.0f, "the axis shows the whole attack: %f", chvEnvSpanMs(e));
+    }
     // Geometry: the boxes, the list and the plot are inside the lane area and clear of each other.
     CHECK(chvBoxX(5) + kChvBoxW <= kGsAreaX + kGsAreaW && chvBoxX(0) > kChvListX + kChvListW, "boxes fit and leave the list");
     CHECK(kChvBoxY + kChvBoxH < kChvTitleY && kChvPlotY + kChvPlotH < kChvCaptionY && kChvCaptionY + 7 <= kGsAreaY + kGsAreaH && kChvPlotX + kChvPlotW + 2 <= kGsAreaX + kGsAreaW, "right side in order");
     CHECK(kChvListY + 5 * kChvListStep + kChvListH <= kGsAreaY + kGsAreaH && kChvMiniX + kChvMiniW <= kChvBoxW && kChvMiniY + kChvMiniH <= kChvBoxH, "list and minis fit");
+    CHECK(kChvValuesY - 4 >= kChvListY + 5 * kChvListStep + kChvListH && kChvValuesY + 5 * kChvValuesStep + 9 <= kGsAreaY + kGsAreaH, "the values panel fits under the list");
 
     // The screens, for every block selected, on and off.
     for (uint8_t sel = 0; sel < CH_BLOCKS; sel++) {
@@ -156,6 +197,7 @@ int main() {
             chvDrawHeader(lcd, 2, "HAT CLOSED 01");
             chvDrawList(lcd, x, sel);
             chvDrawBoxes(lcd, x, sel);
+            chvDrawValues(lcd, static_cast<ChBlock>(sel), x);
             chvDrawBig(lcd, static_cast<ChBlock>(sel), x);
             char what[48];
             snprintf(what, sizeof what, "block %u mask %02X", sel, mask);
@@ -166,6 +208,73 @@ int main() {
                 snprintf(name, sizeof name, "chain_%u", sel);
                 lcd.dump(name);
             }
+        }
+    }
+    // The labels and the panel at the ends of every parameter: each parameter at its lowest, at its highest, and one at a time at each end
+    // with the rest in the middle (a marker at the left or the right edge, the longest texts), for every block.
+    for (uint8_t sel = 0; sel < CH_BLOCKS; sel++) {
+        const ChBlock b = static_cast<ChBlock>(sel);
+        for (uint8_t variant = 0; variant < 2 + 2 * chParamCount(b) + 1; variant++) {
+            ChSettings x = chDefaults();
+            x.on = 0x3F;
+            for (uint8_t i = 0; i < chParamCount(b); i++) {
+                const ChParamInfo& p = chParam(b, i);
+                uint8_t lo = p.min, hi = p.max, mid = static_cast<uint8_t>((p.min + p.max) / 2);
+                uint8_t v = mid;
+                if (variant == 0) v = lo;
+                else if (variant == 1) v = hi;
+                else if (variant < 2 + 2 * chParamCount(b)) {
+                    const uint8_t which = static_cast<uint8_t>((variant - 2) / 2);
+                    if (i == which) v = ((variant - 2) % 2) ? hi : lo;
+                }
+                chField(x, p.offset) = v;
+            }
+            FakeLcd lcd;
+            lcd.dirtyArea();
+            chvDrawHeader(lcd, 9, "TOM FLOOR 02");
+            chvDrawList(lcd, x, sel);
+            chvDrawBoxes(lcd, x, sel);
+            chvDrawValues(lcd, b, x);
+            chvDrawBig(lcd, b, x);
+            char what[64];
+            snprintf(what, sizeof what, "block %u variant %u", sel, variant);
+            checkScreen(lcd, what);
+            // The values are on the screen: the panel's rows and the labels.
+            int panel = 0, labels = 0;
+            for (const TextBox& t : lcd.texts) {
+                if ((t.x >= kChvListX) && (t.x < kChvListX + kChvListW) && (t.y >= kChvValuesY - 4)) panel++;
+                if ((t.x >= kChvPlotX) && (t.y > kChvPlotY) && (t.y < kChvPlotY + kChvPlotH) && (t.text != "100") && (t.text != "1K") && (t.text != "10K")) labels++;
+            }
+            CHECK(panel == 2 * chParamCount(b), "%s: %d panel texts for %u parameters", what, panel, chParamCount(b));
+            CHECK(labels >= 1, "%s: the plot has its value labels", what);
+        }
+    }
+    {   // One picture of each at typical settings, to look at.
+        for (uint8_t sel = 0; sel < CH_BLOCKS; sel++) {
+            FakeLcd lcd;
+            lcd.dirtyArea();
+            ChSettings x = chDefaults();
+            x.on = 0x3F;
+            x.envAttack = 12;
+            x.envDecay = 55;
+            x.driveAmount = 40;
+            x.filterCutoff = 62;
+            x.filterReson = 55;
+            x.filterHp = 25;
+            x.eqFreq = 55;
+            x.eqGain = 48;
+            x.compThresh = 70;
+            x.compRatio = 6;
+            x.imgWidth = 70;
+            x.imgBass = 40;
+            chvDrawHeader(lcd, 2, "HAT CLOSED 01");
+            chvDrawList(lcd, x, sel);
+            chvDrawBoxes(lcd, x, sel);
+            chvDrawValues(lcd, static_cast<ChBlock>(sel), x);
+            chvDrawBig(lcd, static_cast<ChBlock>(sel), x);
+            char name[48];
+            snprintf(name, sizeof name, "chainval_%u", sel);
+            lcd.dump(name);
         }
     }
     std::printf("%d checks, %d failures\n", checks, failures);

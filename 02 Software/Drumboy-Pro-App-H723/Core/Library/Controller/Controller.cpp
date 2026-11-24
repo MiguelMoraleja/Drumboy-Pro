@@ -24971,6 +24971,7 @@ void Controller::lcd_drawChainViewData() {
     chvDrawHeader(g, static_cast<uint8_t>(selectedLayerNum), name);
     chvDrawList(g, s, sel);
     chvDrawBoxes(g, s, sel);
+    chvDrawValues(g, static_cast<ChBlock>(sel), s);
     chvDrawBig(g, static_cast<ChBlock>(sel), s);
 }
 

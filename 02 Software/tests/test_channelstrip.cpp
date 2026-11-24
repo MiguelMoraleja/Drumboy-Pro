@@ -418,6 +418,69 @@ int main() {
         ChState st11;
         CHECK(run(both, st11, x1, &x1r, nullptr, false) && rms(x1, 20000) < 0.01 && rms(x1r, 20000) < 0.01, "the filter runs before the image");
     }
+    // The parameters as the page shows them.
+    {
+        ChSettings s = chDefaults();
+        // Every parameter of every block: its byte is inside ChSettings, its range holds, stepping stays inside it, the text is 10 characters of legal font.
+        const char* legal = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ !#%+,-./:<>?[]_|";
+        for (uint8_t b = 0; b < CH_BLOCKS; b++) {
+            CHECK(chParamCount(static_cast<ChBlock>(b)) >= 1 && chParamCount(static_cast<ChBlock>(b)) <= 6, "block %u has 1 to 6 parameters", b);
+            for (uint8_t i = 0; i < chParamCount(static_cast<ChBlock>(b)); i++) {
+                const ChParamInfo& p = chParam(static_cast<ChBlock>(b), i);
+                CHECK(p.offset < sizeof(ChSettings) && strlen(p.name) == 10 && p.min <= p.max, "param %u.%u", b, i);
+                ChSettings t = s;
+                chField(t, p.offset) = p.max;
+                chParamStep(t, static_cast<ChBlock>(b), i, true);
+                CHECK(chFieldGet(t, p.offset) == p.max, "%u.%u: no step past the top", b, i);
+                chField(t, p.offset) = p.min;
+                chParamStep(t, static_cast<ChBlock>(b), i, false);
+                CHECK(chFieldGet(t, p.offset) == p.min, "%u.%u: no step below the bottom", b, i);
+                chParamStep(t, static_cast<ChBlock>(b), i, true);
+                CHECK(chFieldGet(t, p.offset) == p.min + 1 || p.max == p.min, "%u.%u: a step up", b, i);
+                // Every value of the range has a text of 10 legal characters and a 3 character sign.
+                for (int v = p.min; v <= p.max; v++) {
+                    chField(t, p.offset) = static_cast<uint8_t>(v);
+                    char text[20], sign[8];
+                    chParamText(static_cast<ChBlock>(b), i, t, text, sizeof text);
+                    chParamSign(static_cast<ChBlock>(b), i, t, sign, sizeof sign);
+                    bool ok = (strlen(text) == 10) && (strlen(sign) == 3);
+                    for (const char* ch = text; *ch; ch++) ok = ok && (strchr(legal, *ch) != nullptr);
+                    for (const char* ch = sign; *ch; ch++) ok = ok && (strchr(legal, *ch) != nullptr);
+                    if (!ok) CHECK(false, "text of %u.%u at %d: '%s' '%s'", b, i, v, text, sign);
+                }
+                CHECK(true, "ok");
+            }
+        }
+        // Some texts.
+        char text[20], sign[8];
+        s.filterCutoff = 50;
+        chParamText(CH_FILTER, 1, s, text, sizeof text);
+        chParamSign(CH_FILTER, 1, s, sign, sizeof sign);
+        CHECK(strcmp(text, "       632") == 0 && strcmp(sign, " HZ") == 0, "cutoff 50: '%s' '%s'", text, sign);
+        s.filterCutoff = 80;
+        chParamText(CH_FILTER, 1, s, text, sizeof text);
+        chParamSign(CH_FILTER, 1, s, sign, sizeof sign);
+        CHECK(strcmp(text, "       5.0") == 0 && strcmp(sign, "KHZ") == 0, "cutoff 80: '%s' '%s'", text, sign);
+        s.eqGain = 48;
+        chParamText(CH_EQ, 2, s, text, sizeof text);
+        CHECK(strcmp(text, "      +6.0") == 0, "eq gain: '%s'", text);
+        s.compRatio = 6;
+        chParamText(CH_COMP, 1, s, text, sizeof text);
+        CHECK(strcmp(text, "     4.0:1") == 0, "ratio: '%s'", text);
+        s.envDecay = 100;
+        chParamText(CH_ENV, 1, s, text, sizeof text);
+        CHECK(strcmp(text, "      HOLD") == 0, "decay hold: '%s'", text);
+        s.imgWidth = 50;
+        chParamText(CH_IMAGE, 0, s, text, sizeof text);
+        CHECK(strcmp(text, "       100") == 0, "width 100 percent: '%s'", text);
+        s.imgBass = 0;
+        chParamText(CH_IMAGE, 1, s, text, sizeof text);
+        CHECK(strcmp(text, "       OFF") == 0, "bass off: '%s'", text);
+        s.filterType = 4;
+        chParamText(CH_FILTER, 0, s, text, sizeof text);
+        CHECK(strcmp(text, "     NOTCH") == 0, "notch: '%s'", text);
+        CHECK(strcmp(chBlockName(CH_IMAGE), "IMAGE") == 0 && strcmp(chBlockName(CH_ENV), "ENV") == 0, "block names");
+    }
     // The file block.
     {
         ChSettings set[10];

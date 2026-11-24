@@ -320,6 +320,8 @@ class Controller {
     uint32_t lfoViewKey = 0;                    // 0 = the LFO overview is not drawn
     uint32_t lfoViewStateDrawn = 0;
     int16_t lfoDotDrawn = -1;                   // the phase dot's plot column as drawn (-1 = none)
+    ChSettings chSettings[kLayerLibrarySize];   // the channel strip of each layer (ChannelStrip.h), saved in the song's CHN block
+    uint8_t chBlockSel = 0;                     // the block the chain page edits
     uint8_t songPage = 0;                       // the SONG key's pages: 0 the chain, 1 PERFORM (PerformView.h)
     bool perfFillLatch = false;                 // PERFORM's FILL field: the FILL condition holds as if the F key were held
     uint32_t perfViewKey = 0;                   // 0 = the PERFORM view is not drawn
@@ -440,6 +442,12 @@ class Controller {
     void lcd_drawSongViewData();
     void lcd_drawSongViewPlay();
     void song_togglePage();
+    void chInitSettings();
+    void chain_select(uint8_t layerNum_);
+    void chain_step(EncoderFunc function_, bool up_);
+    void lcd_drawChainMenu();
+    void lcd_drawChain_Slot(uint8_t slot_);
+    void processAudioChannelStrips();
     uint32_t lfoViewState() const;
     void lcd_drawLfoViewData();
     void lcd_drawLfoViewPlay();

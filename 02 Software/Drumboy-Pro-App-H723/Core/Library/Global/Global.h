@@ -30,6 +30,7 @@
 #include "PerformScreens.h"
 #include "LfoScreens.h"
 #include "QuantizeNowScreens.h"
+#include "ChannelStrip.h"
 #include "NoteView.h"
 #include "Pan.h"
 #include "UndoLog.h"
@@ -1353,6 +1354,14 @@ typedef enum {
     ENC_RHYTHM_QNGRID                               = 0x98,  // RHYTHM page, QUANTIZE NOW (QuantizeNow.h): its grid, its scope and the apply step
     ENC_RHYTHM_QNSCOPE                              = 0x99,
     ENC_RHYTHM_QNAPPLY                              = 0x9A,
+    ENC_CH_BLOCK                                    = 0x9B,  // CHAIN page (the fourth instrument page, ChannelStrip.h): the block, its switch, then its six parameters
+    ENC_CH_ON                                       = 0x9C,
+    ENC_CH_P1                                       = 0x9D,
+    ENC_CH_P2                                       = 0x9E,
+    ENC_CH_P3                                       = 0x9F,
+    ENC_CH_P4                                       = 0xA0,
+    ENC_CH_P5                                       = 0xA1,
+    ENC_CH_P6                                       = 0xA2,
 
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
@@ -1413,7 +1422,10 @@ const EncoderFunc encoderLocalFunction[][8] = {
     {ENC_NOTE_BEAT, ENC_NOTE_VEL, ENC_FNC_NONE, ENC_FNC_NONE, ENC_NOTE_PROB, ENC_NOTE_COND, ENC_NOTE_NUDGE, ENC_FNC_NONE},
     // DUB_MENU = 0x18
     // Top row: the selected strip. Bottom row: the desk.
-    {ENC_DUB_LEVEL, ENC_DUB_BUS, ENC_DUB_ECHO, ENC_DUB_VERB, ENC_DUB_MODE, ENC_DUB_FEEDBACK, ENC_DUB_ECHORTN, ENC_DUB_VERBRTN}};
+    {ENC_DUB_LEVEL, ENC_DUB_BUS, ENC_DUB_ECHO, ENC_DUB_VERB, ENC_DUB_MODE, ENC_DUB_FEEDBACK, ENC_DUB_ECHORTN, ENC_DUB_VERBRTN},
+    // CHAIN_MENU = 0x19
+    // The block and its switch, then the block's parameters (the page names them).
+    {ENC_CH_BLOCK, ENC_CH_ON, ENC_CH_P1, ENC_CH_P2, ENC_CH_P3, ENC_CH_P4, ENC_CH_P5, ENC_CH_P6}};
 
 // DUB page 2 (the next step in the MIXER cycle): the selected strip's pan and FX send on the top row,
 // the echo's width on the bottom row.
@@ -1617,7 +1629,15 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_PERF_UNDO,           ENC_RES_S, "UNDO      ", "SONG  ", "   ", false},
     {ENC_RHYTHM_QNGRID,       ENC_RES_M, "NOW GRID  ", "RHY   ", "   ", false},
     {ENC_RHYTHM_QNSCOPE,      ENC_RES_S, "NOW SCOPE ", "RHY   ", "   ", false},
-    {ENC_RHYTHM_QNAPPLY,      ENC_RES_S, "NOW APPLY ", "RHY   ", "   ", false}
+    {ENC_RHYTHM_QNAPPLY,      ENC_RES_S, "NOW APPLY ", "RHY   ", "   ", false},
+    {ENC_CH_BLOCK,            ENC_RES_S, "BLOCK     ", "CHAIN ", "   ", false},
+    {ENC_CH_ON,               ENC_RES_S, "ACTIVE    ", "CHAIN ", "   ", false},
+    {ENC_CH_P1,               ENC_RES_M, "PARAM 1   ", "CHAIN ", "   ", false},
+    {ENC_CH_P2,               ENC_RES_M, "PARAM 2   ", "CHAIN ", "   ", false},
+    {ENC_CH_P3,               ENC_RES_M, "PARAM 3   ", "CHAIN ", "   ", false},
+    {ENC_CH_P4,               ENC_RES_M, "PARAM 4   ", "CHAIN ", "   ", false},
+    {ENC_CH_P5,               ENC_RES_M, "PARAM 5   ", "CHAIN ", "   ", false},
+    {ENC_CH_P6,               ENC_RES_M, "PARAM 6   ", "CHAIN ", "   ", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -1746,7 +1766,8 @@ typedef enum {
     EUCLID_MENU                                     = 0x15,  // LAYER SONG tapped on the Layer Song page
     SONG_MENU                                       = 0x16,  // song mode: the SONG key tapped on its own
     NOTE_MENU                                       = 0x17,  // per-note settings: LAYER SONG tapped on the EUCLID page
-    DUB_MENU                                        = 0x18   // the dub mixer: the second page of the MIXER key (DubMix.h)
+    DUB_MENU                                        = 0x18,  // the dub mixer: the second page of the MIXER key (DubMix.h)
+    CHAIN_MENU                                      = 0x19   // the channel strip of a layer: the fourth instrument page (ChannelStrip.h)
 } Menu;
 
 typedef enum {

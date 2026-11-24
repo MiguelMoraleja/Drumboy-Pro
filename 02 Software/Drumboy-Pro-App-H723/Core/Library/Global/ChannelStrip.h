@@ -22,7 +22,9 @@
 #define __CHANNELSTRIP_H
 
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "DspMath.h"
@@ -345,6 +347,131 @@ inline bool chProcess(const ChSettings& s_, ChState& st_, float* l_, float* r_, 
     }
     return stereoOut;
 }
+
+// --- The parameters, as the page shows them -------------------------------------------------------------------
+// Each block has up to six parameters. A parameter is one byte of ChSettings; its text is 10 characters (right aligned, the
+// font has no lowercase) and its sign box says the unit.
+enum ChKind : uint8_t { CK_PLAIN, CK_PCT, CK_MS, CK_HZ, CK_Q, CK_DB, CK_FTYPE, CK_SLOPE, CK_EQTYPE, CK_DECAY, CK_RATIO, CK_SIDE, CK_WIDTH, CK_BASS, CK_HPHZ };
+struct ChParamInfo {
+    const char* name;  // 10 characters, as the headers are
+    uint8_t offset;    // byte in ChSettings
+    uint8_t min, max;
+    uint8_t kind;
+};
+#define CH_OFS(f) static_cast<uint8_t>(offsetof(ChSettings, f))
+inline uint8_t chParamCount(ChBlock b_) {
+    static const uint8_t kCount[CH_BLOCKS] = {2, 1, 5, 4, 6, 3};
+    return kCount[b_ < CH_BLOCKS ? b_ : 0];
+}
+inline const ChParamInfo& chParam(ChBlock b_, uint8_t i_) {
+    static const ChParamInfo kEnv[2] = {{"ATTACK    ", CH_OFS(envAttack), 0, 100, CK_MS}, {"DECAY     ", CH_OFS(envDecay), 0, 100, CK_DECAY}};
+    static const ChParamInfo kDrive[1] = {{"AMOUNT    ", CH_OFS(driveAmount), 0, 100, CK_PCT}};
+    static const ChParamInfo kFilter[5] = {{"TYPE      ", CH_OFS(filterType), 1, 4, CK_FTYPE},      {"CUTOFF    ", CH_OFS(filterCutoff), 0, 100, CK_HZ}, {"RESONANCE ", CH_OFS(filterReson), 0, 100, CK_Q},
+                                           {"SLOPE     ", CH_OFS(filterSlope), 0, 2, CK_SLOPE},      {"HIGH PASS ", CH_OFS(filterHp), 0, 100, CK_HPHZ}};
+    static const ChParamInfo kEq[4] = {{"TYPE      ", CH_OFS(eqType), 0, 2, CK_EQTYPE}, {"FREQUENCY ", CH_OFS(eqFreq), 0, 100, CK_HZ}, {"GAIN      ", CH_OFS(eqGain), 0, kChEqGainSteps, CK_DB}, {"Q         ", CH_OFS(eqQ), 0, 100, CK_Q}};
+    static const ChParamInfo kComp[6] = {{"THRESHOLD ", CH_OFS(compThresh), 0, 100, CK_DB},  {"RATIO     ", CH_OFS(compRatio), 0, kChRatios - 1, CK_RATIO}, {"ATTACK    ", CH_OFS(compAttack), 0, 100, CK_MS},
+                                         {"RELEASE   ", CH_OFS(compRelease), 0, 100, CK_MS}, {"MAKEUP    ", CH_OFS(compMakeup), 0, 100, CK_DB},  {"SIDECHAIN ", CH_OFS(compSide), 0, kChSide, CK_SIDE}};
+    static const ChParamInfo kImage[3] = {{"WIDTH     ", CH_OFS(imgWidth), 0, 100, CK_WIDTH}, {"BASS MONO ", CH_OFS(imgBass), 0, 100, CK_BASS}, {"SPREAD    ", CH_OFS(imgSpread), 0, 100, CK_PCT}};
+    const ChParamInfo* t[CH_BLOCKS] = {kEnv, kDrive, kFilter, kEq, kComp, kImage};
+    const uint8_t blk = (b_ < CH_BLOCKS) ? b_ : 0;
+    return t[blk][i_ < chParamCount(static_cast<ChBlock>(blk)) ? i_ : 0];
+}
+inline const char* chBlockName(ChBlock b_) {
+    static const char* const kName[CH_BLOCKS] = {"ENV", "DRIVE", "FILTER", "EQ", "COMP", "IMAGE"};
+    return kName[b_ < CH_BLOCKS ? b_ : 0];
+}
+inline uint8_t& chField(ChSettings& s_, uint8_t offset_) { return reinterpret_cast<uint8_t*>(&s_)[offset_]; }
+inline uint8_t chFieldGet(const ChSettings& s_, uint8_t offset_) { return reinterpret_cast<const uint8_t*>(&s_)[offset_]; }
+
+// One step of a parameter, held inside its range.
+inline void chParamStep(ChSettings& s_, ChBlock b_, uint8_t i_, bool up_) {
+    const ChParamInfo& p = chParam(b_, i_);
+    uint8_t& v = chField(s_, p.offset);
+    if (v < p.min) v = p.min;
+    if (up_ && (v < p.max)) v++;
+    if (!up_ && (v > p.min)) v--;
+}
+
+// The text of a parameter value (10 characters, right aligned) and the unit for the sign box (3 characters).
+inline void chParamText(ChBlock b_, uint8_t i_, const ChSettings& s_, char* out_, size_t size_) {
+    const ChParamInfo& p = chParam(b_, i_);
+    const uint8_t v = chFieldGet(s_, p.offset);
+    char t[16];
+    switch (p.kind) {
+        case CK_FTYPE: {
+            static const char* const kT[5] = {"-", "LP", "HP", "BP", "NOTCH"};
+            snprintf(t, sizeof t, "%s", kT[v <= 4 ? v : 0]);
+            break;
+        }
+        case CK_SLOPE: {
+            static const char* const kT[3] = {"6", "12", "24"};
+            snprintf(t, sizeof t, "%s", kT[v <= 2 ? v : 1]);
+            break;
+        }
+        case CK_EQTYPE: {
+            static const char* const kT[3] = {"BELL", "LO SHELF", "HI SHELF"};
+            snprintf(t, sizeof t, "%s", kT[v <= 2 ? v : 0]);
+            break;
+        }
+        case CK_HZ: {
+            const float hz = chHz(v);
+            if (hz < 1000.0f) snprintf(t, sizeof t, "%.0f", static_cast<double>(hz));
+            else snprintf(t, sizeof t, "%.1f", static_cast<double>(hz) / 1000.0);
+            break;
+        }
+        case CK_HPHZ: {
+            if (v == 0) snprintf(t, sizeof t, "OFF");
+            else if (chHz(v) < 1000.0f) snprintf(t, sizeof t, "%.0f", static_cast<double>(chHz(v)));
+            else snprintf(t, sizeof t, "%.1f", static_cast<double>(chHz(v)) / 1000.0);
+            break;
+        }
+        case CK_Q: snprintf(t, sizeof t, "%.2f", static_cast<double>(chQ(v))); break;
+        case CK_MS: {
+            const float ms = (p.offset == CH_OFS(envAttack)) ? chAttackMs(v) : ((p.offset == CH_OFS(compAttack)) ? chCompAttackMs(v) : chCompReleaseMs(v));
+            if (ms < 10.0f) snprintf(t, sizeof t, "%.1f", static_cast<double>(ms));
+            else snprintf(t, sizeof t, "%.0f", static_cast<double>(ms));
+            break;
+        }
+        case CK_DECAY:
+            if (v >= kChMaxIndex) snprintf(t, sizeof t, "HOLD");
+            else snprintf(t, sizeof t, "%.0f", static_cast<double>(chDecayMs(v)));
+            break;
+        case CK_DB: {
+            const float db = (p.offset == CH_OFS(eqGain)) ? chEqDb(v) : ((p.offset == CH_OFS(compThresh)) ? chThreshDb(v) : chMakeupDb(v));
+            snprintf(t, sizeof t, (p.offset == CH_OFS(eqGain)) ? "%+.1f" : "%.1f", static_cast<double>(db));
+            break;
+        }
+        case CK_RATIO: snprintf(t, sizeof t, "%.1f:1", static_cast<double>(chRatio(v))); break;
+        case CK_SIDE:
+            if (v == 0) snprintf(t, sizeof t, "SELF");
+            else snprintf(t, sizeof t, "LAYER %u", static_cast<unsigned>(v));
+            break;
+        case CK_WIDTH: snprintf(t, sizeof t, "%u", static_cast<unsigned>(v * 2u)); break;
+        case CK_BASS:
+            if (v == 0) snprintf(t, sizeof t, "OFF");
+            else snprintf(t, sizeof t, "%.0f", static_cast<double>(chBassHz(v)));
+            break;
+        default: snprintf(t, sizeof t, "%u", static_cast<unsigned>(v)); break;
+    }
+    snprintf(out_, size_, "%10s", t);
+}
+inline void chParamSign(ChBlock b_, uint8_t i_, const ChSettings& s_, char* out_, size_t size_) {
+    const ChParamInfo& p = chParam(b_, i_);
+    const uint8_t v = chFieldGet(s_, p.offset);
+    const char* t = "   ";
+    switch (p.kind) {
+        case CK_PCT: case CK_WIDTH: t = "  %"; break;
+        case CK_MS: case CK_DECAY: t = " MS"; break;
+        case CK_HZ: t = (chHz(v) >= 1000.0f) ? "KHZ" : " HZ"; break;
+        case CK_HPHZ: t = (v > 0 && chHz(v) >= 1000.0f) ? "KHZ" : " HZ"; break;
+        case CK_DB: t = " DB"; break;
+        case CK_SLOPE: t = " DB"; break;
+        case CK_BASS: t = " HZ"; break;
+        default: break;
+    }
+    snprintf(out_, size_, "%s", t);
+}
+#undef CH_OFS
 
 // --- The file block: "CHN", version 1, then for each of ten layers its settings --------------------------------
 const uint8_t kChSettingBytes = 22;

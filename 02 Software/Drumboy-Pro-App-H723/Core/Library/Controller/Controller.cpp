@@ -23,6 +23,16 @@ static Bank euclidSnapshot;
 // the whole DTCM after the static constructors have run, so the object is built in place by dtcmInit().
 alignas(8) static uint8_t reverbStorage[sizeof(Reverb)] __attribute__((section(".dtcm")));
 
+// The channel strips (ChannelStrip.h): the state of each layer's chain, in the DTCM RAM too (no DMA touches it, and it
+// is the fastest memory). main() zeroes it, so dtcmInit() builds the states in place.
+struct ChDsp {
+    ChState state[kLayerLibrarySize];
+    float side[kLayerLibrarySize][I2S_BLOCK_SIZE];  // a copy of each layer's block as it came out of the sample, for the sidechains
+    uint16_t idle[kLayerLibrarySize];               // blocks of silence since the layer last sounded
+    bool trig[kLayerLibrarySize];                   // a new note started in this layer: the envelope starts again
+};
+static ChDsp chDsp __attribute__((section(".dtcm")));
+
 Controller::Controller()
 
     /* --- SECTION 1: DSP MODULES (hardware drivers: see Controller.h) ----- */
@@ -211,6 +221,9 @@ void Controller::dtcmInit() {
     /// @brief Builds the objects that live in the DTCM RAM, which main() has just zeroed. Same as the
     /// reverb() the Controller's initializer list used to run: zero-filled, then its default values.
     new (&reverb) Reverb();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) new (&chDsp.state[i]) ChState();
+    memset(chDsp.idle, 0, sizeof chDsp.idle);
+    memset(chDsp.trig, 0, sizeof chDsp.trig);
 }
 
 void Controller::initialize() {
@@ -222,6 +235,7 @@ void Controller::initialize() {
     dwt_initialize();  // High-resolution microsecond timing for profiling
 
     // Initialize individual DSP modules to default states
+    chInitSettings();
     eq.initialize();
     filter[0].initialize();
     filter[1].initialize();
@@ -1777,6 +1791,16 @@ void Controller::keyboard_action() {
                             // The PERFORM page: a pad toggles its layer's MUTE (the pad does not play the sound).
                             layerInst_setMute(layerNum, !layerLibrary[layerNum].mute);
                         } else {
+                            if ((menu == CHAIN_MENU) && (selectedLayerNum != static_cast<int8_t>(layerNum))) {
+                                // The chain page edits the layer of the pad just pressed (and the pad still plays: the sound is heard through the chain).
+                                const int8_t before = selectedLayerNum;
+                                selectedLayerNum = static_cast<int8_t>(layerNum);
+                                if (before >= 0) lcd_drawLayerTab(static_cast<uint8_t>(before));
+                                lcd_drawLayerTab(layerNum);
+                                ledLayerSelectFlag = true;
+                                ledLayerSelectData = 0x01 << layerNum;
+                                lcd_drawChainMenu();
+                            }
                             if ((menu == DUB_MENU) && (dubStripSel != layerNum)) {
                                 dubStripSel = layerNum;  // the DUB page edits the strip of the pad just pressed
                                 lcd_drawDub_Data();
@@ -2725,6 +2749,8 @@ void Controller::keyboard_action() {
                                     case EUCLID_MENU:
 
                                     case NOTE_MENU:
+
+                                    case CHAIN_MENU:
                                         ledLayerPlayMode = false;
                                         ledLayerSelectFlag = true;
                                         ledLayerSelectData = 0x01 << selectedLayerNum;
@@ -2891,6 +2917,8 @@ void Controller::keyboard_action() {
                                     case EUCLID_MENU:
 
                                     case NOTE_MENU:
+
+                                    case CHAIN_MENU:
                                         ledLayerPlayMode = false;
                                         ledLayerSelectFlag = true;
                                         ledLayerSelectData = 0x01 << selectedLayerNum;
@@ -3488,10 +3516,10 @@ void Controller::encoder_update() {
 
     if (activeEncoderBank >= kEncoderBankSize) activeEncoderBank = kMinEncoderGlobalTab;
     const uint8_t encoderFuncCount = sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]);
-    // Every page with a row in encoderLocalFunction (DUB_MENU is the last). A page past the table
+    // Every page with a row in encoderLocalFunction (CHAIN_MENU is the last). A page past the table
     // used to fall back to INIT_MENU, which binds the GLOBAL encoder functions.
     constexpr uint8_t kLocalRows = sizeof(encoderLocalFunction) / sizeof(encoderLocalFunction[0]);
-    static_assert(kLocalRows == DUB_MENU + 1, "encoderLocalFunction needs one row per menu");
+    static_assert(kLocalRows == CHAIN_MENU + 1, "encoderLocalFunction needs one row per menu");
     const Menu menuSafe = (static_cast<uint8_t>(menu) < kLocalRows) ? menu : INIT_MENU;
 
     // 1. MODE/FUNCTION BINDING
@@ -4332,6 +4360,17 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, true);
             break;
 
+        case ENC_CH_BLOCK:
+        case ENC_CH_ON:
+        case ENC_CH_P1:
+        case ENC_CH_P2:
+        case ENC_CH_P3:
+        case ENC_CH_P4:
+        case ENC_CH_P5:
+        case ENC_CH_P6:
+            if (menu == CHAIN_MENU) chain_step(encoder[encoderNum_].function, true);
+            break;
+
         case ENC_PERF_TEMPO:
         case ENC_PERF_BANK:
         case ENC_PERF_FILL:
@@ -4995,6 +5034,17 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_DUB_STRIP:
         case ENC_DUB_LINEMUTE:
             if (menu == DUB_MENU) dub_step(encoder[encoderNum_].function, false);
+            break;
+
+        case ENC_CH_BLOCK:
+        case ENC_CH_ON:
+        case ENC_CH_P1:
+        case ENC_CH_P2:
+        case ENC_CH_P3:
+        case ENC_CH_P4:
+        case ENC_CH_P5:
+        case ENC_CH_P6:
+            if (menu == CHAIN_MENU) chain_step(encoder[encoderNum_].function, false);
             break;
 
         case ENC_PERF_TEMPO:
@@ -7068,6 +7118,7 @@ void Controller::file_readNotes(const char* fileName_) {
     /// entry by layer, bank and start (as the loader quantized it). No block = all default.
     f_close(&sd.file);
     dubClear(dubMix);  // a song without a DUB block plays as CHAIN
+    chInitSettings();  // and without a CHN block no layer has a channel strip
     euclid_resetSettings();  // and without an EUC block every layer has the default EUCLID settings
     genClear(genMix);  // and without a GEN block it has no generators and no hiss
     rhythm.quantizeStrength = kQuantizeStrengthDefault;  // and without a QNT block recording snaps fully, as before
@@ -7135,6 +7186,12 @@ void Controller::file_readNotes(const char* fileName_) {
                                         if ((f_read(&sd.file, linData, kDubLineFileSize, &linGot) == FR_OK) && !dubLineRead(dubMix, linData, static_cast<uint16_t>(linGot))) {
                                             dubMix.line = DubStrip();
                                             dubMix.lineMute = false;
+                                        }
+                                        // The CHN block follows the LIN block (ChannelStrip.h): the channel strip of each layer.
+                                        if (linGot == kDubLineFileSize) {
+                                            uint8_t chnData[kChFileSize];
+                                            UINT chnGot = 0;
+                                            if ((f_read(&sd.file, chnData, kChFileSize, &chnGot) != FR_OK) || !chReadBlock(chSettings, chnData, static_cast<uint16_t>(chnGot))) chInitSettings();
                                         }
                                     }
                                 }
@@ -7237,6 +7294,10 @@ SdResult Controller::sd_saveFile(uint8_t fileNum_) {
             uint8_t linData[kDubLineFileSize];
             dubLineWrite(dubMix, linData);
             out.write(linData, kDubLineFileSize);
+            // and the CHN block after the LIN block (ChannelStrip.h): the channel strip of each layer
+            uint8_t chnData[kChFileSize];
+            chWriteBlock(chSettings, chnData);
+            out.write(chnData, kChFileSize);
         }, saveWatchdogTick);
         if (saved) result = SD_OK;
     }
@@ -9236,6 +9297,10 @@ void Controller::lcd_drawMenuIcon(Menu menu_) {
                 iconStr = "DB";
                 break;
 
+            case CHAIN_MENU:
+                iconStr = "CH";
+                break;
+
             case SONG_MENU:
                 iconStr = "SG";
                 break;
@@ -9509,6 +9574,7 @@ void Controller::lcd_transitionMenu() {
         case EUCLID_MENU:
         case SONG_MENU:
         case NOTE_MENU:
+        case CHAIN_MENU:
             // Remove the chain overview / pattern and restore the tab divider it covered.
             lcd.setBackColor(BLACK);
             lcd.setForeColor(GRAY_50);
@@ -9592,6 +9658,12 @@ void Controller::lcd_transitionMenu() {
 
         case NOTE_MENU:
             // Tabs 2-3 hold the selected note.
+            lcd.setBackColor(BLACK);
+            lcd.clearRect(493, 29, 325, 60);
+            break;
+
+        case CHAIN_MENU:
+            // All eight tabs are fields: the corner holds tabs 2 and 3.
             lcd.setBackColor(BLACK);
             lcd.clearRect(493, 29, 325, 60);
             break;
@@ -14266,7 +14338,7 @@ void Controller::preMenuLayerClear() {
 
     // 2. LAYER INST MENU CLEANUP
     // Clear selected layer and redraw tab state when leaving layer instrument menus.
-    if ((preMenu == LAYER_INST_0_MENU) || (preMenu == LAYER_INST_1_MENU) || (preMenu == LAYER_INST_2_MENU)) {
+    if ((preMenu == LAYER_INST_0_MENU) || (preMenu == LAYER_INST_1_MENU) || (preMenu == LAYER_INST_2_MENU) || (preMenu == CHAIN_MENU)) {
         uint8_t layerNum = selectedLayerNum;
 
         // Reset graph cache so next Layer Inst entry redraws waveform/meta from scratch.
@@ -14553,6 +14625,7 @@ void Controller::file_newAction() {
     reset();
     chainClear(songChain);
     dubClear(dubMix);
+    chInitSettings();
     fileSlotCurrent = -1;  // a new song is in no slot
     euclid_resetSettings();
     genClear(genMix);
@@ -20704,7 +20777,9 @@ uint32_t Controller::file_genCrc(uint32_t crc_) {
     lfoModWriteBlock(lfdAssign, lfdData);  // and the LFOs on the filters
     uint8_t linData[kDubLineFileSize];
     dubLineWrite(dubMix, linData);  // and the LINE IN channel
-    return autosaveCrc32(autosaveCrc32(autosaveCrc32(autosaveCrc32(crc_, genData, kGenFileSize), quantData, kQuantizeFileSize), lfdData, kLfoModFileSize), linData, kDubLineFileSize);
+    uint8_t chnData[kChFileSize];
+    chWriteBlock(chSettings, chnData);  // and the channel strips
+    return autosaveCrc32(autosaveCrc32(autosaveCrc32(autosaveCrc32(autosaveCrc32(crc_, genData, kGenFileSize), quantData, kQuantizeFileSize), lfdData, kLfoModFileSize), linData, kDubLineFileSize), chnData, kChFileSize);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -20785,15 +20860,8 @@ void Controller::layerInst_select(uint8_t layerNum_) {
             encoder_update();
             lcd_drawLayerInst2Menu(layerNum_);
         } else if (menu == LAYER_INST_2_MENU) {
-            preMenu = menu;
-            menu = LAYER_INST_0_MENU;
-
-            // Animate transition and render page-0.
-            lcd_transitionMenu();
-            lcd_drawLayerInst0Menu(layerNum_, false);
-
-            // Refresh encoder bindings for new page.
-            encoder_update();
+            // The fourth page: the layer's channel strip (ChannelStrip.h); the instrument key from there goes back to page 1.
+            chain_select(layerNum_);
         }
     }
 }
@@ -22983,7 +23051,7 @@ void Controller::lcd_drawSongOverview() {
 
 bool Controller::layerPageMenu() const {
     /// @brief True on a page of one layer: instrument pages 1-3, song, EUCLID.
-    return (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU) || (menu == LAYER_SONG_MENU) || (menu == EUCLID_MENU) || (menu == NOTE_MENU);
+    return (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU) || (menu == LAYER_SONG_MENU) || (menu == EUCLID_MENU) || (menu == NOTE_MENU) || (menu == CHAIN_MENU);
 }
 
 void Controller::euclid_select() {
@@ -24781,6 +24849,84 @@ void Controller::quantizeNow_apply() {
         }
     }
     for (uint8_t l = l0; l < l1; l++) lcd_drawSong(l, activeSongBank);
+}
+
+/* CHAIN: the channel strip of a layer, the fourth instrument page (ChannelStrip.h) -------------------*/
+
+void Controller::chain_select(uint8_t layerNum_) {
+    /// @brief The instrument key pressed again on instrument page 3: the layer's channel strip. Its sample is chosen on
+    /// page 1; here the chain after it.
+    (void)layerNum_;
+    if (menu == CHAIN_MENU) return;
+    preMenu = menu;
+    preMenuTab = menuTab;
+    menuTab = -1;  // every field has its own encoder
+    menu = CHAIN_MENU;
+    lcd_transitionMenu();
+    lcd_transitionSelect();
+    lcd_drawChainMenu();
+    encoder_update();
+}
+
+void Controller::lcd_drawChain_Slot(uint8_t slot_) {
+    /// @brief One of the eight fields of the chain page: its header, sign and value (slot 0 BLOCK, 1 ACTIVE, 2 to 7 the
+    /// block's parameters; a slot the block does not use is blank).
+    if (selectedLayerNum < 0) return;
+    const ChSettings& s = chSettings[selectedLayerNum];
+    const ChBlock block = static_cast<ChBlock>(chBlockSel < CH_BLOCKS ? chBlockSel : 0);
+    char header[16] = "          ", sign[8] = "   ", text[24] = "          ";
+    bool dim = false;
+    if (slot_ == 0) {
+        snprintf(header, sizeof header, "BLOCK     ");
+        snprintf(text, sizeof text, "%10s", chBlockName(block));
+    } else if (slot_ == 1) {
+        snprintf(header, sizeof header, "ACTIVE    ");
+        snprintf(text, sizeof text, "%s", chOn(s, block) ? kDataOn : kDataOff);
+    } else if ((slot_ - 2) < chParamCount(block)) {
+        const uint8_t i = static_cast<uint8_t>(slot_ - 2);
+        snprintf(header, sizeof header, "%s", chParam(block, i).name);
+        chParamText(block, i, s, text, sizeof text);
+        chParamSign(block, i, s, sign, sizeof sign);
+        dim = !chOn(s, block);  // the block is off: its values are shown in gray
+    }
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(header, kMenuHeaderTextSize, kMenuHeaderX[slot_], kMenuHeaderY[slot_]);
+    lcd_setMenuSignState(CYAN);
+    lcd.drawText(sign, kMenuSignTextSize, kMenuSignBoxX[slot_], kMenuSignBoxY[slot_]);
+    lcd_setMenuDataState(dim ? GRAY_50 : WHITE);
+    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[slot_], kMenuDataY[slot_]);
+}
+
+void Controller::lcd_drawChainMenu() {
+    /// @brief The chain page: the layer number next to the icon and the eight fields.
+    lcd_drawMenuIcon(CHAIN_MENU);
+    lcd_setMenuHeaderState(CYAN);
+    if (selectedLayerNum >= 0) lcd.drawText(kDataMenuNum + selectedLayerNum, 1, kMenuNumX, kMenuNumY);
+    for (uint8_t f = 0; f < 8; f++) lcd_drawChain_Slot(f);
+}
+
+void Controller::chain_step(EncoderFunc function_, bool up_) {
+    /// @brief Turns one field of the chain page: BLOCK picks the block, ACTIVE switches it (right on, left off), the others
+    /// step the block's parameters.
+    if (selectedLayerNum < 0) return;
+    ChSettings& s = chSettings[selectedLayerNum];
+    ChBlock block = static_cast<ChBlock>(chBlockSel < CH_BLOCKS ? chBlockSel : 0);
+    if (function_ == ENC_CH_BLOCK) {
+        if (up_ && (chBlockSel + 1 < CH_BLOCKS)) chBlockSel++;
+        if (!up_ && (chBlockSel > 0)) chBlockSel--;
+        for (uint8_t f = 0; f < 8; f++) lcd_drawChain_Slot(f);
+        return;
+    }
+    if (function_ == ENC_CH_ON) {
+        if (up_) s.on = static_cast<uint8_t>(s.on | (1u << block));
+        else s.on = static_cast<uint8_t>(s.on & ~(1u << block));
+        for (uint8_t f = 1; f < 8; f++) lcd_drawChain_Slot(f);  // the values turn gray or white with the switch
+        return;
+    }
+    const uint8_t i = static_cast<uint8_t>(function_ - ENC_CH_P1);
+    if (i >= chParamCount(block)) return;
+    chParamStep(s, block, i, up_);
+    lcd_drawChain_Slot(static_cast<uint8_t>(2 + i));
 }
 
 /* LFO overview: the full-area view of the LFO page (LfoView.h, LfoScreens.h) ---------------------*/
@@ -27812,6 +27958,7 @@ void Controller::processAudioBlock(uint32_t* inputBuffer_, uint32_t* outputBuffe
 
         // Process active layer sample playback.
         processAudioLayer();
+        processAudioChannelStrips();  // each layer's own sound chain (ChannelStrip.h), before the meters and the routing
         PROF_LAP(2);
 
         // The line-in's peak (the LINE IN channel's meter): what comes in, before the channel's mute.
@@ -28214,6 +28361,7 @@ void Controller::processAudioLayer() {
                 aBD.newBeatFlag = false;
                 lD.beatStartFlag = true;
                 lD.beatEndFlag = false;
+                chDsp.trig[i] = true;  // the channel strip's envelope starts with this note
 
                 // Transfer temporary beat data to the active state
                 memcpy(&aBD, &lD.tempBeatPlayData, sizeof(BeatPlayData));
@@ -28428,6 +28576,69 @@ void Controller::processAudioLayer() {
 StereoDsp stereoDsp __attribute__((section(".dtcm")));
 // Generator voices and the hiss bed: DTCM RAM, zeroed in main().
 GenDsp genDsp __attribute__((section(".dtcm")));
+
+void Controller::chInitSettings() {
+    /// @brief Every layer's channel strip at its defaults, every block off (a song without a CHN block, NEW).
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) chSettings[i] = chDefaults();
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {  // the states start again too
+        chDsp.trig[i] = false;
+        chDsp.idle[i] = 0;
+        chReset(chDsp.state[i]);
+    }
+}
+
+void Controller::processAudioChannelStrips() {
+    /// @brief Runs each layer's channel strip (ChannelStrip.h) on its own block, between the sample playback and the
+    /// layer meters, so the meters and the routing hear what the chain makes. A strip with every block off costs
+    /// nothing. A layer that is silent (its block is all zeros) keeps its chain running for 3000 blocks (2 s) so that a
+    /// tail (a filter ringing, a compressor releasing) is not cut, then the chain sleeps until the next sound.
+    const uint16_t kIdleBlocks = 3000;
+    // The sidechains read the layers as they came out of the sample: copy the ones a COMP listens to first.
+    uint16_t wanted = 0;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const ChSettings& s = chSettings[i];
+        if (chOn(s, CH_COMP) && (s.compSide >= 1) && (s.compSide <= kLayerLibrarySize)) wanted |= static_cast<uint16_t>(1u << (s.compSide - 1));
+    }
+    for (uint8_t j = 0; j < kLayerLibrarySize; j++) {
+        if (wanted & (1u << j)) memcpy(chDsp.side[j], audioLayer[j], I2S_BLOCK_SIZE * sizeof(float));
+    }
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const ChSettings s = chSettings[i];  // one copy per block: the page may change it between two blocks
+        if ((s.on & ((1u << CH_BLOCKS) - 1u)) == 0) {
+            chDsp.trig[i] = false;
+            continue;
+        }
+        float* l = audioLayer[i];
+        float* r = stereoDsp.layerR[i];
+        const bool stereo = stereoDsp.layerStereo[i];
+        bool silent = true;
+        for (uint16_t k = 0; k < I2S_BLOCK_SIZE; k++) {
+            if ((l[k] != 0.0f) || (stereo && (r[k] != 0.0f))) {
+                silent = false;
+                break;
+            }
+        }
+        if (chDsp.trig[i]) {
+            chTrigger(chDsp.state[i]);
+            chDsp.trig[i] = false;
+        }
+        if (silent) {
+            if (chDsp.idle[i] >= kIdleBlocks) {
+                if (chDsp.idle[i] == kIdleBlocks) {  // asleep: clean state for the next sound
+                    ChState fresh;
+                    chDsp.state[i] = fresh;
+                    chDsp.idle[i]++;
+                }
+                continue;
+            }
+            chDsp.idle[i]++;
+        } else {
+            chDsp.idle[i] = 0;
+        }
+        const float* side = ((s.compSide >= 1) && (s.compSide <= kLayerLibrarySize)) ? chDsp.side[s.compSide - 1] : nullptr;
+        stereoDsp.layerStereo[i] = chProcess(s, chDsp.state[i], l, r, stereo, side, I2S_BLOCK_SIZE, AUDIO_SAMPLE_RATE);
+    }
+}
 
 void Controller::processAudioRouting() {
     /// @brief Routes every source to its destination node and runs the modules in order,

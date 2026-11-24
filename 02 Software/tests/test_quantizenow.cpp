@@ -174,7 +174,7 @@ int main() {
         CHECK(pixelAt(lcd, kQnStripX + kQnBarStep + 16, kQnBarBase - 2) == kGsCyan, "a later landing: the bar is cyan");
     }
     // The geometry.
-    CHECK(kQnScopeY + 2 * kQnScopeStep + kQnScopeH < kQnCountY && kQnCountY + 5 * kQnCountStep <= kQnApplyY && kQnApplyY + kQnApplyH < kQnHintY && kQnHintY + 10 + 7 <= kGsAreaY + kGsAreaH && kQnScopeX + 22 * 7 < kQnStripX, "left column in order");
+    CHECK(kQnScopeY + 2 * kQnScopeStep + kQnScopeH < kQnPadHintY && kQnPadHintY + 7 < kQnCountY && kQnScopeX + 30 * 7 < kQnStripX && kQnScopeY + 2 * kQnScopeStep + kQnScopeH < kQnCountY && kQnCountY + 5 * kQnCountStep <= kQnApplyY && kQnApplyY + kQnApplyH < kQnHintY && kQnHintY + 10 + 7 <= kGsAreaY + kGsAreaH && kQnScopeX + 22 * 7 < kQnStripX, "left column in order");
     CHECK(kQnStripX + kQnStripW + 6 <= kGsAreaX + kGsAreaW && kQnNumberY + 7 <= kGsAreaY + kGsAreaH && kQnStripX + kQnMaxNotes * kQnBarStep <= kGsAreaX + kGsAreaW, "right side inside");
     CHECK(kQnAfterY + kQnStripH < kQnCaptionY && kQnCaptionY + 7 < kQnBarsLabelY && kQnBarsLabelY + 9 < kQnBarBase - kQnBarMax && kQnBarBase < kQnNumberY, "right side in order");
     std::printf("%d checks, %d failures\n", checks, failures);

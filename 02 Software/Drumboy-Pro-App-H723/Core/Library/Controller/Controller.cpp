@@ -1791,6 +1791,10 @@ void Controller::keyboard_action() {
                             // The PERFORM page: a pad toggles its layer's MUTE (the pad does not play the sound).
                             layerInst_setMute(layerNum, !layerLibrary[layerNum].mute);
                         } else {
+                            if ((menu == RHYTHM_MENU) && (menuTab >= 5) && (qnLayer != layerNum)) {
+                                qnLayer = layerNum;  // QUANTIZE NOW: THIS LAYER is the layer of the pad just pressed (the pad still plays)
+                                viewDirty = true;
+                            }
                             if ((menu == CHAIN_MENU) && (selectedLayerNum != static_cast<int8_t>(layerNum))) {
                                 // The chain page edits the layer of the pad just pressed (and the pad still plays: the sound is heard through the chain).
                                 const int8_t before = selectedLayerNum;
@@ -24675,23 +24679,16 @@ void Controller::lcd_drawQuantizeViewData() {
 
 /* QUANTIZE NOW: quantize the notes already recorded, with a look first (QuantizeNow.h) -------------*/
 
-static void qnLayerBank(const Controller& c_, int8_t sel_, uint8_t& layer_) {
-    (void)c_;
-    layer_ = (sel_ >= 0) ? static_cast<uint8_t>(sel_) : static_cast<uint8_t>(0);
-}
-
 uint32_t Controller::quantizeNow_key() const {
     /// @brief What an armed APPLY is armed for: the grid, the strength, the scope, the layer and the bank.
-    uint8_t layer;
-    qnLayerBank(*this, selectedLayerNum, layer);
+    const uint8_t layer = (qnLayer < kLayerLibrarySize) ? qnLayer : static_cast<uint8_t>(0);
     return (static_cast<uint32_t>(qnGrid) << 24) | (static_cast<uint32_t>(rhythm.quantizeStrength) << 16) | (static_cast<uint32_t>(qnScope) << 12) | (static_cast<uint32_t>(layer) << 4) | activeSongBank;
 }
 
 uint32_t Controller::quantizeNow_viewState() const {
     /// @brief A fingerprint of what QUANTIZE NOW shows: its choices, and the start of every note in its scope. The top byte
     /// tells it from the QUANTIZE screen's fingerprint. Never 0.
-    uint8_t layer;
-    qnLayerBank(*this, selectedLayerNum, layer);
+    const uint8_t layer = (qnLayer < kLayerLibrarySize) ? qnLayer : static_cast<uint8_t>(0);
     uint32_t h = 2166136261u;
     auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
     mix(quantizeNow_key());
@@ -24729,8 +24726,7 @@ void Controller::lcd_drawQuantizeNowData() {
         lcd.clearRect(kLayerLineX, kImageLayerY[0], kLayerLineWidth, 309);
     }
     quantizeViewKey = quantizeViewStateDrawn;
-    uint8_t layer;
-    qnLayerBank(*this, selectedLayerNum, layer);
+    const uint8_t layer = (qnLayer < kLayerLibrarySize) ? qnLayer : static_cast<uint8_t>(0);
     GsLcd g{lcd};
     qnDrawFrame(g);
     char name[16], title[64];
@@ -24816,8 +24812,7 @@ void Controller::quantizeNow_apply() {
     /// @brief Snaps the notes of the scope to the grid at the page's strength: one undo step for every bank it touches,
     /// each bank rebuilt (sorted, notes landing on the same point joined, ends and fills recomputed) and swapped in with
     /// the sequencer interrupt held off, so it is safe while playing.
-    uint8_t layer;
-    qnLayerBank(*this, selectedLayerNum, layer);
+    const uint8_t layer = (qnLayer < kLayerLibrarySize) ? qnLayer : static_cast<uint8_t>(0);
     const uint8_t l0 = (qnScope == kQnScopeLayer) ? layer : static_cast<uint8_t>(0);
     const uint8_t l1 = (qnScope == kQnScopeLayer) ? static_cast<uint8_t>(layer + 1) : kLayerLibrarySize;
     const uint8_t b0 = (qnScope == kQnScopeAll) ? static_cast<uint8_t>(0) : activeSongBank;

@@ -14,6 +14,7 @@
 
 const uint16_t kQnTitleX = 30, kQnTitleY = 138;
 const uint16_t kQnScopeLabelY = 170, kQnScopeX = 30, kQnScopeY = 186, kQnScopeStep = 26, kQnScopeW = 236, kQnScopeH = 22;
+const uint16_t kQnPadHintY = 267;
 const uint16_t kQnCountY = 276, kQnCountStep = 16, kQnCountRight = 266;
 const uint16_t kQnApplyX = 30, kQnApplyY = 366, kQnApplyW = 236, kQnApplyH = 44, kQnHintY = 416;
 const uint16_t kQnStripX = 300, kQnStripW = 620;
@@ -39,6 +40,7 @@ inline void qnDrawFrame(G& g) {
     gsDraw(g, "AFTER", kQnStripX, static_cast<uint16_t>(kQnAfterY - 14));
     g.setFont(GS_FONT_05x07);
     g.setForeColor(kGsGray50);
+    gsDraw(g, "PRESS A PAD: THAT IS THE LAYER", kQnScopeX, kQnPadHintY);
     gsDraw(g, "TURN APPLY RIGHT TWICE", kQnScopeX, kQnHintY);
     gsDraw(g, "UNDO: MUTE + LEFT", kQnScopeX, static_cast<uint16_t>(kQnHintY + 10));
 }

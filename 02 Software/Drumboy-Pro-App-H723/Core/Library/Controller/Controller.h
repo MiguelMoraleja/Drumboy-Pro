@@ -333,7 +333,8 @@ class Controller {
     uint32_t quantizeViewKey = 0;               // what the quantize screen was drawn from (0 = nothing)
     uint32_t quantizeViewStateDrawn = 0;
     uint8_t qnGrid = kQuantizeGridDefault;      // QUANTIZE NOW: the grid it snaps to (set to the page's own grid when the page opens)
-    uint8_t qnScope = 0;                        // THIS LAYER, THIS BANK, ALL LAYERS
+    uint8_t qnScope = 0;
+    uint8_t qnLayer = 0;                        // THIS LAYER: the layer a pad was pressed on while a NOW field is showing (the RHYTHM page has no selected layer)                        // THIS LAYER, THIS BANK, ALL LAYERS
     QnApplyState qnApply = QN_READY;
     uint32_t qnArmKey = 0, qnArmMs = 0;         // what APPLY was armed for, and when
     uint8_t slotRepeat = 0;                     // consecutive repeats of a held UP or DOWN: after 8 the step is ten slots

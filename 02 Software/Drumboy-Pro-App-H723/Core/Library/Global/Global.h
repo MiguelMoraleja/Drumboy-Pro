@@ -32,6 +32,7 @@
 #include "QuantizeNowScreens.h"
 #include "ChannelStrip.h"
 #include "ChainScreens.h"
+#include "StageScreens.h"
 #include "NoteView.h"
 #include "Pan.h"
 #include "UndoLog.h"
@@ -1363,6 +1364,10 @@ typedef enum {
     ENC_CH_P4                                       = 0xA0,
     ENC_CH_P5                                       = 0xA1,
     ENC_CH_P6                                       = 0xA2,
+    ENC_STAGE_PAN                                   = 0xA3,  // STAGE page (the fifth instrument page, StageView.h): the layer's pan, width, bass mono and spread
+    ENC_STAGE_WIDTH                                 = 0xA4,
+    ENC_STAGE_BASS                                  = 0xA5,
+    ENC_STAGE_SPREAD                                = 0xA6,
 
     kEncoderFuncCount                                        // table size check
 } EncoderFunc;
@@ -1426,7 +1431,10 @@ const EncoderFunc encoderLocalFunction[][8] = {
     {ENC_DUB_LEVEL, ENC_DUB_BUS, ENC_DUB_ECHO, ENC_DUB_VERB, ENC_DUB_MODE, ENC_DUB_FEEDBACK, ENC_DUB_ECHORTN, ENC_DUB_VERBRTN},
     // CHAIN_MENU = 0x19
     // The block and its switch, then the block's parameters (the page names them).
-    {ENC_CH_BLOCK, ENC_CH_ON, ENC_CH_P1, ENC_CH_P2, ENC_CH_P3, ENC_CH_P4, ENC_CH_P5, ENC_CH_P6}};
+    {ENC_CH_BLOCK, ENC_CH_ON, ENC_CH_P1, ENC_CH_P2, ENC_CH_P3, ENC_CH_P4, ENC_CH_P5, ENC_CH_P6},
+    // STAGE_MENU = 0x1A
+    // The selected layer's place on the stereo stage.
+    {ENC_STAGE_PAN, ENC_STAGE_WIDTH, ENC_STAGE_BASS, ENC_STAGE_SPREAD, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE, ENC_FNC_NONE}};
 
 // DUB page 2 (the next step in the MIXER cycle): the selected strip's pan and FX send on the top row,
 // the echo's width on the bottom row.
@@ -1638,7 +1646,11 @@ const EncoderFuncData kEncoderFuncDataLibrary[] = {
     {ENC_CH_P3,               ENC_RES_M, "PARAM 3   ", "CHAIN ", "   ", false},
     {ENC_CH_P4,               ENC_RES_M, "PARAM 4   ", "CHAIN ", "   ", false},
     {ENC_CH_P5,               ENC_RES_M, "PARAM 5   ", "CHAIN ", "   ", false},
-    {ENC_CH_P6,               ENC_RES_M, "PARAM 6   ", "CHAIN ", "   ", false}
+    {ENC_CH_P6,               ENC_RES_M, "PARAM 6   ", "CHAIN ", "   ", false},
+    {ENC_STAGE_PAN,           ENC_RES_M, "PAN       ", "STAGE ", "   ", false},
+    {ENC_STAGE_WIDTH,         ENC_RES_M, "WIDTH     ", "STAGE ", "  %", false},
+    {ENC_STAGE_BASS,          ENC_RES_M, "BASS MONO ", "STAGE ", " HZ", false},
+    {ENC_STAGE_SPREAD,        ENC_RES_M, "SPREAD    ", "STAGE ", "  %", false}
 };
 
 static_assert(sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]) == kEncoderFuncCount, "kEncoderFuncDataLibrary is indexed by EncoderFunc: one entry per value");
@@ -1768,7 +1780,8 @@ typedef enum {
     SONG_MENU                                       = 0x16,  // song mode: the SONG key tapped on its own
     NOTE_MENU                                       = 0x17,  // per-note settings: LAYER SONG tapped on the EUCLID page
     DUB_MENU                                        = 0x18,  // the dub mixer: the second page of the MIXER key (DubMix.h)
-    CHAIN_MENU                                      = 0x19   // the channel strip of a layer: the fourth instrument page (ChannelStrip.h)
+    CHAIN_MENU                                      = 0x19,  // the channel strip of a layer: the fourth instrument page (ChannelStrip.h)
+    STAGE_MENU                                      = 0x1A   // the stereo stage: the fifth instrument page (StageView.h)
 } Menu;
 
 typedef enum {

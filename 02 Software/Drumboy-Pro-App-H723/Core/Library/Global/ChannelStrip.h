@@ -348,6 +348,14 @@ inline bool chProcess(const ChSettings& s_, ChState& st_, float* l_, float* r_, 
     return stereoOut;
 }
 
+// The IMAGE block is on exactly when one of its settings is not neutral (width 50 = 100 %, bass mono off, spread 0): the stereo
+// stage page edits the three values and keeps the switch in step, so a neutral image costs nothing.
+inline bool chImageNeutral(const ChSettings& s_) { return (s_.imgWidth == 50) && (s_.imgBass == 0) && (s_.imgSpread == 0); }
+inline void chImageSync(ChSettings& s_) {
+    if (chImageNeutral(s_)) s_.on = static_cast<uint8_t>(s_.on & ~(1u << CH_IMAGE));
+    else s_.on = static_cast<uint8_t>(s_.on | (1u << CH_IMAGE));
+}
+
 // --- The parameters, as the page shows them -------------------------------------------------------------------
 // Each block has up to six parameters. A parameter is one byte of ChSettings; its text is 10 characters (right aligned, the
 // font has no lowercase) and its sign box says the unit.

@@ -30,6 +30,8 @@ struct ChDsp {
     float side[kLayerLibrarySize][I2S_BLOCK_SIZE];  // a copy of each layer's block as it came out of the sample, for the sidechains
     uint16_t idle[kLayerLibrarySize];               // blocks of silence since the layer last sounded
     bool trig[kLayerLibrarySize];                   // a new note started in this layer: the envelope starts again
+    volatile bool meterOn;                          // the stereo stage page is open: measure each stereo layer's correlation
+    float sumLL[kLayerLibrarySize], sumRR[kLayerLibrarySize], sumLR[kLayerLibrarySize];  // read and reset by the main loop
 };
 static ChDsp chDsp __attribute__((section(".dtcm")));
 
@@ -1795,7 +1797,7 @@ void Controller::keyboard_action() {
                                 qnLayer = layerNum;  // QUANTIZE NOW: THIS LAYER is the layer of the pad just pressed (the pad still plays)
                                 viewDirty = true;
                             }
-                            if ((menu == CHAIN_MENU) && (selectedLayerNum != static_cast<int8_t>(layerNum))) {
+                            if (((menu == CHAIN_MENU) || (menu == STAGE_MENU)) && (selectedLayerNum != static_cast<int8_t>(layerNum))) {
                                 // The chain page edits the layer of the pad just pressed (and the pad still plays: the sound is heard through the chain).
                                 const int8_t before = selectedLayerNum;
                                 selectedLayerNum = static_cast<int8_t>(layerNum);
@@ -1803,7 +1805,7 @@ void Controller::keyboard_action() {
                                 lcd_drawLayerTab(layerNum);
                                 ledLayerSelectFlag = true;
                                 ledLayerSelectData = 0x01 << layerNum;
-                                lcd_drawChainMenu();
+                                (menu == CHAIN_MENU) ? lcd_drawChainMenu() : lcd_drawStageMenu();
                             }
                             if ((menu == DUB_MENU) && (dubStripSel != layerNum)) {
                                 dubStripSel = layerNum;  // the DUB page edits the strip of the pad just pressed
@@ -2755,6 +2757,8 @@ void Controller::keyboard_action() {
                                     case NOTE_MENU:
 
                                     case CHAIN_MENU:
+
+                                    case STAGE_MENU:
                                         ledLayerPlayMode = false;
                                         ledLayerSelectFlag = true;
                                         ledLayerSelectData = 0x01 << selectedLayerNum;
@@ -2923,6 +2927,8 @@ void Controller::keyboard_action() {
                                     case NOTE_MENU:
 
                                     case CHAIN_MENU:
+
+                                    case STAGE_MENU:
                                         ledLayerPlayMode = false;
                                         ledLayerSelectFlag = true;
                                         ledLayerSelectData = 0x01 << selectedLayerNum;
@@ -3520,10 +3526,10 @@ void Controller::encoder_update() {
 
     if (activeEncoderBank >= kEncoderBankSize) activeEncoderBank = kMinEncoderGlobalTab;
     const uint8_t encoderFuncCount = sizeof(kEncoderFuncDataLibrary) / sizeof(kEncoderFuncDataLibrary[0]);
-    // Every page with a row in encoderLocalFunction (CHAIN_MENU is the last). A page past the table
+    // Every page with a row in encoderLocalFunction (STAGE_MENU is the last). A page past the table
     // used to fall back to INIT_MENU, which binds the GLOBAL encoder functions.
     constexpr uint8_t kLocalRows = sizeof(encoderLocalFunction) / sizeof(encoderLocalFunction[0]);
-    static_assert(kLocalRows == CHAIN_MENU + 1, "encoderLocalFunction needs one row per menu");
+    static_assert(kLocalRows == STAGE_MENU + 1, "encoderLocalFunction needs one row per menu");
     const Menu menuSafe = (static_cast<uint8_t>(menu) < kLocalRows) ? menu : INIT_MENU;
 
     // 1. MODE/FUNCTION BINDING
@@ -4375,6 +4381,13 @@ void Controller::encoder_incValue(uint8_t encoderNum_) {
             if (menu == CHAIN_MENU) chain_step(encoder[encoderNum_].function, true);
             break;
 
+        case ENC_STAGE_PAN:
+        case ENC_STAGE_WIDTH:
+        case ENC_STAGE_BASS:
+        case ENC_STAGE_SPREAD:
+            if (menu == STAGE_MENU) stage_step(encoder[encoderNum_].function, true);
+            break;
+
         case ENC_PERF_TEMPO:
         case ENC_PERF_BANK:
         case ENC_PERF_FILL:
@@ -5049,6 +5062,13 @@ void Controller::encoder_decValue(uint8_t encoderNum_) {
         case ENC_CH_P5:
         case ENC_CH_P6:
             if (menu == CHAIN_MENU) chain_step(encoder[encoderNum_].function, false);
+            break;
+
+        case ENC_STAGE_PAN:
+        case ENC_STAGE_WIDTH:
+        case ENC_STAGE_BASS:
+        case ENC_STAGE_SPREAD:
+            if (menu == STAGE_MENU) stage_step(encoder[encoderNum_].function, false);
             break;
 
         case ENC_PERF_TEMPO:
@@ -9305,6 +9325,10 @@ void Controller::lcd_drawMenuIcon(Menu menu_) {
                 iconStr = "CH";
                 break;
 
+            case STAGE_MENU:
+                iconStr = "ST";
+                break;
+
             case SONG_MENU:
                 iconStr = "SG";
                 break;
@@ -9579,6 +9603,7 @@ void Controller::lcd_transitionMenu() {
         case SONG_MENU:
         case NOTE_MENU:
         case CHAIN_MENU:
+        case STAGE_MENU:
             // Remove the chain overview / pattern and restore the tab divider it covered.
             lcd.setBackColor(BLACK);
             lcd.setForeColor(GRAY_50);
@@ -9666,8 +9691,9 @@ void Controller::lcd_transitionMenu() {
             lcd.clearRect(493, 29, 325, 60);
             break;
 
+        case STAGE_MENU:
         case CHAIN_MENU:
-            // All eight tabs are fields: the corner holds tabs 2 and 3.
+            // The fields fill the tabs: the corner holds tabs 2 and 3.
             lcd.setBackColor(BLACK);
             lcd.clearRect(493, 29, 325, 60);
             break;
@@ -14342,7 +14368,7 @@ void Controller::preMenuLayerClear() {
 
     // 2. LAYER INST MENU CLEANUP
     // Clear selected layer and redraw tab state when leaving layer instrument menus.
-    if ((preMenu == LAYER_INST_0_MENU) || (preMenu == LAYER_INST_1_MENU) || (preMenu == LAYER_INST_2_MENU) || (preMenu == CHAIN_MENU)) {
+    if ((preMenu == LAYER_INST_0_MENU) || (preMenu == LAYER_INST_1_MENU) || (preMenu == LAYER_INST_2_MENU) || (preMenu == CHAIN_MENU) || (preMenu == STAGE_MENU)) {
         uint8_t layerNum = selectedLayerNum;
 
         // Reset graph cache so next Layer Inst entry redraws waveform/meta from scratch.
@@ -20794,6 +20820,12 @@ void Controller::layerInst_select(uint8_t layerNum_) {
     /// @brief Enters Layer Inst menu or cycles Layer Inst sub-pages for selected layer.
     /// Synchronizes menu context, selection data, UI transitions, and encoder mapping.
 
+    // The instrument key again on the chain page: the fifth page, the stereo stage.
+    if ((menu == CHAIN_MENU) && (selectedLayerNum == static_cast<int8_t>(layerNum_))) {
+        stage_select(layerNum_);
+        return;
+    }
+
     // 1. MENU ENTRY / LAYER SWITCH
     // Enter Layer Inst flow when current menu differs or selected layer changes.
     if (((menu != LAYER_INST_0_MENU) && (menu != LAYER_INST_1_MENU) && (menu != LAYER_INST_2_MENU)) || (((menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU)) && (selectedLayerNum != layerNum_))) {
@@ -23055,7 +23087,7 @@ void Controller::lcd_drawSongOverview() {
 
 bool Controller::layerPageMenu() const {
     /// @brief True on a page of one layer: instrument pages 1-3, song, EUCLID.
-    return (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU) || (menu == LAYER_SONG_MENU) || (menu == EUCLID_MENU) || (menu == NOTE_MENU) || (menu == CHAIN_MENU);
+    return (menu == LAYER_INST_0_MENU) || (menu == LAYER_INST_1_MENU) || (menu == LAYER_INST_2_MENU) || (menu == LAYER_SONG_MENU) || (menu == EUCLID_MENU) || (menu == NOTE_MENU) || (menu == CHAIN_MENU) || (menu == STAGE_MENU);
 }
 
 void Controller::euclid_select() {
@@ -23189,7 +23221,7 @@ bool Controller::laneViewHidden() const {
     /// @brief True while a full-area view has replaced the ten lanes (the EUCLID, SONG, ROUTING,
     /// FILTER, EQ and instrument page 2 pages). Everything that draws into a lane checks it, and asks for the view to be
     /// refreshed instead.
-    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == LFO_MENU) || (menu == CHAIN_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU) ||
+    return (menu == EUCLID_MENU) || (menu == SONG_MENU) || (menu == LFO_MENU) || (menu == CHAIN_MENU) || (menu == STAGE_MENU) || (menu == ROUTING_MENU) || (menu == FILTER_0_MENU) || (menu == FILTER_1_MENU) || (menu == EQ_MENU) || (menu == LAYER_INST_1_MENU) || (menu == DUB_MENU) || (menu == NOTE_MENU) ||
            (((menu == FILE_MENU) || (menu == DRUMKIT_MENU)) && (menuTab > 0)) ||  // the load, save and clear tabs show the slots
            ((menu == RHYTHM_MENU) && (menuTab >= 3));                              // the QUANTIZE and STRENGTH fields show the grids
 }
@@ -23237,6 +23269,9 @@ void Controller::lcd_drawLaneViewData() {
             break;
         case CHAIN_MENU:
             lcd_drawChainViewData();
+            break;
+        case STAGE_MENU:
+            lcd_drawStageViewData();
             break;
         case ROUTING_MENU:
             lcd_drawRoutingViewData();
@@ -23363,6 +23398,7 @@ void Controller::lcd_drawEuclidViewData() {
 void Controller::lcd_updateLaneView() {
     /// @brief Main loop: keeps the open page's full-area view current (redrawn at most every 80 ms
     /// while knobs turn), moves its playhead, and gives the lanes back when such a page was left.
+    chDsp.meterOn = (menu == STAGE_MENU);  // the audio measures each layer's correlation only while the stage page is open
     if (perfFillLatch && !((menu == SONG_MENU) && (songPage == 1))) perfFillLatch = false;  // the PERFORM page's FILL lasts while the page is open
     if (qnApply != QN_READY) {  // QUANTIZE NOW: armed for five seconds and for one set of choices; DONE lasts while they stay
         const bool here = (menu == RHYTHM_MENU);
@@ -23389,6 +23425,7 @@ void Controller::lcd_updateLaneView() {
     if ((menu == SONG_MENU) && (songPage == 1) && (perfViewState() != perfViewStateDrawn)) viewDirty = true;
     if ((menu == LFO_MENU) && (lfoViewState() != lfoViewStateDrawn)) viewDirty = true;
     if ((menu == CHAIN_MENU) && (chainViewState() != chainViewStateDrawn)) viewDirty = true;
+    if ((menu == STAGE_MENU) && (stageViewState() != stageViewStateDrawn)) viewDirty = true;
     if ((laneViewShown != menu) || viewFull) {
         lcd_drawLaneView();
     } else if (viewDirty && ((HAL_GetTick() - viewDrawnMs) >= 80)) {
@@ -23400,6 +23437,8 @@ void Controller::lcd_updateLaneView() {
         (songPage == 1) ? lcd_drawPerformPlay() : lcd_drawSongViewPlay();
     } else if (menu == LFO_MENU) {
         lcd_drawLfoViewPlay();
+    } else if (menu == STAGE_MENU) {
+        lcd_drawStageViewPlay();
     }
 }
 
@@ -24933,6 +24972,156 @@ void Controller::lcd_drawChainViewData() {
     chvDrawList(g, s, sel);
     chvDrawBoxes(g, s, sel);
     chvDrawBig(g, static_cast<ChBlock>(sel), s);
+}
+
+/* STAGE: the stereo stage, the fifth instrument page (StageView.h, StageScreens.h) --------------------*/
+
+void Controller::stage_select(uint8_t layerNum_) {
+    /// @brief The instrument key pressed again on the chain page: the stereo stage of the whole mix, with this layer's pan, width,
+    /// bass mono and spread as the fields.
+    (void)layerNum_;
+    if (menu == STAGE_MENU) return;
+    preMenu = menu;
+    preMenuTab = menuTab;
+    menuTab = -1;  // every field has its own encoder
+    menu = STAGE_MENU;
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        stageCorr[i] = kStNoCorr;
+        stageCorrDrawn[i] = 0;
+        stageSilent[i] = 0;
+    }
+    lcd_transitionMenu();
+    lcd_transitionSelect();
+    lcd_drawStageMenu();
+    encoder_update();
+}
+
+void Controller::lcd_drawStage_Slot(uint8_t slot_) {
+    /// @brief One of the four fields of the stage page: PAN, WIDTH, BASS MONO, SPREAD of the selected layer.
+    if (selectedLayerNum < 0) return;
+    const uint8_t layer = static_cast<uint8_t>(selectedLayerNum);
+    char header[16], sign[8] = "   ", text[24];
+    if (slot_ == 0) {
+        char label[8];
+        panLabel(label, sizeof label, dubMix.pan[layer]);
+        snprintf(header, sizeof header, "PAN       ");
+        snprintf(text, sizeof text, "%10s", label);
+    } else {
+        const uint8_t i = static_cast<uint8_t>(slot_ - 1);  // WIDTH, BASS, SPREAD: the IMAGE block's parameters
+        snprintf(header, sizeof header, "%s", chParam(CH_IMAGE, i).name);
+        chParamText(CH_IMAGE, i, chSettings[layer], text, sizeof text);
+        chParamSign(CH_IMAGE, i, chSettings[layer], sign, sizeof sign);
+    }
+    lcd_setMenuHeaderState(CYAN);
+    lcd.drawText(header, kMenuHeaderTextSize, kMenuHeaderX[slot_], kMenuHeaderY[slot_]);
+    lcd_setMenuSignState(CYAN);
+    lcd.drawText(sign, kMenuSignTextSize, kMenuSignBoxX[slot_], kMenuSignBoxY[slot_]);
+    lcd_setMenuDataState(WHITE);
+    lcd.drawText(text, kMenuDataTextSize, kMenuDataX[slot_], kMenuDataY[slot_]);
+}
+
+void Controller::lcd_drawStageMenu() {
+    /// @brief The stage page: the layer number next to the icon and the four fields.
+    lcd_drawMenuIcon(STAGE_MENU);
+    lcd_setMenuHeaderState(CYAN);
+    if (selectedLayerNum >= 0) lcd.drawText(kDataMenuNum + selectedLayerNum, 1, kMenuNumX, kMenuNumY);
+    for (uint8_t f = 0; f < 4; f++) lcd_drawStage_Slot(f);
+    for (uint8_t f = 4; f < 8; f++) {  // the chain page's fields on the bottom row are gone: blank them
+        lcd_setMenuHeaderState(CYAN);
+        lcd.drawText("          ", kMenuHeaderTextSize, kMenuHeaderX[f], kMenuHeaderY[f]);
+        lcd_setMenuSignState(CYAN);
+        lcd.drawText("   ", kMenuSignTextSize, kMenuSignBoxX[f], kMenuSignBoxY[f]);
+        lcd_setMenuDataState(WHITE);
+        lcd.drawText("          ", kMenuDataTextSize, kMenuDataX[f], kMenuDataY[f]);
+    }
+}
+
+void Controller::stage_step(EncoderFunc function_, bool up_) {
+    /// @brief Turns one field of the stage page. PAN is the layer's own pan (the same value as on instrument page 3); WIDTH, BASS MONO and
+    /// SPREAD are the IMAGE block of its channel strip, which is switched on while one of them is not neutral.
+    if (selectedLayerNum < 0) return;
+    const uint8_t layer = static_cast<uint8_t>(selectedLayerNum);
+    if (function_ == ENC_STAGE_PAN) {
+        const uint8_t cur = dubMix.pan[layer];
+        if (up_ && (cur < kPanMax)) layerInst_setPan(layer, static_cast<uint8_t>(cur + 1));
+        if (!up_ && (cur > 0)) layerInst_setPan(layer, static_cast<uint8_t>(cur - 1));
+        lcd_drawStage_Slot(0);
+        return;
+    }
+    const uint8_t i = static_cast<uint8_t>(function_ - ENC_STAGE_WIDTH);  // 0 WIDTH, 1 BASS MONO, 2 SPREAD
+    ChSettings& s = chSettings[layer];
+    chParamStep(s, CH_IMAGE, i, up_);
+    chImageSync(s);
+    lcd_drawStage_Slot(static_cast<uint8_t>(1 + i));
+}
+
+uint32_t Controller::stageViewState() const {
+    /// @brief A fingerprint of what the stage page shows except the correlations: every layer's pan, image settings and name. Never 0.
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix(static_cast<uint32_t>(selectedLayerNum + 2));
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        mix(dubMix.pan[i]);
+        mix((static_cast<uint32_t>(chSettings[i].imgWidth) << 24) | (static_cast<uint32_t>(chSettings[i].imgBass) << 16) | (static_cast<uint32_t>(chSettings[i].imgSpread) << 8) | (chOn(chSettings[i], CH_IMAGE) ? 1u : 0u));
+        const int8_t sec = layerLibrary[i].playSampleSector;
+        mix((sec >= 0 && sampleSectorLibrary[sec].stereo) ? 1u : 0u);
+        mix(layerAudible(i) ? 1u : 0u);
+        for (const char* ch = layerLibrary[i].instLoadedData.nameShortL; *ch; ch++) mix(static_cast<uint8_t>(*ch));
+        mix(genMix.type[i]);
+    }
+    return h | 1u;
+}
+
+StRow Controller::stageRowOfLayer(uint8_t layerNum_, int8_t corr_) const {
+    /// @brief What the stage shows for a layer: its pan, its image (the settings of its channel strip), whether its sample is stereo, the correlation.
+    const int8_t sec = layerLibrary[layerNum_].playSampleSector;
+    const bool stereoSample = (sec >= 0) && sampleSectorLibrary[sec].stereo && (genMix.type[layerNum_] == GEN_OFF);
+    return stRowOf(dubMix.pan[layerNum_], chSettings[layerNum_], stereoSample, corr_);
+}
+
+void Controller::lcd_drawStageViewData() {
+    /// @brief The stereo stage: the frame and one bar for each layer. Drawn again whenever a pan, a setting or the layer changes.
+    stageViewStateDrawn = stageViewState();
+    GsLcd g{lcd};
+    stDrawFrame(g);
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        const StRow row = stageRowOfLayer(i, stageCorr[i]);
+        char name[16];
+        layerShortName(i, name, sizeof name);
+        stDrawRow(g, i, name, row, static_cast<int8_t>(i) == selectedLayerNum, layerAudible(i));
+        stageCorrDrawn[i] = stageCorr[i];
+    }
+}
+
+void Controller::lcd_drawStageViewPlay() {
+    /// @brief The correlation numbers: every 40 ms the sums the audio collected become a reading, smoothed into the number shown; a
+    /// row is drawn again only when its number changes. A layer silent for a second shows "--".
+    if ((HAL_GetTick() - stageTick) < 40) return;
+    stageTick = HAL_GetTick();
+    GsLcd g{lcd};
+    for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+        float ll, rr, lr;
+        __disable_irq();
+        ll = chDsp.sumLL[i];
+        rr = chDsp.sumRR[i];
+        lr = chDsp.sumLR[i];
+        chDsp.sumLL[i] = chDsp.sumRR[i] = chDsp.sumLR[i] = 0.0f;
+        __enable_irq();
+        const int8_t reading = stCorrOf(ll, rr, lr);
+        if (reading == kStNoCorr) {
+            if (stageSilent[i] < 255) stageSilent[i]++;
+            if (stageSilent[i] >= 25) stageCorr[i] = kStNoCorr;
+        } else {
+            stageSilent[i] = 0;
+            stageCorr[i] = stCorrSmooth(stageCorr[i], reading);
+        }
+        if (stageCorr[i] == stageCorrDrawn[i]) continue;
+        stageCorrDrawn[i] = stageCorr[i];
+        const StRow row = stageRowOfLayer(i, stageCorr[i]);
+        char name[16];
+        layerShortName(i, name, sizeof name);
+        stDrawRow(g, i, name, row, static_cast<int8_t>(i) == selectedLayerNum, layerAudible(i));
+    }
 }
 
 void Controller::chain_step(EncoderFunc function_, bool up_) {
@@ -28667,6 +28856,23 @@ void Controller::processAudioChannelStrips() {
         }
         const float* side = ((s.compSide >= 1) && (s.compSide <= kLayerLibrarySize)) ? chDsp.side[s.compSide - 1] : nullptr;
         stereoDsp.layerStereo[i] = chProcess(s, chDsp.state[i], l, r, stereo, side, I2S_BLOCK_SIZE, AUDIO_SAMPLE_RATE);
+    }
+    // The stereo stage page: the three sums of each stereo layer's block (the correlation is worked out in the main loop).
+    if (chDsp.meterOn) {
+        for (uint8_t i = 0; i < kLayerLibrarySize; i++) {
+            if (!stereoDsp.layerStereo[i]) continue;
+            const float* l = audioLayer[i];
+            const float* r = stereoDsp.layerR[i];
+            float ll = 0.0f, rr = 0.0f, lr = 0.0f;
+            for (uint16_t k = 0; k < I2S_BLOCK_SIZE; k++) {
+                ll += l[k] * l[k];
+                rr += r[k] * r[k];
+                lr += l[k] * r[k];
+            }
+            chDsp.sumLL[i] += finiteOrZero(ll);
+            chDsp.sumRR[i] += finiteOrZero(rr);
+            chDsp.sumLR[i] += finiteOrZero(lr);
+        }
     }
 }
 

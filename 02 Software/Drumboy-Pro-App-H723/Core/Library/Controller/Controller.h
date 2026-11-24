@@ -322,6 +322,11 @@ class Controller {
     int16_t lfoDotDrawn = -1;                   // the phase dot's plot column as drawn (-1 = none)
     ChSettings chSettings[kLayerLibrarySize];   // the channel strip of each layer (ChannelStrip.h), saved in the song's CHN block
     uint32_t chainViewStateDrawn = 0;           // what the chain page's pictures were drawn from
+    uint32_t stageViewStateDrawn = 0;           // what the stage page was drawn from
+    int8_t stageCorr[kLayerLibrarySize];        // each layer's correlation as shown (StageView.h), kStNoCorr = none
+    int8_t stageCorrDrawn[kLayerLibrarySize];
+    uint8_t stageSilent[kLayerLibrarySize];     // readings without signal in a row
+    uint32_t stageTick = 0;
     uint8_t chBlockSel = 0;                     // the block the chain page edits
     uint8_t songPage = 0;                       // the SONG key's pages: 0 the chain, 1 PERFORM (PerformView.h)
     bool perfFillLatch = false;                 // PERFORM's FILL field: the FILL condition holds as if the F key were held
@@ -451,6 +456,14 @@ class Controller {
     void lcd_drawChain_Slot(uint8_t slot_);
     uint32_t chainViewState() const;
     void lcd_drawChainViewData();
+    void stage_select(uint8_t layerNum_);
+    void stage_step(EncoderFunc function_, bool up_);
+    void lcd_drawStageMenu();
+    void lcd_drawStage_Slot(uint8_t slot_);
+    uint32_t stageViewState() const;
+    void lcd_drawStageViewData();
+    StRow stageRowOfLayer(uint8_t layerNum_, int8_t corr_) const;
+    void lcd_drawStageViewPlay();
     void processAudioChannelStrips();
     uint32_t lfoViewState() const;
     void lcd_drawLfoViewData();

@@ -24,11 +24,13 @@ static const float kRate = 44100.0f;
 static const uint16_t kBlock = 32;
 
 // Runs a signal through the strip in blocks of 32.
-static void run(const ChSettings& s, ChState& st, std::vector<float>& l, std::vector<float>* r = nullptr, const std::vector<float>* side = nullptr) {
+static bool run(const ChSettings& s, ChState& st, std::vector<float>& l, std::vector<float>* r = nullptr, const std::vector<float>* side = nullptr, bool stereo = true) {
+    bool out = false;
     size_t done = 0;
-    for (size_t i = 0; i + kBlock <= l.size(); i += kBlock, done = i) chProcess(s, st, &l[i], r ? &(*r)[i] : nullptr, side ? &(*side)[i] : nullptr, kBlock, kRate);
+    for (size_t i = 0; i + kBlock <= l.size(); i += kBlock, done = i) out = chProcess(s, st, &l[i], r ? &(*r)[i] : nullptr, stereo && (r != nullptr), side ? &(*side)[i] : nullptr, kBlock, kRate);
     l.resize(done);  // only whole blocks are processed: the tail that was not is dropped (it would sit in the measurements as a raw signal)
     if (r) r->resize(done);
+    return out;
 }
 
 static std::vector<float> sine(float hz, float amp, size_t n) {
@@ -308,6 +310,113 @@ int main() {
         auto b = sine(4000, 0.3f, 4410);
         run(s, st, b);
         CHECK(rms(b, 2000) > low * 10.0, "opening the filter lets the 4 kHz through");
+    }
+    // IMAGE: width, bass mono, spread.
+    {
+        ChSettings s = chDefaults();
+        s.on = 1u << CH_IMAGE;
+        // WIDTH 50 (100 %) leaves a stereo pair alone; 0 makes it mono; 100 doubles the side.
+        auto L = sine(500, 0.4f, 3200), R = sine(700, 0.4f, 3200);
+        auto L0 = L, R0 = R;
+        ChState st;
+        CHECK(run(s, st, L, &R), "a stereo layer stays stereo");
+        double dmax = 0;
+        for (size_t i = 0; i < L.size(); i++) dmax = std::fmax(dmax, std::fmax(std::fabs(L[i] - L0[i]), std::fabs(R[i] - R0[i])));
+        CHECK(dmax < 1e-6, "width 100 percent changes nothing: %g", dmax);
+        s.imgWidth = 0;
+        L = L0;
+        R = R0;
+        ChState st2;
+        run(s, st2, L, &R);
+        dmax = 0;
+        for (size_t i = 0; i < L.size(); i++) dmax = std::fmax(dmax, std::fabs(L[i] - R[i]));
+        bool mid = true;
+        for (size_t i = 0; i < L.size(); i++) mid = mid && (std::fabs(L[i] - 0.5f * (L0[i] + R0[i])) < 1e-6f);
+        CHECK(dmax < 1e-6 && mid, "width 0 is the mono sum");
+        s.imgWidth = 100;
+        L = L0;
+        R = R0;
+        ChState st3;
+        run(s, st3, L, &R);
+        bool twice = true;
+        for (size_t i = 0; i < L.size(); i++) twice = twice && (std::fabs((L[i] - R[i]) - 2.0f * (L0[i] - R0[i])) < 1e-5f) && (std::fabs((L[i] + R[i]) - (L0[i] + R0[i])) < 1e-5f);
+        CHECK(twice, "width 200 percent doubles the side and keeps the middle");
+        // BASS MONO: an out-of-phase low tone disappears, an out-of-phase high tone stays, a mono signal is untouched.
+        s.imgWidth = 50;
+        s.imgBass = 100;  // 400 Hz
+        CHECK(std::fabs(chBassHz(100) - 400.0f) < 0.5f && std::fabs(chBassHz(1) - 40.93f) < 0.2f, "bass scale");
+        auto low = sine(60, 0.4f, 44096), lowR = low;
+        for (auto& v : lowR) v = -v;
+        ChState st4;
+        run(s, st4, low, &lowR);
+        CHECK(rms(low, 20000) < 0.01 && rms(lowR, 20000) < 0.01, "an anti-phase 60 Hz tone becomes mono (and so silent here): %g", rms(low, 20000));
+        auto hi = sine(4000, 0.4f, 44096), hiR = hi;
+        for (auto& v : hiR) v = -v;
+        const double hiIn = rms(hi, 20000);
+        ChState st5;
+        run(s, st5, hi, &hiR);
+        CHECK(std::fabs(rms(hi, 20000) / hiIn - 1.0) < 0.02 && hi[30000] * hiR[30000] < 0.0f, "an anti-phase 4 kHz tone keeps its side: %g", rms(hi, 20000) / hiIn);
+        auto mono = sine(150, 0.4f, 3200), monoR = mono, mono0 = mono;
+        ChState st6;
+        run(s, st6, mono, &monoR);
+        double mm = 0;
+        for (size_t i = 0; i < mono.size(); i++) mm = std::fmax(mm, std::fmax(std::fabs(mono[i] - mono0[i]), std::fabs(monoR[i] - mono0[i])));
+        CHECK(mm < 1e-5, "a mono signal comes out as it went in: %g", mm);
+        // The low part is the mono sum: a 60 Hz tone in the left channel only comes out half in each.
+        auto leftOnly = sine(60, 0.4f, 44096);
+        std::vector<float> silence(44096, 0.0f);
+        const double leftIn = rms(leftOnly, 20000);
+        ChState st7;
+        run(s, st7, leftOnly, &silence);
+        CHECK(std::fabs(rms(leftOnly, 20000) / leftIn - 0.5) < 0.03 && std::fabs(rms(silence, 20000) / leftIn - 0.5) < 0.03, "a 60 Hz tone on one side is shared: %g %g", rms(leftOnly, 20000) / leftIn, rms(silence, 20000) / leftIn);
+        // SPREAD: a mono layer becomes a pair with the same level and less correlation; the stereo flag is returned.
+        ChSettings sp = chDefaults();
+        sp.on = 1u << CH_IMAGE;
+        sp.imgSpread = 100;
+        std::vector<float> noise(44096);
+        uint32_t seed = 12345;
+        for (auto& v : noise) {
+            seed = seed * 1664525u + 1013904223u;
+            v = (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f) * 0.3f;
+        }
+        auto n0 = noise;
+        std::vector<float> nr(noise.size(), 0.0f);
+        ChState st8;
+        const bool made = run(sp, st8, noise, &nr, nullptr, false);
+        CHECK(made, "a mono layer with SPREAD becomes stereo");
+        double sl = 0, sr = 0, sx = 0, si = 0;
+        for (size_t i = 8000; i < noise.size(); i++) {
+            sl += static_cast<double>(noise[i]) * noise[i];
+            sr += static_cast<double>(nr[i]) * nr[i];
+            sx += static_cast<double>(noise[i]) * nr[i];
+            si += static_cast<double>(n0[i]) * n0[i];
+        }
+        const double corr = sx / std::sqrt(sl * sr);
+        CHECK(std::fabs(std::sqrt(sl / si) - 1.0) < 0.1 && std::fabs(std::sqrt(sr / si) - 1.0) < 0.1, "spread keeps the level of each side: %g %g", std::sqrt(sl / si), std::sqrt(sr / si));
+        CHECK(std::fabs(corr) < 0.6, "spread decorrelates the pair: %g", corr);
+        sp.imgSpread = 0;
+        auto n1 = n0;
+        std::vector<float> n1r(n1.size(), 0.0f);
+        ChState st9;
+        run(sp, st9, n1, &n1r, nullptr, false);
+        double dd = 0;
+        for (size_t i = 0; i < n1.size(); i++) dd = std::fmax(dd, std::fmax(std::fabs(n1[i] - n0[i]), std::fabs(n1r[i] - n0[i])));
+        CHECK(dd < 1e-6, "spread 0: both sides are the mono layer: %g", dd);
+        // Without a right buffer the block cannot make a pair: the layer stays mono and the left channel is untouched.
+        std::vector<float> m2 = n0;
+        ChState st10;
+        bool stereoBack = false;
+        for (size_t i = 0; i + kBlock <= m2.size(); i += kBlock) stereoBack = chProcess(sp, st10, &m2[i], nullptr, false, nullptr, kBlock, kRate);
+        CHECK(!stereoBack && memcmp(m2.data(), n0.data(), (m2.size() / kBlock * kBlock) * sizeof(float)) == 0, "no right buffer: mono stays mono");
+        // Blocks before the image see the mono layer once, the image makes it two channels: FILTER then IMAGE.
+        ChSettings both = chDefaults();
+        both.on = (1u << CH_FILTER) | (1u << CH_IMAGE);
+        both.filterCutoff = idxOfHz(500);
+        both.imgSpread = 60;
+        auto x1 = sine(3000, 0.4f, 44096);
+        std::vector<float> x1r(x1.size(), 0.0f);
+        ChState st11;
+        CHECK(run(both, st11, x1, &x1r, nullptr, false) && rms(x1, 20000) < 0.01 && rms(x1r, 20000) < 0.01, "the filter runs before the image");
     }
     // The file block.
     {

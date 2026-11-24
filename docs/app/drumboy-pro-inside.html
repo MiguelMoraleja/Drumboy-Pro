@@ -1322,7 +1322,7 @@ const IDEAS = [
     } },
   { id: "chstrip", group: 0, name: "Channel strip", item: "47", size: "L", today: false,
     note: ["",
-           "Proposal (not built): a new instrument page for one layer's own sound chain, before the layer goes to the mixer (Filter 1 and 2 stay as they are). On the left the layer's sample (choose it here), on the right the chain as five boxes in the order the sound runs: ENV (attack and decay of the tail), DRIVE (a soft saturation), FILTER (LP, HP, BP or notch with resonance, a 6, 12 or 24 dB slope and an extra high-pass), EQ (one band) and COMP (with a sidechain from another layer). Each box has its own on lamp and a small picture of what it does; the selected one (cyan) gets the eight encoders and a big picture below: here the filter's response with its cutoff marked. A block that is off costs nothing. Settings are saved with the layer in kits and songs. Open: the page's place in the instrument key cycle (I proposed a fourth page), and the cost, which is measured with the CPU bar before and after."],
+           "Proposal (not built): a new instrument page for one layer's own sound chain, before the layer goes to the mixer (Filter 1 and 2 stay as they are). On the left the layer's sample (choose it here), on the right the chain as six boxes in the order the sound runs: ENV (attack and decay of the tail), DRIVE (a soft saturation), FILTER (LP, HP, BP or notch with resonance, a 6, 12 or 24 dB slope and an extra high-pass), EQ (one band) COMP (with a sidechain from another layer) and IMAGE (spread a mono layer into a pair, width from mono to double, bass mono: the side high-passed, so the lows are mono). Each box has its own on lamp and a small picture of what it does; the selected one (cyan) gets the eight encoders and a big picture below: here the filter's response with its cutoff marked. A block that is off costs nothing. Settings are saved with the layer in kits and songs. Open: the page's place in the instrument key cycle (I proposed a fourth page), and the cost, which is measured with the CPU bar before and after."],
     draw() {
       mMenu("CH", 3);
       mField(0, "BLOCK", "FILTER".padStart(10)); mField(1, "ACTIVE", "ON".padStart(10)); mField(2, "TYPE", "LP".padStart(10)); mField(3, "CUTOFF", "2.4".padStart(10), "KHZ");
@@ -1340,23 +1340,24 @@ const IDEAS = [
       });
       P.text("TURN THE SAMPLE FIELD OR PRESS", 30, 372, 5, LC.G50); P.text("A PAD TO HEAR IT", 30, 382, 5, LC.G50);
       // right: the chain
-      const blocks = ["ENV", "DRIVE", "FILTER", "EQ", "COMP"], on = [1, 0, 1, 1, 1], selB = 2, BX = 280, BW = 122, BG = 8, BY = 138, BH = 78;
-      const mini = (k, x, y, c) => {
-        if (k === 0) { for (let t = 0; t < 100; t++) { const a = Math.min(1, t / 6) * Math.exp(-t / 28); P.rect(x + t, y + 30 - Math.round(a * 28), 1, 2, c); } }
-        if (k === 1) { for (let t = 0; t < 100; t++) { const xx = (t - 50) / 28, v = Math.tanh(xx * 1.6); P.rect(x + t, y + 15 - Math.round(v * 14), 1, 2, c); } P.rect(x, y + 15, 100, 1, LC.G25); }
-        if (k === 2) { for (let t = 0; t < 100; t++) { const f = t / 99 * 3 - 1.3, r = Math.pow(10, f), d = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(r / 1.6, 2)), v = Math.max(-30, 20 * Math.log10(d)); P.rect(x + t, y + 30 - Math.round((v + 30) / 40 * 28), 1, 2, c); } }
-        if (k === 3) { for (let t = 0; t < 100; t++) { const v = 10 * Math.exp(-Math.pow((t - 55) / 14, 2)); P.rect(x + t, y + 24 - Math.round(v * 1.4), 1, 2, c); } P.rect(x, y + 24, 100, 1, LC.G25); }
-        if (k === 4) { for (let t = 0; t < 100; t++) { const inn = t / 99, o = inn < 0.5 ? inn : 0.5 + (inn - 0.5) / 4; P.rect(x + t, y + 30 - Math.round(o * 56), 1, 2, c); } P.rect(x, y + 30, 100, 1, LC.G25); }
+      const blocks = ["ENV", "DRIVE", "FILTER", "EQ", "COMP", "IMAGE"], on = [1, 0, 1, 1, 1, 1], selB = 2, BX = 280, BW = 100, BG = 10, BY = 138, BH = 78;
+      const mini = (k, x, y, c, W = 100) => {
+        if (k === 5) { P.rect(x, y + 14, W, 1, LC.G25); P.rect(x + W / 2, y + 4, 1, 22, LC.G50); P.rect(x + 12, y + 8, W - 24, 5, c); P.rect(x + 20, y + 16, W - 40, 5, c); P.rect(x + W / 2 - 3, y + 24, 6, 5, LC.YE); return; }
+        if (k === 0) { for (let t = 0; t < W; t++) { const a = Math.min(1, t / (W * 0.06)) * Math.exp(-t / (W * 0.28)); P.rect(x + t, y + 30 - Math.round(a * 28), 1, 2, c); } }
+        if (k === 1) { for (let t = 0; t < W; t++) { const xx = (t - W / 2) / (W * 0.28), v = Math.tanh(xx * 1.6); P.rect(x + t, y + 15 - Math.round(v * 14), 1, 2, c); } P.rect(x, y + 15, W, 1, LC.G25); }
+        if (k === 2) { for (let t = 0; t < W; t++) { const f = t / (W - 1) * 3 - 1.3, r = Math.pow(10, f), d = 1 / Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(r / 1.6, 2)), v = Math.max(-30, 20 * Math.log10(d)); P.rect(x + t, y + 30 - Math.round((v + 30) / 40 * 28), 1, 2, c); } }
+        if (k === 3) { for (let t = 0; t < W; t++) { const v = 10 * Math.exp(-Math.pow((t - W * 0.55) / (W * 0.14), 2)); P.rect(x + t, y + 24 - Math.round(v * 1.4), 1, 2, c); } P.rect(x, y + 24, W, 1, LC.G25); }
+        if (k === 4) { for (let t = 0; t < W; t++) { const inn = t / 99, o = inn < 0.5 ? inn : 0.5 + (inn - 0.5) / 4; P.rect(x + t, y + 30 - Math.round(o * 56), 1, 2, c); } P.rect(x, y + 30, W, 1, LC.G25); }
       };
       blocks.forEach((n, k) => {
         const x = BX + k * (BW + BG), isSel = k === selB, c = on[k] ? (isSel ? LC.CY : LC.G75) : LC.G35;
         P.frame(x, BY, BW, BH, isSel ? LC.CY : LC.G25); if (isSel) P.frame(x + 1, BY + 1, BW - 2, BH - 2, LC.CY);
         P.text(n, x + 8, BY + 8, 7, c); P.rect(x + BW - 18, BY + 8, 9, 9, on[k] ? LC.GN : LC.G25);
-        mini(k, x + 10, BY + 30, c);
-        if (k < 4) { P.rect(x + BW, BY + BH / 2, BG, 1, LC.G50); }
+        mini(k, x + 10, BY + 30, c, 80);
+        if (k < 5) { P.rect(x + BW, BY + BH / 2, BG, 1, LC.G50); }
       });
       P.text("SAMPLE", BX, BY - 10 + 0, 5, LC.G50, "L", null);
-      P.text("TO THE MIXER", BX + 5 * (BW + BG) - BG, BY + BH + 4, 5, LC.G50, "R");
+      P.text("TO PAN AND THE MIXER", BX + 6 * (BW + BG) - BG, BY + BH + 4, 5, LC.G50, "R");
       // the selected block, big: the filter response
       const PX = 280, PY = 250, PW = 650, PH = 150;
       P.text("FILTER   LP 12 DB   CUTOFF 2.4 KHZ   RESON 1.60   HP 40 HZ", PX, 232, 7, LC.CY);
@@ -1370,7 +1371,33 @@ const IDEAS = [
         P.rect(PX + x, Math.max(PY, Math.min(PY + PH - 2, Math.round(y))), 1, 2, LC.CY);
       }
       const cx = PX + Math.round(Math.log10(fc / 20) / 3 * PW); for (let y = PY; y < PY + PH; y += 3) P.rect(cx, y, 1, 1, LC.YE);
-      P.text("TURN BLOCK TO PICK ENV, DRIVE, FILTER, EQ OR COMP", PX, PY + PH + 8, 5, LC.G50);
+      P.text("TURN BLOCK TO PICK ENV, DRIVE, FILTER, EQ, COMP OR IMAGE", PX, PY + PH + 8, 5, LC.G50);
+    } },
+  { id: "stage", group: 0, name: "Stereo stage", item: "71", size: "M", today: false,
+    note: ["",
+           "Proposal (not built): the fifth instrument page, a picture of the whole stereo mix. Every layer is a bar on one stage: centred at its pan, as wide as its width (the IMAGE block of the channel strip), the bass mono corner marked in yellow at the centre, and at the right the layer's correlation (green near +1, yellow around 0, red below 0: where a widened layer starts to cancel when the mix is summed to mono). The selected layer's fields are the four below: PAN (the same value as on instrument page 3), WIDTH, BASS (mono below, in Hz) and SPREAD. It reads settings and one correlation number per layer from the audio; nothing is drawn per sample."],
+    draw() {
+      mMenu("ST", 3);
+      mField(0, "PAN", "L 12".padStart(10)); mField(1, "WIDTH", "120", "  %"); mField(2, "BASS MONO", "120".padStart(10), " HZ"); mField(3, "SPREAD", "0".padStart(10), "  %");
+      mBig();
+      const SX = 150, SW = 640, mid = SX + SW / 2;
+      P.text("LEFT", SX, 138, 7, LC.G75); P.text("CENTRE", mid, 138, 7, LC.G75, "C"); P.text("RIGHT", SX + SW, 138, 7, LC.G75, "R");
+      for (let y = 156; y < 436; y += 4) P.rect(mid, y, 1, 1, LC.G50);
+      [-1, -0.5, 0.5, 1].forEach(q => { for (let y = 156; y < 436; y += 6) P.rect(Math.round(mid + q * SW / 2), y, 1, 1, LC.G25); });
+      const pan = [0, -14, -12, 8, 0, 22, -26, 30, 16, 0], wid = [40, 10, 120, 80, 100, 60, 40, 90, 70, 150], bass = [1, 0, 1, 0, 1, 0, 0, 0, 0, 1], cor = [0.95, 1, 0.55, 0.7, 0.9, 0.8, 0.9, 0.3, 0.6, -0.2], lev = [82, 74, 60, 55, 70, 45, 66, 40, 50, 58];
+      LAYER_NAMES.forEach((n, i) => {
+        const y = 156 + i * 28, sel = i === 2, c = sel ? LC.CY : LC.G75;
+        P.text(String(i + 1).padStart(2, "0") + " " + n.slice(0, 7), 30, y + 8, 7, sel ? LC.CY : LC.G75);
+        const cx = mid + pan[i] / 40 * SW / 2, half = Math.max(2, wid[i] / 200 * SW / 4 * 1.6);
+        P.rect(Math.round(cx - half), y + 4, Math.round(half * 2), 14, sel ? LC.CY : LC.G50);
+        P.rect(Math.round(cx - half), y + 4, Math.round(half * 2), 1, LC.G75); P.rect(Math.round(cx - half), y + 17, Math.round(half * 2), 1, LC.G75);
+        P.rect(Math.round(cx - 1), y + 8, 3, 6, sel ? LC.K : LC.G25);
+        if (bass[i]) P.rect(Math.round(cx - 3), y + 20, 7, 3, LC.YE);
+        if (sel) P.frame(24, y, 902, 26, LC.CY);
+        const cc = cor[i] > 0.6 ? LC.GN : cor[i] > 0.1 ? LC.YE : LC.RE;
+        P.text((cor[i] >= 0 ? "+" : "-") + Math.abs(cor[i]).toFixed(2), 892, y + 8, 7, cc, "R");
+      });
+      P.text("CORRELATION", 892, 138, 5, LC.G50, "R");
     } },
 ];
 // --- Full-area views: the lane area (920x310) shows one feature while its page is open ---

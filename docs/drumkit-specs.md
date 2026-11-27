@@ -72,6 +72,8 @@ Layout (little-endian bytes; offsets from the start of the file; the 25-byte hea
 | 498 | 1 | routing marker 0xA5 |
 | 500-1499 | 1000 | ten asset records of **100 bytes** each (see below) |
 
+After the body comes the 3-byte marker `EOF`, which firmware older than V1.22 treats as the end of the file. **V1.22 and later** write one more block after it, the **CHN block** (224 bytes): the bytes `CHN`, a version byte (1) and 22 bytes for each of the ten layers, the settings of its channel strip (block switches, then ENV, DRIVE, FILTER, EQ, COMP and IMAGE values, as listed in `ChannelStrip.h`). A kit without the block (made by older firmware or by script) is complete and loads with every channel strip block off; a block that is cut short or has a value out of range is ignored the same way. A script that writes kits can stop at `EOF`.
+
 Layer record (payload offset 240 + 25 × layer): 0 level, 1 pitch (older firmware's byte), 2 direction, 3 resolution, 4 start, 5 end, 6 timing, 7 probability, 8-15 LFO assignments, 16-19 EQ, filter, effect and reverb sends, 20 mute, 21 fill, 22 style, 23 routing destination mask, 24 pitch in semitones.
 
 Asset record (payload offset 500 + 100 × layer): byte 0 is `x` when the layer has an instrument (`o` when empty); bytes 1-32 the instrument folder name (zero padded); byte 50 is `x` when the layer has a sample; bytes 51-82 the sample file name **with `.wav`**. In file offsets: instrument flag at `525 + 100 × layer`, sample flag at `575 + 100 × layer`.

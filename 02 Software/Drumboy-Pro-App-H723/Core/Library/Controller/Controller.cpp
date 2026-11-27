@@ -7493,6 +7493,19 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                         pointerOffset += 1;
                     }
                 }
+                // 5.2b CHN BLOCK
+                // After the EOF marker (ChannelStrip.h): the channel strip of each layer. A kit saved by older firmware has none,
+                // and then every strip starts with every block off, as a kit sets everything else of the layers it holds.
+                ChSettings kitStrips[kLayerLibrarySize];
+                bool kitStripsRead = false;
+                {
+                    uint8_t chnData[kChFileSize];
+                    char eofRead[3] = {0, 0, 0};
+                    UINT eofGot = 0, chnGot = 0;
+                    if ((errorCount == 0) && (f_read(&sd.file, eofRead, 3, &eofGot) == FR_OK) && (eofGot == 3) && (f_read(&sd.file, chnData, kChFileSize, &chnGot) == FR_OK)) {
+                        kitStripsRead = chReadBlock(kitStrips, chnData, static_cast<uint16_t>(chnGot));
+                    }
+                }
                 f_close(&sd.file);
                 if (errorCount == 0) {
                     // 5.3 PARAMETER DECODE
@@ -7608,6 +7621,10 @@ SdResult Controller::sd_loadDrumkit(uint8_t kitNum_) {
                         layerInst_setFill(i, (bool)data[offset + 21]);
                         layerInst_setStyle(i, (bool)data[offset + 22]);
                     }
+
+                    // Channel strips: the kit's, or every block off for a kit without them (older firmware)
+                    if (kitStripsRead) chPublishSettings(kitStrips);
+                    else chInitSettings();
 
                     // 5.4 ASSET REFERENCE EXTRACTION
                     // Extract instrument/sample names and activation markers per layer.
@@ -7959,6 +7976,10 @@ SdResult Controller::sd_saveDrumkit(uint8_t kitNum_) {
             out.write(kDrumkitRef, strlen(kDrumkitRef));
             out.writeBlocks(data, kDrumkitByteSize);
             out.write(eof, strlen(eof));
+            // After the EOF marker, where older firmware does not look: the CHN block (ChannelStrip.h), the channel strip of each layer
+            uint8_t chnData[kChFileSize];
+            chWriteBlock(chSettings, chnData);
+            out.write(chnData, kChFileSize);
         }, saveWatchdogTick);
         if (saved) result = SD_OK;
     }

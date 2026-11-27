@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "ChannelStrip.h"
 #include "SlotFile.h"
 
 static int failures = 0, checks = 0;
@@ -401,7 +402,92 @@ static void testWriterCounting() {
     CHECK(!v.finish("y.bin"), "finish says no");
 }
 
+// A drumkit file as the firmware saves it (V1.22): header, the 1500-byte body, "EOF", then the CHN block of the channel strips.
+// Older firmware stops at "EOF" (the file is complete without the block), and a kit without the block loads with every strip off.
+static void testKitWithStrips() {
+    const char* kKitRef = "RW_DRUMBOYPRO_DRUMKIT    ";
+    const uint32_t head = static_cast<uint32_t>(strlen(kKitRef)), body = 1500;
+    ChSettings strips[10];
+    for (uint8_t l = 0; l < 10; l++) {
+        strips[l] = chDefaults();
+        strips[l].on = static_cast<uint8_t>(l & 0x3F);
+        strips[l].filterCutoff = static_cast<uint8_t>(10 + l * 7);
+        strips[l].compSide = static_cast<uint8_t>(l % 11);
+        strips[l].imgWidth = static_cast<uint8_t>(50 + l);
+    }
+    std::vector<uint8_t> bodyData(body);
+    for (uint32_t i = 0; i < body; i++) bodyData[i] = static_cast<uint8_t>(i * 13);
+    bodyData[0] = '*';
+
+    // Saved the way sd_saveDrumkit does it.
+    mockFs().reset();
+    FIL f;
+    uint8_t chn[kChFileSize];
+    chWriteBlock(strips, chn);
+    CHECK(slotSave(&f, kSlot, true, [&](SaveWriter& out) {
+        out.write(kKitRef, head);
+        out.writeBlocks(bodyData.data(), body);
+        out.write("EOF", 3);
+        out.write(chn, kChFileSize);
+    }), "the kit saves");
+    CHECK(mockFs().files[kSlot].size() == head + body + 3 + kChFileSize, "size: %zu", mockFs().files[kSlot].size());
+    CHECK(f_open(&f, kSlot, FA_READ) == FR_OK && slotFileComplete(&f, head, body), "complete with the block after EOF (as older firmware sees it)");
+
+    // Read the way sd_loadDrumkit does it: the body, then the EOF marker, then the block.
+    {
+        uint8_t got[1500];
+        UINT n = 0;
+        CHECK(f_lseek(&f, head) == FR_OK && f_read(&f, got, body, &n) == FR_OK && n == body && memcmp(got, bodyData.data(), body) == 0, "the body reads back unchanged");
+        char eofRead[3] = {0, 0, 0};
+        UINT eofGot = 0, chnGot = 0;
+        uint8_t chnRead[kChFileSize];
+        CHECK(f_read(&f, eofRead, 3, &eofGot) == FR_OK && eofGot == 3 && memcmp(eofRead, "EOF", 3) == 0, "EOF follows the body");
+        CHECK(f_read(&f, chnRead, kChFileSize, &chnGot) == FR_OK && chnGot == kChFileSize, "the block follows EOF");
+        ChSettings back[10];
+        CHECK(chReadBlock(back, chnRead, static_cast<uint16_t>(chnGot)), "the block is valid");
+        bool same = true;
+        for (uint8_t l = 0; l < 10; l++) same = same && (memcmp(&back[l], &strips[l], sizeof(ChSettings)) == 0);
+        CHECK(same, "every strip comes back as it was saved");
+        f_close(&f);
+    }
+
+    // A kit saved by older firmware: no block. Complete, and the read after EOF gets nothing, so the strips start with every block off.
+    mockFs().reset();
+    CHECK(slotSave(&f, kSlot, true, [&](SaveWriter& out) {
+        out.write(kKitRef, head);
+        out.writeBlocks(bodyData.data(), body);
+        out.write("EOF", 3);
+    }), "an old kit saves");
+    {
+        CHECK(f_open(&f, kSlot, FA_READ) == FR_OK && slotFileComplete(&f, head, body), "an old kit is complete");
+        char eofRead[3] = {0, 0, 0};
+        UINT eofGot = 0, chnGot = 99;
+        uint8_t chnRead[kChFileSize];
+        memset(chnRead, 0xEE, sizeof chnRead);
+        CHECK(f_lseek(&f, head + body) == FR_OK && f_read(&f, eofRead, 3, &eofGot) == FR_OK && eofGot == 3, "EOF read");
+        CHECK(f_read(&f, chnRead, kChFileSize, &chnGot) == FR_OK && chnGot == 0, "nothing after EOF: %u bytes", static_cast<unsigned>(chnGot));
+        ChSettings back[10];
+        CHECK(!chReadBlock(back, chnRead, static_cast<uint16_t>(chnGot)), "no block: not valid");
+        bool off = true;
+        for (uint8_t l = 0; l < 10; l++) off = off && ((back[l].on & 0x3F) == 0);
+        CHECK(off, "and the strips are at their defaults, every block off");
+        f_close(&f);
+    }
+
+    // A block that is cut short or damaged is refused, not half applied.
+    {
+        ChSettings back[10];
+        for (uint8_t l = 0; l < 10; l++) back[l] = strips[l];
+        CHECK(!chReadBlock(back, chn, kChFileSize - 1), "a short block is refused");
+        uint8_t bad[kChFileSize];
+        memcpy(bad, chn, sizeof bad);
+        bad[4 + 3 * kChSettingBytes + 6] = 200;  // layer 4's cutoff out of range
+        CHECK(!chReadBlock(back, bad, kChFileSize), "an out-of-range value is refused");
+    }
+}
+
 int main() {
+    testKitWithStrips();
     testPaths();
     testRecoveryTable();
     testNormalSave();
